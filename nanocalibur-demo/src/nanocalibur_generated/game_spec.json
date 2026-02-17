@@ -1,0 +1,131 @@
+{
+  "actions": [
+    "move_right",
+    "move_left",
+    "move_up",
+    "move_down",
+    "collect_coin"
+  ],
+  "actors": [
+    {
+      "fields": {
+        "h": 32,
+        "speed": 3,
+        "w": 32,
+        "x": 100,
+        "y": 100
+      },
+      "type": "Player",
+      "uid": "hero"
+    },
+    {
+      "fields": {
+        "active": true,
+        "h": 24,
+        "w": 24,
+        "x": 360,
+        "y": 220
+      },
+      "type": "Coin",
+      "uid": "coin_1"
+    }
+  ],
+  "camera": {
+    "mode": "follow",
+    "target_uid": "hero"
+  },
+  "globals": [
+    {
+      "kind": "int",
+      "list_elem_kind": null,
+      "name": "score",
+      "value": 0
+    }
+  ],
+  "map": {
+    "height": 20,
+    "solid_tiles": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        0
+      ]
+    ],
+    "tile_size": 32,
+    "width": 30
+  },
+  "predicates": [],
+  "rules": [
+    {
+      "action": "move_right",
+      "condition": {
+        "key": "ArrowRight",
+        "kind": "keyboard",
+        "phase": "on"
+      }
+    },
+    {
+      "action": "move_left",
+      "condition": {
+        "key": "ArrowLeft",
+        "kind": "keyboard",
+        "phase": "on"
+      }
+    },
+    {
+      "action": "move_up",
+      "condition": {
+        "key": "ArrowUp",
+        "kind": "keyboard",
+        "phase": "on"
+      }
+    },
+    {
+      "action": "move_down",
+      "condition": {
+        "key": "ArrowDown",
+        "kind": "keyboard",
+        "phase": "on"
+      }
+    },
+    {
+      "action": "collect_coin",
+      "condition": {
+        "kind": "collision",
+        "left": {
+          "actor_type": "Player",
+          "kind": "with_uid",
+          "uid": "hero"
+        },
+        "right": {
+          "actor_type": "Coin",
+          "kind": "with_uid",
+          "uid": "coin_1"
+        }
+      }
+    }
+  ],
+  "schemas": {
+    "Coin": {
+      "active": "bool",
+      "h": "int",
+      "w": "int",
+      "x": "int",
+      "y": "int"
+    },
+    "Player": {
+      "h": "int",
+      "speed": "int",
+      "w": "int",
+      "x": "int",
+      "y": "int"
+    }
+  }
+}

@@ -1,0 +1,214 @@
+{
+  "actions": [
+    {
+      "body": [
+        {
+          "target": {
+            "field": "x",
+            "obj": "player"
+          },
+          "value": {
+            "left": {
+              "field": "x",
+              "obj": "player"
+            },
+            "op": "+",
+            "right": {
+              "field": "speed",
+              "obj": "player"
+            }
+          }
+        }
+      ],
+      "name": "move_right",
+      "params": [
+        {
+          "actor_list_type": null,
+          "actor_selector": {
+            "index": null,
+            "uid": "hero"
+          },
+          "actor_type": "Player",
+          "global_name": null,
+          "kind": "actor",
+          "name": "player"
+        }
+      ]
+    },
+    {
+      "body": [
+        {
+          "target": {
+            "field": "x",
+            "obj": "player"
+          },
+          "value": {
+            "left": {
+              "field": "x",
+              "obj": "player"
+            },
+            "op": "-",
+            "right": {
+              "field": "speed",
+              "obj": "player"
+            }
+          }
+        }
+      ],
+      "name": "move_left",
+      "params": [
+        {
+          "actor_list_type": null,
+          "actor_selector": {
+            "index": null,
+            "uid": "hero"
+          },
+          "actor_type": "Player",
+          "global_name": null,
+          "kind": "actor",
+          "name": "player"
+        }
+      ]
+    },
+    {
+      "body": [
+        {
+          "target": {
+            "field": "y",
+            "obj": "player"
+          },
+          "value": {
+            "left": {
+              "field": "y",
+              "obj": "player"
+            },
+            "op": "-",
+            "right": {
+              "field": "speed",
+              "obj": "player"
+            }
+          }
+        }
+      ],
+      "name": "move_up",
+      "params": [
+        {
+          "actor_list_type": null,
+          "actor_selector": {
+            "index": null,
+            "uid": "hero"
+          },
+          "actor_type": "Player",
+          "global_name": null,
+          "kind": "actor",
+          "name": "player"
+        }
+      ]
+    },
+    {
+      "body": [
+        {
+          "target": {
+            "field": "y",
+            "obj": "player"
+          },
+          "value": {
+            "left": {
+              "field": "y",
+              "obj": "player"
+            },
+            "op": "+",
+            "right": {
+              "field": "speed",
+              "obj": "player"
+            }
+          }
+        }
+      ],
+      "name": "move_down",
+      "params": [
+        {
+          "actor_list_type": null,
+          "actor_selector": {
+            "index": null,
+            "uid": "hero"
+          },
+          "actor_type": "Player",
+          "global_name": null,
+          "kind": "actor",
+          "name": "player"
+        }
+      ]
+    },
+    {
+      "body": [
+        {
+          "body": [
+            {
+              "target": {
+                "field": "active",
+                "obj": "coin"
+              },
+              "value": {
+                "value": false
+              }
+            },
+            {
+              "target": {
+                "name": "score"
+              },
+              "value": {
+                "left": {
+                  "name": "score"
+                },
+                "op": "+",
+                "right": {
+                  "value": 1
+                }
+              }
+            }
+          ],
+          "condition": {
+            "field": "active",
+            "obj": "coin"
+          },
+          "orelse": []
+        }
+      ],
+      "name": "collect_coin",
+      "params": [
+        {
+          "actor_list_type": null,
+          "actor_selector": {
+            "index": null,
+            "uid": "hero"
+          },
+          "actor_type": "Player",
+          "global_name": null,
+          "kind": "actor",
+          "name": "hero"
+        },
+        {
+          "actor_list_type": null,
+          "actor_selector": {
+            "index": null,
+            "uid": "coin_1"
+          },
+          "actor_type": "Coin",
+          "global_name": null,
+          "kind": "actor",
+          "name": "coin"
+        },
+        {
+          "actor_list_type": null,
+          "actor_selector": null,
+          "actor_type": null,
+          "global_name": "score",
+          "kind": "global",
+          "name": "score"
+        }
+      ]
+    }
+  ],
+  "predicates": []
+}

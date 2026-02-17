@@ -1,0 +1,42 @@
+I'm writing a tiny game engine on top of excalibur.js to make it LLM friendly.
+Basically, what I want to do is to implement a python version of it, then an algorithm to translate it into typescript code.
+There is two goals:
+- make it very llm friendly, by using python (even though LLM can be good in typescript, Python is really the most simple thing)
+- make it very safe, since I will control very strictly the translation of my python code into js.
+
+the base logic of my tiny game engine is the following:
+```
+- Variables: global variables (List of ..., integers, floats, strings, pointer to actor).
+
+- Actors: Anything ON the map, additionnally List of ..., integers, floats, and strings can be attached to actor.
+
+- Condition: Rules that can triggers action KeyboardRelated, MouseRelated, ButtonRelated, CollisionRelated, InstantiationRelated (spawn/disappear), LogicalRelated (e.g. if `life of ...` < 0 trigger `Destroy`).
+
+- Action: action that can modify the state of the game: this are written as python function.
+
+- Interface: something on top of the game (an html, that can process any available variable, and that can serves button).
+
+- Camera: OK.
+
+- Maps: contains two kind of tiles the one that has a property `Solid` (=> will block object with a collision box) and the other (think of the rest as `Ground`), we follow the convention of excalibur.
+```
+
+now most of this can be managed with a very simple format, except for the action thing.
+
+Basically actions are code block that are trigger by condition.
+An action take as input any global variables, and/or any actors, and modify them.
+
+What I was thinking, was to implement them by doing something like:
+
+# add a global variable with name "variable_name", and value = 0
+game.add(GlobalVariable("variable_name", 0))
+
+# define a modifier, that takes as input the global variable with the name "variable_name", and the last actor (i.e. at index -1, given that actors are indexed by they ordered of apperance in the scene, alternatively, the user can give a string that design a unique "uid")
+
+def modifier(t: GlobalVariable["variable_name"], actor: Actor[-1]):
+    actor.life = t
+
+later on the code we could do something like
+
+# if condition is satisfied, then called modifier.
+game.addRules(Condition, modifier) 

@@ -1,0 +1,33 @@
+{
+  "name": "sample-tiled-webpack",
+  "version": "1.0.0",
+  "description": "Sample Excalibur Tiled Plugin with Webpack",
+  "main": "index.js",
+  "scripts": {
+    "start": "webpack-dev-server --open",
+    "build": "webpack",
+    "build:prod": "webpack --mode production",
+    "build:dev": "webpack --mode development",
+    "serve": "http-server ./dist"
+  },
+  "author": {
+    "name": "Excalibur.js Team",
+    "email": "excaliburjs@gmail.com",
+    "url": "http://excaliburjs.com"
+  },
+  "license": "BSD-2-Clause",
+  "dependencies": {
+    "@excaliburjs/plugin-tiled": "0.30.1",
+    "excalibur": "0.30.2"
+  },
+  "devDependencies": {
+    "file-loader": "^6.2.0",
+    "copy-webpack-plugin": "^13.0.1",
+    "ts-loader": "9.5.1",
+    "typescript": "5.7.2",
+    "webpack": "5.97.1",
+    "webpack-cli": "6.0.1",
+    "webpack-dev-server": "5.2.0",
+    "http-server": "14.1.1"
+  }
+}

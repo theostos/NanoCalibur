@@ -1,0 +1,97 @@
+# Project Summary Prompt
+
+I am building a minimal, deterministic Python DSL that compiles into TypeScript to run inside Excalibur.js.
+
+The purpose of this DSL is to make game logic:
+
+* Extremely LLM-friendly (Python-based syntax)
+* Strictly safe (no runtime execution of user code)
+* Fully deterministic (AST → IR → TypeScript pipeline)
+* Easy to statically validate
+
+## Core Architecture
+
+The system works as follows:
+
+1. Users write game logic in a restricted subset of Python.
+2. The source code is parsed using Python's AST.
+3. The AST is strictly validated (only allowed nodes).
+4. The code is converted into an Intermediate Representation (IR).
+5. The IR is compiled into deterministic TypeScript.
+
+The Python code is never executed.
+
+## DSL Capabilities
+
+### Actor Schemas
+
+Users define actors as subclasses of `ActorModel` with annotated fields only.
+
+Allowed field types:
+
+* int
+* float
+* str
+* bool
+* List[int | float | str | bool]
+
+No methods, no dynamic behavior, no nested objects.
+
+### Actions
+
+Users define actions as Python functions.
+
+Parameters must use structural type-hint bindings:
+
+* Actor["ActorType"]
+* Global["variable_name"]
+
+Example:
+
+```python
+def take_damage(player: Actor["Player"], dmg: Global["damage"]):
+    if player.life > 0:
+        player.life = player.life - dmg
+```
+
+### Supported Python Subset
+
+Statements:
+
+* Assignment
+* if / else
+* while
+* for (over list or range)
+
+Expressions:
+
+* Arithmetic (+ - * / %)
+* Boolean (and, or, not)
+* Comparisons (== != < <= > >=)
+* Constants (int, float, str, bool)
+* Attribute access on declared actor fields
+
+## Safety Constraints
+
+* No imports
+* No function calls (except controlled ones like range)
+* No decorators
+* No dynamic execution
+* No reflection
+* All attribute access must be validated against declared schemas
+
+## Goal
+
+Create a clean, modular, production-ready compiler architecture with:
+
+* Clear separation between DSL markers, type system, IR, compiler, and TS generator
+* Strong static validation
+* Deterministic TypeScript output
+* Extensibility for conditions, collisions, time rules, and UI logic
+
+The DSL must remain:
+
+* Minimal
+* Predictable
+* Strictly safe
+* Easy for LLMs to generate reliably
