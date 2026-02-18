@@ -160,3 +160,122 @@ def test_end_to_end_python_to_ts_runtime(tmp_path):
     assert result["camera"]["x"] == 5
     assert result["camera"]["y"] == 7
     assert result["solid_16_16"] is True
+
+
+def test_generator_actor_binding_rebinds_after_yield(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Coin(Actor):
+            pass
+
+        def spawn_after_wait(scene: Scene, tick: Tick, last_coin: Coin[-1]):
+            for _ in range(2):
+                yield tick
+            if last_coin is not None:
+                scene.spawn(Coin(x=last_coin.x + 1, y=0, active=True))
+
+        def remove_last(last_coin: Coin[-1]):
+            if last_coin is not None:
+                Actor.destroy(last_coin)
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Coin(uid="coin_1", x=10, y=0, active=True))
+        scene.add_rule(KeyboardCondition.begin_press("E"), spawn_after_wait)
+        scene.add_rule(KeyboardCondition.begin_press("D"), remove_last)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+
+    runtime_ts_path = (
+        Path(__file__).resolve().parent.parent
+        / "nanocalibur"
+        / "runtime"
+        / "interpreter.ts"
+    )
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(tmp_path / "game_logic.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    logic_js_path = compiled_dir / "game_logic.js"
+    runtime_path = compiled_dir / "interpreter.js"
+    runner_path = tmp_path / "run_runtime_rebind_test.js"
+    runner_path.write_text(
+        textwrap.dedent(
+            f"""
+            const spec = require({json.dumps(str(tmp_path / "game_spec.json"))});
+            const logic = require({json.dumps(str(logic_js_path))});
+            const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+            const actions = {{
+              spawn_after_wait: logic.spawn_after_wait,
+              remove_last: logic.remove_last
+            }};
+            const interpreter = new NanoCaliburInterpreter(spec, actions, {{}});
+
+            // Start generator (captures Coin[-1] binding, then yields).
+            interpreter.tick({{
+              keyboard: {{ begin: ["E"], on: ["E"], end: [] }}
+            }});
+            // Advance generator one step, then remove the coin in the same frame.
+            interpreter.tick({{
+              keyboard: {{ begin: ["D"], on: ["D"], end: [] }}
+            }});
+            // Resume generator after removal. With rebind, no spawn should happen.
+            interpreter.tick({{
+              keyboard: {{ begin: [], on: [], end: [] }}
+            }});
+
+            const state = interpreter.getState();
+            console.log(JSON.stringify({{
+              actor_count: state.actors.length
+            }}));
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        ["node", str(runner_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(proc.stdout.strip())
+    assert result["actor_count"] == 0

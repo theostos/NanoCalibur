@@ -148,6 +148,26 @@ def test_ts_emits_generator_action_for_tick_yield():
     assert "yield wait_tick;" in ts
 
 
+def test_ts_refreshes_actor_selector_bindings_after_yield():
+    ts = compile_to_ts(
+        """
+        class Coin(Actor):
+            pass
+
+        def spawn(scene: Scene, tick: Tick, last_coin: Coin[-1]):
+            yield tick
+            if last_coin is not None:
+                scene.spawn(Coin(x=last_coin.x + 1, y=0))
+        """
+    )
+
+    assert "const __nc_refresh_binding_last_coin = () => {" in ts
+    assert "let last_coin: any;" in ts
+    assert "__nc_refresh_binding_last_coin();" in ts
+    assert "yield tick;" in ts
+    assert "yield tick;\n  __nc_refresh_binding_last_coin();" in ts
+
+
 def test_ts_emits_random_helpers_and_calls():
     ts = compile_to_ts(
         """

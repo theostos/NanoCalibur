@@ -118,6 +118,7 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             lines = [f"{prefix}{fn_keyword} {action.name}(ctx) {{"]
 
         global_bindings = []
+        post_yield_refresh_calls: list[str] = []
         for param in action.params:
             if param.kind == BindingKind.SCENE:
                 lines.append(f"  let {param.name} = ctx.scene;")
@@ -148,55 +149,96 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             selector = param.actor_selector
             if selector is None:
                 raise DSLValidationError(f"Actor binding missing selector for '{param.name}'.")
-            if selector.index is not None:
-                index_value = selector.index
-                if param.actor_type is not None:
-                    actor_type = json.dumps(param.actor_type)
-                    filtered_var = f"__actors_{param.name}"
-                    lines.append(
-                        f"  const {filtered_var} = "
-                        f"ctx.actors.filter((a{': any' if typed else ''}) => a?.type === {actor_type});"
-                    )
-                    if index_value >= 0:
-                        lines.append(f"  let {param.name} = {filtered_var}[{index_value}];")
-                    else:
-                        lines.append(
-                            f"  let {param.name} = {filtered_var}[{filtered_var}.length + ({index_value})];"
-                        )
-                    continue
-
-                if index_value >= 0:
-                    lines.append(f"  let {param.name} = ctx.actors[{index_value}];")
+            if is_generator:
+                if typed:
+                    lines.append(f"  let {param.name}: any;")
                 else:
-                    lines.append(
-                        f"  let {param.name} = ctx.actors[ctx.actors.length + ({index_value})];"
-                    )
+                    lines.append(f"  let {param.name};")
+                refresh_fn = f"__nc_refresh_binding_{param.name}"
+                lines.append(f"  const {refresh_fn} = () => {{")
+                for binding_line in self._emit_actor_binding_lines(
+                    param,
+                    typed,
+                    declare_with_let=False,
+                ):
+                    lines.append(f"    {binding_line}")
+                lines.append("  };")
+                lines.append(f"  {refresh_fn}();")
+                post_yield_refresh_calls.append(refresh_fn)
                 continue
-            if selector.uid is not None:
-                uid = json.dumps(selector.uid)
-                if param.actor_type is not None and selector.uid == param.actor_type:
-                    actor_type = json.dumps(param.actor_type)
-                    lines.append(
-                        f"  let {param.name} = "
-                        f"ctx.actors.find((a{': any' if typed else ''}) => a?.type === {actor_type});"
-                    )
-                    continue
-                lines.append(
-                    f"  let {param.name} = "
-                    f"(ctx.getActorByUid ? ctx.getActorByUid({uid}) : "
-                    f"ctx.actors.find((a{': any' if typed else ''}) => a?.uid === {uid}));"
-                )
-                continue
-            raise DSLValidationError(f"Unsupported actor selector for '{param.name}'.")
+
+            for binding_line in self._emit_actor_binding_lines(
+                param,
+                typed,
+                declare_with_let=True,
+            ):
+                lines.append(f"  {binding_line}")
 
         for stmt in action.body:
-            lines.extend(self._emit_stmt(stmt, indent=1))
+            lines.extend(
+                self._emit_stmt(
+                    stmt,
+                    indent=1,
+                    post_yield_refresh_calls=post_yield_refresh_calls,
+                )
+            )
 
         for param_name, global_name in global_bindings:
             lines.append(f'  ctx.globals[{json.dumps(global_name)}] = {param_name};')
 
         lines.append("}")
         return "\n".join(lines)
+
+    def _emit_actor_binding_lines(
+        self,
+        param,
+        typed: bool,
+        declare_with_let: bool,
+    ) -> list[str]:
+        selector = param.actor_selector
+        if selector is None:
+            raise DSLValidationError(f"Actor binding missing selector for '{param.name}'.")
+
+        prefix = "let " if declare_with_let else ""
+
+        if selector.index is not None:
+            index_value = selector.index
+            if param.actor_type is not None:
+                actor_type = json.dumps(param.actor_type)
+                filtered_var = f"__actors_{param.name}"
+                out = [
+                    f"const {filtered_var} = "
+                    f"ctx.actors.filter((a{': any' if typed else ''}) => a?.type === {actor_type});"
+                ]
+                if index_value >= 0:
+                    out.append(f"{prefix}{param.name} = {filtered_var}[{index_value}];")
+                else:
+                    out.append(
+                        f"{prefix}{param.name} = {filtered_var}[{filtered_var}.length + ({index_value})];"
+                    )
+                return out
+
+            if index_value >= 0:
+                return [f"{prefix}{param.name} = ctx.actors[{index_value}];"]
+            return [
+                f"{prefix}{param.name} = ctx.actors[ctx.actors.length + ({index_value})];"
+            ]
+
+        if selector.uid is not None:
+            uid = json.dumps(selector.uid)
+            if param.actor_type is not None and selector.uid == param.actor_type:
+                actor_type = json.dumps(param.actor_type)
+                return [
+                    f"{prefix}{param.name} = "
+                    f"ctx.actors.find((a{': any' if typed else ''}) => a?.type === {actor_type});"
+                ]
+            return [
+                f"{prefix}{param.name} = "
+                f"(ctx.getActorByUid ? ctx.getActorByUid({uid}) : "
+                f"ctx.actors.find((a{': any' if typed else ''}) => a?.uid === {uid}));"
+            ]
+
+        raise DSLValidationError(f"Unsupported actor selector for '{param.name}'.")
 
     def _emit_predicate(self, predicate: PredicateIR, typed: bool, exported: bool):
         if typed:
@@ -211,8 +253,9 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
         lines.append("}")
         return "\n".join(lines)
 
-    def _emit_stmt(self, stmt, indent):
+    def _emit_stmt(self, stmt, indent, post_yield_refresh_calls=None):
         pad = "  " * indent
+        post_yield_refresh_calls = post_yield_refresh_calls or []
 
         if isinstance(stmt, Assign):
             return [pad + f"{self._emit_expr(stmt.target)} = {self._emit_expr(stmt.value)};"]
@@ -273,34 +316,65 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
         if isinstance(stmt, If):
             lines = [pad + f"if ({self._emit_expr(stmt.condition)}) {{"]
             for child in stmt.body:
-                lines.extend(self._emit_stmt(child, indent + 1))
+                lines.extend(
+                    self._emit_stmt(
+                        child,
+                        indent + 1,
+                        post_yield_refresh_calls=post_yield_refresh_calls,
+                    )
+                )
             lines.append(pad + "}")
             if stmt.orelse:
                 lines.append(pad + "else {")
                 for child in stmt.orelse:
-                    lines.extend(self._emit_stmt(child, indent + 1))
+                    lines.extend(
+                        self._emit_stmt(
+                            child,
+                            indent + 1,
+                            post_yield_refresh_calls=post_yield_refresh_calls,
+                        )
+                    )
                 lines.append(pad + "}")
             return lines
 
         if isinstance(stmt, While):
             lines = [pad + f"while ({self._emit_expr(stmt.condition)}) {{"]
             for child in stmt.body:
-                lines.extend(self._emit_stmt(child, indent + 1))
+                lines.extend(
+                    self._emit_stmt(
+                        child,
+                        indent + 1,
+                        post_yield_refresh_calls=post_yield_refresh_calls,
+                    )
+                )
             lines.append(pad + "}")
             return lines
 
         if isinstance(stmt, For):
             if isinstance(stmt.iterable, Range):
-                return self._emit_range_for(stmt, indent)
+                return self._emit_range_for(
+                    stmt,
+                    indent,
+                    post_yield_refresh_calls=post_yield_refresh_calls,
+                )
 
             lines = [pad + f"for (let {stmt.var} of {self._emit_expr(stmt.iterable)}) {{"]
             for child in stmt.body:
-                lines.extend(self._emit_stmt(child, indent + 1))
+                lines.extend(
+                    self._emit_stmt(
+                        child,
+                        indent + 1,
+                        post_yield_refresh_calls=post_yield_refresh_calls,
+                    )
+                )
             lines.append(pad + "}")
             return lines
 
         if isinstance(stmt, Yield):
-            return [pad + f"yield {self._emit_expr(stmt.value)};"]
+            lines = [pad + f"yield {self._emit_expr(stmt.value)};"]
+            for refresh_fn in post_yield_refresh_calls:
+                lines.append(pad + f"{refresh_fn}();")
+            return lines
 
         if isinstance(stmt, Continue):
             return [pad + "continue;"]
@@ -323,8 +397,9 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             return any(self._stmt_contains_yield(child) for child in stmt.body)
         return False
 
-    def _emit_range_for(self, stmt: For, indent: int):
+    def _emit_range_for(self, stmt: For, indent: int, post_yield_refresh_calls=None):
         pad = "  " * indent
+        post_yield_refresh_calls = post_yield_refresh_calls or []
         args = stmt.iterable.args
         if len(args) == 1:
             start_expr = "0"
@@ -350,7 +425,13 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             + f"{stmt.var} += {step_var}) {{"
         )
         for child in stmt.body:
-            lines.extend(self._emit_stmt(child, indent + 1))
+            lines.extend(
+                self._emit_stmt(
+                    child,
+                    indent + 1,
+                    post_yield_refresh_calls=post_yield_refresh_calls,
+                )
+            )
         lines.append(pad + "}")
         return lines
 
