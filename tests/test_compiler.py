@@ -364,6 +364,37 @@ def test_accept_scene_instance_calls():
     assert spawn_bonus.body[1].name == "scene_spawn_actor"
 
 
+def test_accept_scene_elapsed_read_access():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def read_elapsed(scene: Scene, score: Global["score"]):
+            if scene.elapsed >= 0:
+                score = score + 1
+        """
+    )
+
+    action = actions[0]
+    if_stmt = action.body[0]
+    assert isinstance(if_stmt, If)
+    assert isinstance(if_stmt.condition, Binary)
+
+
+def test_reject_scene_elapsed_write_access():
+    with pytest.raises(DSLValidationError, match="scene.elapsed is read-only"):
+        compile_source(
+            """
+            class Player(Actor):
+                speed: int
+
+            def bad(scene: Scene):
+                scene.elapsed = 1
+            """
+        )
+
+
 def test_accept_scene_spawn_with_actor_constructor_variable_and_alias():
     actions = compile_source(
         """

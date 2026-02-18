@@ -129,7 +129,12 @@ class Scene:
 
     ``Scene(...)`` is used in ``game.set_scene(...)``.
     ``scene: Scene`` is used in action bindings.
+
+    Read-only runtime field:
+    - ``elapsed`` number of ticks since game start.
     """
+
+    elapsed: int
 
     def __class_getitem__(cls, item):
         """Allow ``Scene[...]`` syntax if needed for compatibility."""

@@ -63,6 +63,7 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
     )
     assert any(tool["name"] == "boost_heal" for tool in spec["tools"])
     assert spec["predicates"][0]["name"] == "is_dead"
+    assert spec["predicates"][0]["params"][0]["kind"] == "actor"
 
     ir_data = json.loads(ir_path.read_text(encoding="utf-8"))
     assert ir_data["actions"][0]["name"] == "heal"

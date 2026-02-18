@@ -1,6 +1,7 @@
 import textwrap
 
 from nanocalibur.compiler import DSLCompiler
+from nanocalibur.project_compiler import ProjectCompiler
 from nanocalibur.ts_generator import TSGenerator
 
 
@@ -8,6 +9,11 @@ def compile_to_ts(source: str) -> str:
     compiler = DSLCompiler()
     actions = compiler.compile(textwrap.dedent(source))
     return TSGenerator().generate(actions)
+
+
+def compile_project_to_ts(source: str) -> str:
+    project = ProjectCompiler().compile(textwrap.dedent(source))
+    return TSGenerator().generate(project.actions, project.predicates)
 
 
 def test_ts_preserves_string_constant_case():
@@ -266,3 +272,32 @@ def test_ts_emits_continue_statement():
     )
 
     assert "continue;" in ts
+
+
+def test_ts_emits_predicate_with_context_bindings():
+    ts = compile_project_to_ts(
+        """
+        class Player(Actor):
+            life: int
+
+        def mark_dead(flag: Global["is_dead"]):
+            flag = True
+
+        def should_mark(scene: Scene, score: Global["score"], wait_tick: Tick, player: Player) -> bool:
+            return player.life <= score and scene.elapsed >= 0 and wait_tick == wait_tick
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_global("is_dead", False)
+        game.add_global("score", 1)
+        scene.add_actor(Player(uid="hero", life=1))
+        scene.add_rule(LogicalRelated(should_mark, Player), mark_dead)
+        """
+    )
+
+    assert "export function should_mark(ctx: GameContext): boolean {" in ts
+    assert "let scene = ctx.scene;" in ts
+    assert 'let score = ctx.globals["score"];' in ts
+    assert "let wait_tick = ctx.tick;" in ts
+    assert "__nanocalibur_logical_target__" in ts

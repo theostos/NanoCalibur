@@ -37,6 +37,7 @@ export interface NanoCaliburFrameInput {
 
 export interface InterpreterSceneState {
   gravityEnabled: boolean;
+  elapsed: number;
 }
 
 export interface InterpreterState {
@@ -64,10 +65,11 @@ interface ConditionMatchResult {
 
 type ActionGenerator = Iterator<unknown, void, unknown>;
 type ActionFn = (ctx: Record<string, any>) => void | ActionGenerator;
-type PredicateFn = (actor: Record<string, any>) => boolean;
+type PredicateFn = (payload: Record<string, any>) => boolean;
 
 const COLLISION_LEFT_BINDING_UID = "__nanocalibur_collision_left__";
 const COLLISION_RIGHT_BINDING_UID = "__nanocalibur_collision_right__";
+const LOGICAL_TARGET_BINDING_UID = "__nanocalibur_logical_target__";
 
 export class NanoCaliburInterpreter {
   private readonly spec: Record<string, any>;
@@ -78,7 +80,10 @@ export class NanoCaliburInterpreter {
   private readonly rules: Record<string, any>[];
   private readonly map: Record<string, any> | null;
   private readonly cameraConfig: Record<string, any> | null;
-  private readonly predicateMeta: Record<string, { actor_type: string | null }>;
+  private readonly predicateMeta: Record<
+    string,
+    { actor_type: string | null; params: Array<Record<string, any>> | null }
+  >;
   private readonly maskedTiles: Set<string>;
   private readonly actorRefGlobals = new Map<string, string>();
   private readonly runningActions: ActionGenerator[] = [];
@@ -126,6 +131,7 @@ export class NanoCaliburInterpreter {
       }
     }
     this.applyParentBindings(previousPositions);
+    this.sceneState.elapsed += 1;
   }
 
   getState(): InterpreterState {
@@ -134,7 +140,10 @@ export class NanoCaliburInterpreter {
       actors: this.actors,
       camera: this.getCameraState(),
       map: this.map,
-      scene: { gravityEnabled: this.sceneState.gravityEnabled },
+      scene: {
+        gravityEnabled: this.sceneState.gravityEnabled,
+        elapsed: this.sceneState.elapsed,
+      },
     };
   }
 
@@ -143,7 +152,10 @@ export class NanoCaliburInterpreter {
   }
 
   getSceneState(): InterpreterSceneState {
-    return { gravityEnabled: this.sceneState.gravityEnabled };
+    return {
+      gravityEnabled: this.sceneState.gravityEnabled,
+      elapsed: this.sceneState.elapsed,
+    };
   }
 
   getTools(): Array<{ name: string; tool_docstring: string; action: string }> {
@@ -213,6 +225,7 @@ export class NanoCaliburInterpreter {
       globals: this.globals,
       actors: this.actors,
       tick: 1,
+      elapsed: this.sceneState.elapsed,
       getActorByUid: (uid: string) => {
         if (collisionPair) {
           if (uid === COLLISION_LEFT_BINDING_UID) {
@@ -228,6 +241,7 @@ export class NanoCaliburInterpreter {
       destroyActor: (actor: Record<string, any>) => this.destroyActor(actor),
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
+        elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
         spawnActor: (
           actorType: string,
@@ -236,6 +250,33 @@ export class NanoCaliburInterpreter {
         ) => this.spawnActor(actorType, uid, fields || {}),
       },
       tool: toolCall,
+    };
+  }
+
+  private buildPredicateContext(
+    logicalTarget: Record<string, any>,
+  ): Record<string, any> {
+    return {
+      globals: this.globals,
+      actors: this.actors,
+      tick: 1,
+      elapsed: this.sceneState.elapsed,
+      getActorByUid: (uid: string) => {
+        if (uid === LOGICAL_TARGET_BINDING_UID) {
+          return logicalTarget;
+        }
+        return this.getActorByUid(uid);
+      },
+      scene: {
+        gravityEnabled: this.sceneState.gravityEnabled,
+        elapsed: this.sceneState.elapsed,
+        setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        spawnActor: (
+          actorType: string,
+          uid: string,
+          fields?: Record<string, any>,
+        ) => this.spawnActor(actorType, uid, fields || {}),
+      },
     };
   }
 
@@ -298,6 +339,7 @@ export class NanoCaliburInterpreter {
   private initSceneState(sceneSpec: Record<string, any> | null): InterpreterSceneState {
     return {
       gravityEnabled: Boolean(sceneSpec && sceneSpec.gravity_enabled),
+      elapsed: 0,
     };
   }
 
@@ -337,14 +379,25 @@ export class NanoCaliburInterpreter {
   }
 
   private buildPredicateMeta(
-    predicateDefs: Array<string | { name?: string; actor_type?: string | null }>,
-  ): Record<string, { actor_type: string | null }> {
-    const out: Record<string, { actor_type: string | null }> = {};
+    predicateDefs: Array<
+      string | { name?: string; actor_type?: string | null; params?: unknown }
+    >,
+  ): Record<string, { actor_type: string | null; params: Array<Record<string, any>> | null }> {
+    const out: Record<
+      string,
+      { actor_type: string | null; params: Array<Record<string, any>> | null }
+    > = {};
     for (const item of predicateDefs) {
       if (typeof item === "string") {
-        out[item] = { actor_type: null };
+        out[item] = { actor_type: null, params: null };
       } else if (item && typeof item.name === "string") {
-        out[item.name] = { actor_type: item.actor_type || null };
+        const params = Array.isArray(item.params)
+          ? item.params.filter(
+              (entry): entry is Record<string, any> =>
+                Boolean(entry) && typeof entry === "object",
+            )
+          : null;
+        out[item.name] = { actor_type: item.actor_type || null, params };
       }
     }
     return out;
@@ -398,15 +451,24 @@ export class NanoCaliburInterpreter {
       if (typeof fn !== "function") {
         throw new Error(`Missing predicate function '${condition.predicate}'.`);
       }
-      const predicateType =
-        this.predicateMeta[condition.predicate] &&
-        this.predicateMeta[condition.predicate].actor_type;
+      const predicateMeta = this.predicateMeta[condition.predicate] || {
+        actor_type: null,
+        params: null,
+      };
+      const predicateType = predicateMeta.actor_type;
       const selected = this.selectActors(condition.target).filter((actor) => {
         if (!predicateType) {
           return true;
         }
         return actor.type === predicateType;
       });
+      if (predicateMeta.params && predicateMeta.params.length > 0) {
+        return {
+          matched: selected.some((actor) =>
+            Boolean(fn(this.buildPredicateContext(actor))),
+          ),
+        };
+      }
       return { matched: selected.some((actor) => Boolean(fn(actor))) };
     }
 

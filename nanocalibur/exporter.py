@@ -26,6 +26,7 @@ from nanocalibur.game_model import (
 )
 from nanocalibur.project_compiler import ProjectCompiler
 from nanocalibur.ts_generator import TSGenerator
+from nanocalibur.ir import ParamBinding
 
 
 def compile_project(source: str, source_path: str | None = None) -> ProjectSpec:
@@ -75,6 +76,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
             {
                 "name": predicate.name,
                 "actor_type": predicate.actor_type,
+                "params": [_param_binding_to_dict(param) for param in predicate.params],
             }
             for predicate in project.predicates
         ],
@@ -268,6 +270,24 @@ def _sprite_to_dict(sprite: SpriteSpec) -> Dict[str, Any]:
         "default_clip": sprite.default_clip,
         "clips": {clip.name: _clip_to_dict(clip) for clip in sprite.clips},
     }
+
+
+def _param_binding_to_dict(param: ParamBinding) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "name": param.name,
+        "kind": param.kind.value,
+        "global_name": param.global_name,
+        "actor_type": param.actor_type,
+        "actor_list_type": param.actor_list_type,
+    }
+    if param.actor_selector is None:
+        payload["actor_selector"] = None
+    else:
+        payload["actor_selector"] = {
+            "uid": param.actor_selector.uid,
+            "index": param.actor_selector.index,
+        }
+    return payload
 
 
 def _tools_to_dict(rules: list[RuleSpec]) -> list[Dict[str, Any]]:

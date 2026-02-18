@@ -41,6 +41,7 @@ class TSGenerator:
         return """\
 export interface RuntimeSceneContext {
   gravityEnabled?: boolean;
+  elapsed?: number;
   setGravityEnabled?: (enabled: boolean) => void;
   spawnActor?: (actorType: string, uid: string, fields?: Record<string, any>) => any;
 }
@@ -49,6 +50,7 @@ export interface GameContext {
   globals: Record<string, any>;
   actors: any[];
   tick: number;
+  elapsed?: number;
   getActorByUid?: (uid: string) => any;
   playAnimation?: (actor: any, clipName: string) => void;
   destroyActor?: (actor: any) => void;
@@ -243,12 +245,44 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
     def _emit_predicate(self, predicate: PredicateIR, typed: bool, exported: bool):
         if typed:
             prefix = "export " if exported else ""
-            lines = [
-                f"{prefix}function {predicate.name}({predicate.param_name}: any): boolean {{"
-            ]
+            lines = [f"{prefix}function {predicate.name}(ctx: GameContext): boolean {{"]
         else:
             prefix = "export " if exported else ""
-            lines = [f"{prefix}function {predicate.name}({predicate.param_name}) {{"]
+            lines = [f"{prefix}function {predicate.name}(ctx) {{"]
+
+        for param in predicate.params:
+            if param.kind == BindingKind.SCENE:
+                lines.append(f"  let {param.name} = ctx.scene;")
+                continue
+
+            if param.kind == BindingKind.TICK:
+                lines.append(f"  let {param.name} = ctx.tick;")
+                continue
+
+            if param.kind == BindingKind.GLOBAL:
+                lines.append(
+                    f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
+                )
+                continue
+
+            if param.kind == BindingKind.ACTOR_LIST:
+                if param.actor_list_type is None:
+                    lines.append(f"  let {param.name} = ctx.actors;")
+                else:
+                    actor_type = json.dumps(param.actor_list_type)
+                    lines.append(
+                        f"  let {param.name} = "
+                        f"ctx.actors.filter((a{': any' if typed else ''}) => a?.type === {actor_type});"
+                    )
+                continue
+
+            for binding_line in self._emit_actor_binding_lines(
+                param,
+                typed,
+                declare_with_let=True,
+            ):
+                lines.append(f"  {binding_line}")
+
         lines.append(f"  return {self._emit_expr(predicate.body)};")
         lines.append("}")
         return "\n".join(lines)

@@ -275,8 +275,6 @@ class DSLCompiler:
         with dsl_node_context(fn):
             if fn.decorator_list:
                 raise DSLValidationError("Decorators are not allowed on predicate functions.")
-            if len(fn.args.args) != 1:
-                raise DSLValidationError("Logical predicate must accept exactly one actor argument.")
             if fn.args.vararg is not None or fn.args.kwarg is not None:
                 raise DSLValidationError("Variadic predicate parameters are not allowed.")
             if fn.args.posonlyargs or fn.args.kwonlyargs or fn.args.kw_defaults:
@@ -287,14 +285,38 @@ class DSLCompiler:
             ):
                 raise DSLValidationError("Predicate function must have return type 'bool'.")
 
-            param = fn.args.args[0]
-            if not isinstance(param.annotation, ast.Name):
-                raise DSLValidationError("Predicate parameter must be an actor schema type.")
-            actor_type = param.annotation.id
-            if actor_type not in self.schemas.actor_fields:
+            params: List[ParamBinding] = []
+            for arg in fn.args.args:
+                with dsl_node_context(arg):
+                    if arg.annotation is None:
+                        raise DSLValidationError(
+                            "All predicate parameters must have bindings."
+                        )
+                    params.append(self._parse_binding(arg))
+
+            actor_var_types: Dict[str, str] = {}
+            actor_list_var_types: Dict[str, Optional[str]] = {}
+            for param in params:
+                if param.kind == BindingKind.ACTOR and param.actor_type is not None:
+                    actor_var_types[param.name] = param.actor_type
+                if param.kind == BindingKind.ACTOR_LIST:
+                    actor_list_var_types[param.name] = param.actor_list_type
+                if (
+                    param.kind == BindingKind.GLOBAL
+                    and param.global_name in self.global_actor_types
+                    and self.global_actor_types[param.global_name] is not None
+                ):
+                    actor_var_types[param.name] = self.global_actor_types[param.global_name]
+
+            anchor_param = next(
+                (param for param in params if param.kind == BindingKind.ACTOR),
+                None,
+            )
+            if anchor_param is None:
                 raise DSLValidationError(
-                    f"Unknown actor schema '{actor_type}' in predicate '{fn.name}'."
+                    "Logical predicate must declare at least one actor binding parameter."
                 )
+
             if len(fn.body) != 1 or not isinstance(fn.body[0], ast.Return):
                 raise DSLValidationError(
                     "Predicate body must be a single return statement."
@@ -303,19 +325,20 @@ class DSLCompiler:
                 raise DSLValidationError("Predicate return statement must return a value.")
 
             scope = ActionScope(
-                defined_names={param.arg},
-                actor_var_types={param.arg: actor_type},
-                actor_list_var_types={},
-                scene_vars=set(),
-                tick_vars=set(),
+                defined_names={p.name for p in params},
+                actor_var_types=actor_var_types,
+                actor_list_var_types=actor_list_var_types,
+                scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
+                tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
                 spawn_actor_templates={},
             )
             expr = self._compile_expr(fn.body[0].value, scope, allow_range_call=False)
             return PredicateIR(
                 name=fn.name,
-                param_name=param.arg,
-                actor_type=actor_type,
+                params=params,
                 body=expr,
+                param_name=anchor_param.name,
+                actor_type=anchor_param.actor_type,
             )
 
     def _parse_binding(self, arg: ast.arg) -> ParamBinding:
@@ -906,7 +929,14 @@ class DSLCompiler:
         if isinstance(target, ast.Name):
             return Var(target.id)
         if isinstance(target, ast.Attribute):
-            return self._compile_attr(target, scope)
+            compiled = self._compile_attr(target, scope)
+            if (
+                isinstance(compiled, Attr)
+                and compiled.obj in scope.scene_vars
+                and compiled.field == "elapsed"
+            ):
+                raise DSLValidationError("scene.elapsed is read-only.")
+            return compiled
         raise DSLValidationError("Assignment target must be a variable or actor field.")
 
     # ---------------- Expressions ----------------
@@ -1094,6 +1124,13 @@ class DSLCompiler:
         obj_name = expr.value.id
         if obj_name not in scope.defined_names:
             raise DSLValidationError(f"Unknown variable '{obj_name}'.")
+
+        if obj_name in scope.scene_vars:
+            if expr.attr != "elapsed":
+                raise DSLValidationError(
+                    "Scene bindings only expose read-only 'elapsed'."
+                )
+            return Attr(obj=obj_name, field="elapsed")
 
         actor_type = scope.actor_var_types.get(obj_name)
         if actor_type is None:

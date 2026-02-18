@@ -79,6 +79,73 @@ def test_compile_project_with_conditions_map_and_camera():
     assert project.rules[0].condition.phase == InputPhase.ON
 
 
+def test_logical_predicate_accepts_multiple_binding_types():
+    project = compile_project(
+        """
+        class Player(Actor):
+            life: int
+
+        def mark_dead(flag: Global["is_dead"]):
+            flag = True
+
+        def should_mark(
+            scene: Scene,
+            score: Global["score"],
+            wait_tick: Tick,
+            player: Player,
+            hero: Player["hero"],
+        ) -> bool:
+            return player.life <= score and scene.elapsed >= 0 and wait_tick == wait_tick and hero.uid == "hero"
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_global("is_dead", False)
+        game.add_global("score", 1)
+        scene.add_actor(Player(uid="hero", life=1))
+        scene.add_rule(LogicalRelated(should_mark, Player), mark_dead)
+        """
+    )
+
+    assert len(project.predicates) == 1
+    predicate = project.predicates[0]
+    assert predicate.name == "should_mark"
+    assert len(predicate.params) == 5
+    assert predicate.params[0].kind.value == "scene"
+    assert predicate.params[1].kind.value == "global"
+    assert predicate.params[2].kind.value == "tick"
+    assert predicate.params[3].kind.value == "actor"
+    assert predicate.params[3].actor_selector is not None
+    assert predicate.params[3].actor_selector.uid == "__nanocalibur_logical_target__"
+    assert predicate.params[4].kind.value == "actor"
+    assert predicate.params[4].actor_selector is not None
+    assert predicate.params[4].actor_selector.uid == "hero"
+
+
+def test_logical_predicate_requires_actor_binding_parameter():
+    with pytest.raises(DSLValidationError, match="must declare at least one actor binding parameter"):
+        compile_project(
+            """
+            class Player(Actor):
+                life: int
+
+            def mark_dead(flag: Global["is_dead"]):
+                flag = True
+
+            def invalid(score: Global["score"]) -> bool:
+                return score > 0
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_global("is_dead", False)
+            game.add_global("score", 1)
+            scene.add_actor(Player(uid="hero", life=1))
+            scene.add_rule(LogicalRelated(invalid, Player), mark_dead)
+            """
+        )
+
+
 def test_compile_project_with_scene_managed_actors_rules_map_and_camera():
     project = compile_project(
         """

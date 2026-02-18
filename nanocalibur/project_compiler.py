@@ -55,6 +55,7 @@ from nanocalibur.typesys import FieldType, ListType, Prim, PrimType
 
 COLLISION_LEFT_BINDING_UID = "__nanocalibur_collision_left__"
 COLLISION_RIGHT_BINDING_UID = "__nanocalibur_collision_right__"
+LOGICAL_TARGET_BINDING_UID = "__nanocalibur_logical_target__"
 
 
 class ProjectCompiler:
@@ -371,6 +372,7 @@ class ProjectCompiler:
         collision_bound_actions: set[str] = set()
         non_collision_actions: set[str] = set()
         collision_warning_actions: set[str] = set()
+        logical_warning_predicates: set[str] = set()
         tool_action_by_name: Dict[str, str] = {}
         name_aliases: Dict[str, str] = {}
         callable_aliases: Dict[str, ast.AST] = {}
@@ -414,6 +416,20 @@ class ProjectCompiler:
                         f"Action '{action_name}' cannot be used by both collision and non-collision rules."
                     )
                 non_collision_actions.add(action_name)
+
+            if isinstance(condition, LogicalConditionSpec):
+                predicate_name = condition.predicate_name
+                if predicate_name not in predicates:
+                    raise DSLValidationError(
+                        f"Unknown predicate '{predicate_name}' in LogicalRelated(...)."
+                    )
+                predicates[predicate_name] = self._bind_logical_predicate_params(
+                    predicate_name=predicate_name,
+                    predicate=predicates[predicate_name],
+                    condition=condition,
+                    warned_predicates=logical_warning_predicates,
+                    source_node=source_node,
+                )
 
             rules.append(RuleSpec(condition=condition, action_name=action_name))
             if isinstance(condition, ToolConditionSpec):
@@ -2168,6 +2184,76 @@ class ProjectCompiler:
         params[1] = rebound_right
         return replace(action, params=params)
 
+    def _bind_logical_predicate_params(
+        self,
+        predicate_name: str,
+        predicate: PredicateIR,
+        condition: LogicalConditionSpec,
+        warned_predicates: set[str],
+        source_node: Optional[ast.AST] = None,
+    ) -> PredicateIR:
+        params = list(predicate.params)
+        actor_param_index = next(
+            (idx for idx, param in enumerate(params) if param.kind == BindingKind.ACTOR),
+            None,
+        )
+        if actor_param_index is None:
+            raise DSLValidationError(
+                f"Logical predicate '{predicate_name}' must declare at least one actor parameter."
+            )
+
+        actor_param = params[actor_param_index]
+        actor_selector = actor_param.actor_selector
+        has_explicit_selector = (
+            actor_selector is not None
+            and (
+                actor_selector.index is not None
+                or (
+                    actor_selector.uid is not None
+                    and (
+                        actor_param.actor_type is None
+                        or actor_selector.uid != actor_param.actor_type
+                    )
+                )
+            )
+        )
+        if predicate_name not in warned_predicates and has_explicit_selector:
+            warnings.warn(
+                format_dsl_diagnostic(
+                    f"LogicalRelated imposes actor binding for predicate '{predicate_name}' "
+                    f"parameter '{actor_param.name}'. Explicit selector annotation on that "
+                    "parameter is ignored.",
+                    node=source_node,
+                ),
+                stacklevel=2,
+            )
+            warned_predicates.add(predicate_name)
+
+        if (
+            actor_param.actor_type is not None
+            and condition.target.actor_type is not None
+            and actor_param.actor_type != condition.target.actor_type
+        ):
+            raise DSLValidationError(
+                f"LogicalRelated selector type '{condition.target.actor_type}' does not "
+                f"match predicate actor parameter type '{actor_param.actor_type}'."
+            )
+
+        bound_actor_type = actor_param.actor_type or condition.target.actor_type
+        params[actor_param_index] = ParamBinding(
+            name=actor_param.name,
+            kind=BindingKind.ACTOR,
+            actor_selector=ActorSelector(uid=LOGICAL_TARGET_BINDING_UID),
+            actor_type=bound_actor_type,
+        )
+
+        return replace(
+            predicate,
+            params=params,
+            param_name=actor_param.name,
+            actor_type=bound_actor_type,
+        )
+
     def _validate_sprite_targets(
         self,
         actors: List[ActorInstanceSpec],
@@ -2348,14 +2434,19 @@ def _looks_like_action(fn: ast.FunctionDef) -> bool:
 
 
 def _looks_like_predicate(fn: ast.FunctionDef, compiler: DSLCompiler) -> bool:
-    if len(fn.args.args) != 1:
+    if not (isinstance(fn.returns, ast.Name) and fn.returns.id == "bool"):
         return False
-    arg = fn.args.args[0]
-    if not isinstance(arg.annotation, ast.Name):
+    if fn.args.vararg is not None or fn.args.kwarg is not None:
         return False
-    if arg.annotation.id not in compiler.schemas.actor_fields:
+    if fn.args.posonlyargs or fn.args.kwonlyargs or fn.args.kw_defaults:
         return False
-    return isinstance(fn.returns, ast.Name) and fn.returns.id == "bool"
+    for arg in fn.args.args:
+        if arg.annotation is None:
+            return False
+        if isinstance(arg.annotation, (ast.Name, ast.Subscript)):
+            continue
+        return False
+    return True
 
 
 def _as_game_method_call(

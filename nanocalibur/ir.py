@@ -142,6 +142,7 @@ class ActionIR:
 @dataclass(frozen=True)
 class PredicateIR:
     name: str
-    param_name: str
-    actor_type: str
+    params: List[ParamBinding]
     body: Expr
+    param_name: Optional[str] = None
+    actor_type: Optional[str] = None
