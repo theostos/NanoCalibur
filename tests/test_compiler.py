@@ -517,7 +517,7 @@ def test_accept_tick_binding_and_yield_statements():
         def idle(wait_token: Tick, player: Player["hero"]):
             yield wait_token
             yield wait_token
-            Actor.play(player, "idle")
+            player.play("idle")
         """
     )
 
@@ -527,6 +527,19 @@ def test_accept_tick_binding_and_yield_statements():
     assert isinstance(idle.body[1], Yield)
     assert isinstance(idle.body[2], CallStmt)
     assert idle.body[2].name == "play_animation"
+
+
+def test_reject_static_actor_play_calls():
+    with pytest.raises(DSLValidationError, match="Unsupported call statement in action body"):
+        compile_source(
+            """
+            class Player(Actor):
+                speed: int
+
+            def idle(player: Player["hero"]):
+                Actor.play(player, "idle")
+            """
+        )
 
 
 def test_reject_yield_for_non_tick_parameter():
@@ -567,7 +580,7 @@ def test_accept_none_comparisons_on_actor_bindings():
             if last_coin is None:
                 pass
             if last_coin is not None:
-                Actor.destroy(last_coin)
+                last_coin.destroy()
         """
     )
 

@@ -145,7 +145,7 @@ def test_ts_emits_generator_action_for_tick_yield():
 
         def idle(player: Player["hero"], wait_tick: Tick):
             yield wait_tick
-            Actor.play(player, "idle")
+            player.play("idle")
         """
     )
 
@@ -233,7 +233,7 @@ def test_ts_emits_negative_index_lookup_for_typed_actor_binding():
             pass
 
         def use_last(last_coin: Coin[-1]):
-            Actor.destroy(last_coin)
+            last_coin.destroy()
         """
     )
 
@@ -251,7 +251,7 @@ def test_ts_emits_null_checks_for_none_comparisons():
             if last_coin is None:
                 pass
             if last_coin is not None:
-                Actor.destroy(last_coin)
+                last_coin.destroy()
         """
     )
 

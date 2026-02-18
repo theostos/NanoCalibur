@@ -290,7 +290,7 @@ def test_generator_actor_binding_rebinds_after_yield(tmp_path):
 
         def remove_last(last_coin: Coin[-1]):
             if last_coin is not None:
-                Actor.destroy(last_coin)
+                last_coin.destroy()
 
         game = Game()
         scene = Scene(gravity=False)

@@ -50,6 +50,8 @@ The project must make LLM interaction first-class, not an afterthought.
 - Blocking semantics are mask-based.
 - `None` actor mask means no blocking.
 - Equal actor masks mutually block and separate.
+- Actor animation/lifecycle actions use instance methods (`actor.play("clip")`, `actor.destroy()`), not static `Actor.play(...)`/`Actor.destroy(...)`.
+- UI overlay is opt-in via `game.set_interface(html)`; no default hardcoded interface should be assumed.
 - Keep condition/action semantics deterministic and statically checkable where possible.
 
 ## Dev Rules

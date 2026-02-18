@@ -105,14 +105,12 @@ class Actor:
         """Describe an actor instance payload for scene/game registration."""
         return None
 
-    @staticmethod
-    def play(_actor, _clip: str):
-        """Request playback of a named animation clip on an actor."""
+    def play(self, _clip: str):
+        """Request playback of a named animation clip on this actor."""
         return None
 
-    @staticmethod
-    def destroy(_actor):
-        """Request destruction/despawn of an actor."""
+    def destroy(self):
+        """Request destruction/despawn of this actor."""
         return None
 
     def attached_to(self, _parent: "Actor | str"):

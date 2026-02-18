@@ -576,13 +576,11 @@ class DSLCompiler:
         owner = expr.func.value.id
         method = expr.func.attr
 
-        if owner in {"Actor", "ActorModel"} or owner in self.schemas.actor_fields:
-            if method == "play":
-                return self._compile_static_actor_play(expr, scope, owner)
-            if method == "destroy":
-                return self._compile_static_actor_destroy(expr, scope, owner)
-
         if owner in scope.actor_var_types:
+            if method == "play":
+                return self._compile_actor_instance_play_call(expr, scope, owner)
+            if method == "destroy":
+                return self._compile_actor_instance_destroy_call(expr, owner)
             if method == "attached_to":
                 return self._compile_actor_instance_attach_call(expr, scope, owner)
             if method == "detached":
@@ -631,6 +629,30 @@ class DSLCompiler:
             )
         return Assign(target=Attr(obj=owner, field="parent"), value=Const(""))
 
+    def _compile_actor_instance_play_call(
+        self, expr: ast.Call, scope: ActionScope, owner: str
+    ) -> CallStmt:
+        if expr.keywords:
+            raise DSLValidationError(
+                f"{owner}.play(...) does not accept keyword arguments."
+            )
+        if len(expr.args) != 1:
+            raise DSLValidationError(f"{owner}.play(...) expects one clip name argument.")
+
+        clip_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+        if isinstance(clip_arg, Const) and not isinstance(clip_arg.value, str):
+            raise DSLValidationError(f"{owner}.play(...) clip name must be a string.")
+        return CallStmt(name="play_animation", args=[Var(owner), clip_arg])
+
+    def _compile_actor_instance_destroy_call(
+        self, expr: ast.Call, owner: str
+    ) -> CallStmt:
+        if expr.keywords or expr.args:
+            raise DSLValidationError(
+                f"{owner}.destroy(...) does not accept arguments."
+            )
+        return CallStmt(name="destroy_actor", args=[Var(owner)])
+
     def _compile_scene_instance_call(
         self, expr: ast.Call, scope: ActionScope, owner: str
     ) -> CallStmt:
@@ -650,43 +672,6 @@ class DSLCompiler:
                 source_name=f"{owner}.spawn(...)",
             )
         raise DSLValidationError("Unsupported Scene method call in action body.")
-
-    def _compile_static_actor_play(
-        self, expr: ast.Call, scope: ActionScope, owner: str
-    ) -> CallStmt:
-        if expr.keywords:
-            raise DSLValidationError(
-                f"{owner}.play(...) does not accept keyword arguments."
-            )
-        if len(expr.args) != 2:
-            raise DSLValidationError(f"{owner}.play(...) expects actor and clip name.")
-
-        actor_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
-        actor_var = self._require_typed_actor_var(
-            actor_arg, scope, f"{owner}.play(...)"
-        )
-
-        clip_arg = self._compile_expr(expr.args[1], scope, allow_range_call=False)
-        if isinstance(clip_arg, Const) and not isinstance(clip_arg.value, str):
-            raise DSLValidationError(f"{owner}.play(...) clip name must be a string.")
-
-        return CallStmt(name="play_animation", args=[actor_var, clip_arg])
-
-    def _compile_static_actor_destroy(
-        self, expr: ast.Call, scope: ActionScope, owner: str
-    ) -> CallStmt:
-        if expr.keywords:
-            raise DSLValidationError(
-                f"{owner}.destroy(...) does not accept keyword arguments."
-            )
-        if len(expr.args) != 1:
-            raise DSLValidationError(f"{owner}.destroy(...) expects one actor argument.")
-
-        actor_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
-        actor_var = self._require_typed_actor_var(
-            actor_arg, scope, f"{owner}.destroy(...)"
-        )
-        return CallStmt(name="destroy_actor", args=[actor_var])
 
     def _compile_static_scene_call(self, expr: ast.Call, scope: ActionScope) -> CallStmt:
         method = expr.func.attr
@@ -899,19 +884,6 @@ class DSLCompiler:
                     f"{source_name} actor constructor uid must be a string."
                 )
         return actor_type_name, uid_expr, field_nodes
-
-    def _require_typed_actor_var(
-        self, expr, scope: ActionScope, source_name: str
-    ) -> Var:
-        if not isinstance(expr, Var):
-            raise DSLValidationError(
-                f"{source_name} actor argument must be an actor variable."
-            )
-        if expr.name not in scope.actor_var_types:
-            raise DSLValidationError(
-                f"{source_name} actor argument must be a typed actor binding."
-            )
-        return expr
 
     def _require_scene_var(
         self, expr, scope: ActionScope, source_name: str

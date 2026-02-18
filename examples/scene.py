@@ -13,7 +13,6 @@ from nanocalibur.dsl_markers import (
     TileMap,
     ToolCalling,
     condition,
-    OnButton,
 )
 
 
@@ -28,27 +27,27 @@ class Coin(Actor):
 @condition(KeyboardCondition.on_press("d"))
 def move_right(player: Player["hero"]):
     player.x = player.x + player.speed
-    Actor.play(player, "run")
+    player.play("run")
 
 @condition(KeyboardCondition.on_press("q"))
 def move_left(player: Player["hero"]):
     player.x = player.x - player.speed
-    Actor.play(player, "run")
+    player.play("run")
 
 @condition(KeyboardCondition.on_press("z"))
 def move_up(player: Player["hero"]):
     player.y = player.y - player.speed
-    Actor.play(player, "run")
+    player.play("run")
 
 @condition(KeyboardCondition.on_press("s"))
 def move_down(player: Player["hero"]):
     player.y = player.y + player.speed
-    Actor.play(player, "run")
+    player.play("run")
 
 
 @condition(KeyboardCondition.end_press(["z", "q", "s", "d"]))
 def idle(player: Player["hero"]):
-    Actor.play(player, "idle")
+    player.play("idle")
 
 @condition(CollisionRelated(Player["hero"], Coin))
 def collect_coin(
@@ -57,7 +56,7 @@ def collect_coin(
     score: Global["score", int],
 ):
     if coin.active and coin.uid != "coin_pet":
-        Actor.destroy(coin)
+        coin.destroy()
         score = score + 1
 
 
@@ -71,7 +70,6 @@ def disable_gravity(scene: Scene):
     scene.disable_gravity()
 
 @condition(KeyboardCondition.begin_press("e"))
-@condition(OnButton("spawn_bonus"))
 @condition(ToolCalling("spawn_bonus", "Spawn one bonus coin near the hero"))
 def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
     for _ in range(20):
@@ -89,14 +87,6 @@ game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
 game.add_global("score", 0)
-game.set_interface(
-    """
-<div style="position:absolute;left:12px;top:12px;padding:8px 10px;background:rgba(0,0,0,0.55);color:#fff;border-radius:8px;font-family:monospace;">
-  <div>Score: {{score}}</div>
-  <button data-button="spawn_bonus" style="margin-top:6px;">Spawn Bonus</button>
-</div>
-"""
-)
 
 hero_player = Player(
         uid="hero",

@@ -44,6 +44,21 @@ Allowed custom field types:
 Built-in actor fields available on every actor:
 - `uid`, `x`, `y`, `w`, `h`, `z`, `active`, `block_mask`, `parent`, `sprite`
 
+### Actor Instance Methods
+
+Animation/lifecycle calls are instance methods on actor bindings:
+
+```python
+def move_right(player: Player["hero"]):
+    player.play("run")
+
+def collect(last_coin: Coin[-1]):
+    if last_coin is not None:
+        last_coin.destroy()
+```
+
+Static forms like `Actor.play(player, ...)` and `Actor.destroy(player)` are not supported.
+
 ### Bindings in Action Signatures
 
 - `Global["name"]`
@@ -68,6 +83,7 @@ Built-in actor fields available on every actor:
 - `CollisionRelated(selector_a, selector_b)`
 - `LogicalRelated(predicate_fn, selector)`
 - `ToolCalling("tool_name", "tool docstring")`
+- `OnButton("button_name")`
 
 Rule declaration styles:
 - `scene.add_rule(condition_expr, action_fn)` (preferred)
@@ -84,6 +100,18 @@ game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
 ```
+
+### Interface Overlay (Optional)
+
+`game.set_interface(...)` is optional. If omitted, no HTML overlay is created.
+
+```python
+game.set_interface(
+    "<div>Score: {{score}}</div><button data-button=\"spawn_bonus\">Spawn</button>"
+)
+```
+
+Use `OnButton("spawn_bonus")` conditions only when your interface includes a matching `data-button` entry.
 
 ## Compile and Export (Python)
 

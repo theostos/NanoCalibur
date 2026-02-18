@@ -22,7 +22,7 @@ def test_project_compiler_collects_resources_and_sprites():
             y: int
 
         def animate(player: Player["hero"]):
-            ActorModel.play(player, "idle")
+            player.play("idle")
 
         game = Game()
         game.add_actor(Player, "hero", x=0, y=0)
@@ -68,7 +68,7 @@ def test_compiler_emits_actor_play_call_stmt():
                 x: int
 
             def animate(player: Player["hero"]):
-                ActorModel.play(player, "idle")
+                player.play("idle")
             """
         )
     )
@@ -87,7 +87,7 @@ def test_ts_generator_emits_runtime_animation_hook_call():
                 x: int
 
             def animate(player: Player["hero"]):
-                ActorModel.play(player, "idle")
+                player.play("idle")
             """
         )
     )
@@ -129,7 +129,7 @@ def test_exporter_serializes_resources_and_sprites_into_spec():
             x: int
 
         def animate(player: Player["hero"]):
-            ActorModel.play(player, "idle")
+            player.play("idle")
 
         game = Game()
         game.add_actor(Player, "hero", x=0)
@@ -163,7 +163,7 @@ def test_exporter_serializes_named_sprites_for_actor_sprite_binding():
             speed: int
 
         def animate(player: Player["hero"]):
-            Actor.play(player, "idle")
+            player.play("idle")
 
         game = Game()
         scene = Scene(gravity=False)
@@ -188,7 +188,7 @@ def test_exporter_serializes_named_sprites_for_actor_sprite_binding():
     assert spec["sprites"]["by_name"]["hero"]["frame_width"] == 16
 
 
-def test_compiler_supports_actor_model_play_and_destroy_calls():
+def test_compiler_supports_actor_instance_play_and_destroy_calls():
     compiler = DSLCompiler()
     actions = compiler.compile(
         textwrap.dedent(
@@ -197,8 +197,8 @@ def test_compiler_supports_actor_model_play_and_destroy_calls():
                 x: int
 
             def animate(player: Player["hero"]):
-                ActorModel.play(player, "run")
-                ActorModel.destroy(player)
+                player.play("run")
+                player.destroy()
             """
         )
     )
@@ -243,7 +243,7 @@ def test_project_compiler_parses_sprite_object_and_scene_config():
             y: int
 
         def noop(player: Player["hero"]):
-            ActorModel.play(player, "idle")
+            player.play("idle")
 
         game = Game()
         game.set_scene(Scene(gravity=True))
