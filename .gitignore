@@ -8,6 +8,8 @@ __pycache__/
 
 nanocalibur-demo/dist
 nanocalibur-demo/node_modules
+nanocalibur-demo/src
+
 # Distribution / packaging
 .Python
 build/
