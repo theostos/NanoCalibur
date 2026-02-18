@@ -1,19 +1,55 @@
-import * as ex from 'excalibur';
-import { attachNanoCalibur } from './nanocalibur_generated';
+import {
+  attachNanoCalibur,
+  type CanvasHostOptions,
+} from './nanocalibur_generated';
 
-const game = new ex.Engine({
-  width: 800,
-  height: 600,
-  canvasElementId: 'game'
+function requireCanvas(canvasId: string): HTMLCanvasElement {
+  const element = document.getElementById(canvasId);
+  if (!(element instanceof HTMLCanvasElement)) {
+    throw new Error(`Canvas element '#${canvasId}' was not found.`);
+  }
+  return element;
+}
+
+function requireSymbolicPanel(panelId: string): HTMLElement {
+  const element = document.getElementById(panelId);
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`Symbolic panel '#${panelId}' was not found.`);
+  }
+  return element;
+}
+
+function formatSymbolicFrame(host: ReturnType<typeof attachNanoCalibur>): string {
+  const frame = host.getSymbolicFrame();
+  const legend = frame.legend
+    .map((item) => `${item.symbol}: ${item.description}`)
+    .join('\n');
+  if (!legend) {
+    return frame.rows.join('\n');
+  }
+  return `${frame.rows.join('\n')}\n\nLegend\n${legend}`;
+}
+
+const canvas = requireCanvas('game');
+const symbolicPanel = requireSymbolicPanel('symbolic');
+
+const hostOptions: CanvasHostOptions = {
+  width: 960,
+  height: 640,
+  backgroundColor: '#121826',
+  tileColor: '#303a52',
+  pixelated: true,
+  showHud: true,
+};
+
+const host = attachNanoCalibur(canvas, hostOptions);
+const renderSymbolic = (): void => {
+  symbolicPanel.textContent = formatSymbolicFrame(host);
+  window.requestAnimationFrame(renderSymbolic);
+};
+
+void host.start().then(() => {
+  renderSymbolic();
+}).catch((error: unknown) => {
+  console.error('Failed to start NanoCalibur CanvasHost.', error);
 });
-
-const scene = new ex.Scene();
-game.add('main', scene);
-game.goToScene('main');
-
-const bridge = attachNanoCalibur(scene);
-game.on('postupdate', () => {
-  bridge.tick();
-});
-
-game.start();

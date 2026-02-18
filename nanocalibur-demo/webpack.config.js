@@ -13,9 +13,19 @@ module.exports = {
         devMiddleware: {
             writeToDisk: true
         },
-        static: {
-            directory: path.resolve(__dirname)
-        }
+        static: [
+            {
+                directory: path.resolve(__dirname, 'dist'),
+                watch: {
+                    ignored: ['**/node_modules/**', '**/.git/**']
+                }
+            },
+            {
+                directory: path.resolve(__dirname, 'img'),
+                publicPath: '/img',
+                watch: false
+            }
+        ]
     },
     plugins: [
         new CopyPlugin({
@@ -29,6 +39,9 @@ module.exports = {
         filename: '[name].js',
         sourceMapFilename: '[file].map',
         path: path.resolve(__dirname, 'dist')
+    },
+    watchOptions: {
+        ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**']
     },
     module: {
         rules: [

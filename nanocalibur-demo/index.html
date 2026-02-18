@@ -4,9 +4,46 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tiled Webpack Sample</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 12px;
+            background: #0f1421;
+            color: #e8ecf7;
+            font-family: "IBM Plex Sans", sans-serif;
+        }
+
+        .layout {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+
+        #game {
+            border: 1px solid #2d3753;
+            background: #121826;
+        }
+
+        #symbolic {
+            min-width: 320px;
+            max-width: 440px;
+            max-height: 640px;
+            overflow: auto;
+            margin: 0;
+            padding: 10px;
+            border: 1px solid #2d3753;
+            background: #0b1020;
+            font: 13px/1.25 "Iosevka", "Fira Code", monospace;
+            white-space: pre;
+        }
+    </style>
 </head>
 <body>
-    <canvas id="game"></canvas>
+    <div class="layout">
+        <canvas id="game"></canvas>
+        <pre id="symbolic">Loading symbolic frame...</pre>
+    </div>
     <script src="main.js"></script>
 </body>
 </html>

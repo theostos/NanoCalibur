@@ -1,7 +1,11 @@
-import * as ex from 'excalibur';
 import * as gameLogic from './game_logic';
+import {
+  CanvasHost,
+  CanvasHostOptions,
+  HeadlessHost,
+  NanoCaliburMCPServer,
+} from './bridge';
 import { NanoCaliburInterpreter } from './interpreter';
-import { NanoCaliburBridge } from './bridge';
 
 type Callable = (...args: any[]) => any;
 
@@ -33,9 +37,46 @@ export function createNanoCaliburInterpreter(): NanoCaliburInterpreter {
   return new NanoCaliburInterpreter(spec, actions, predicates);
 }
 
-export function attachNanoCalibur(scene: ex.Scene): NanoCaliburBridge {
+export function attachNanoCalibur(
+  canvas: HTMLCanvasElement,
+  options: CanvasHostOptions = {},
+): CanvasHost {
   const interpreter = createNanoCaliburInterpreter();
-  return new NanoCaliburBridge(scene, interpreter);
+  return new CanvasHost(canvas, interpreter, options);
 }
 
-export { NanoCaliburBridge, NanoCaliburInterpreter };
+export async function startNanoCalibur(
+  canvas: HTMLCanvasElement,
+  options: CanvasHostOptions = {},
+): Promise<CanvasHost> {
+  const host = attachNanoCalibur(canvas, options);
+  await host.start();
+  return host;
+}
+
+export function createNanoCaliburHeadless(
+  options: CanvasHostOptions = {},
+): HeadlessHost {
+  const interpreter = createNanoCaliburInterpreter();
+  return new HeadlessHost(interpreter, options);
+}
+
+export function createNanoCaliburMCPServer(
+  options: CanvasHostOptions = {},
+): NanoCaliburMCPServer {
+  const host = createNanoCaliburHeadless(options);
+  return new NanoCaliburMCPServer(host);
+}
+
+export type {
+  CanvasHostOptions,
+  PhysicsBodyConfig,
+  SpriteAnimationConfig,
+  SymbolicFrame,
+} from './bridge';
+export {
+  CanvasHost,
+  HeadlessHost,
+  NanoCaliburInterpreter,
+  NanoCaliburMCPServer,
+};
