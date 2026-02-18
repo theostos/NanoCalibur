@@ -2,9 +2,24 @@ import textwrap
 
 import pytest
 
-from compiler import DSLCompiler
-from errors import DSLValidationError
-from ir import Attr, Binary, BindingKind, For, If, Range, Unary
+from nanocalibur.compiler import DSLCompiler
+from nanocalibur.errors import DSLValidationError
+from nanocalibur.ir import (
+    Assign,
+    Attr,
+    Binary,
+    BindingKind,
+    CallExpr,
+    CallStmt,
+    Const,
+    For,
+    If,
+    ObjectExpr,
+    Range,
+    Unary,
+    While,
+    Yield,
+)
 
 
 def compile_source(source: str):
@@ -111,6 +126,38 @@ def test_reject_function_calls_outside_range():
         )
 
 
+def test_compiler_errors_include_location_and_source_snippet():
+    with pytest.raises(DSLValidationError) as exc_info:
+        compile_source(
+            """
+            class Player(ActorModel):
+                life: int
+
+            def bad(player: Player["hero"]):
+                player.mana = 0
+            """
+        )
+
+    message = str(exc_info.value)
+    assert "Location: line" in message
+    assert "player.mana = 0" in message
+
+
+def test_compiler_reports_python_syntax_location_and_code():
+    with pytest.raises(DSLValidationError) as exc_info:
+        compile_source(
+            """
+            def broken(:
+                pass
+            """
+        )
+
+    message = str(exc_info.value)
+    assert "Invalid Python syntax" in message
+    assert "Location: line" in message
+    assert "def broken(:" in message
+
+
 def test_parse_range_with_all_supported_arity():
     actions = compile_source(
         """
@@ -140,6 +187,41 @@ def test_reject_range_keyword_args():
             def bad(counter: Global["counter"]):
                 for i in range(start=0, stop=10):
                     counter = counter + i
+            """
+        )
+
+
+def test_accept_global_binding_with_explicit_primitive_type():
+    actions = compile_source(
+        """
+        def increment(counter: Global["counter", int]):
+            counter = counter + 1
+        """
+    )
+    assert actions[0].params[0].kind == BindingKind.GLOBAL
+    assert actions[0].params[0].global_name == "counter"
+
+
+def test_accept_global_binding_with_nested_list_type():
+    actions = compile_source(
+        """
+        def keep_grid(grid: Global["grid", List[List[int]]]):
+            grid = grid
+        """
+    )
+    assert actions[0].params[0].kind == BindingKind.GLOBAL
+    assert actions[0].params[0].global_name == "grid"
+
+
+def test_reject_global_binding_with_unsupported_explicit_type():
+    with pytest.raises(DSLValidationError, match="Global typed binding only supports"):
+        compile_source(
+            """
+            class Player(ActorModel):
+                life: int
+
+            def bad(counter: Global["counter", Player]):
+                counter = counter
             """
         )
 
@@ -208,6 +290,108 @@ def test_accept_typed_actor_binding_head():
     assert heal.params[0].actor_selector.uid == "hero"
 
 
+def test_accept_plain_typed_actor_binding():
+    actions = compile_source(
+        """
+        class Player(ActorModel):
+            life: int
+
+        def heal(player: Player):
+            player.life = player.life + 1
+        """
+    )
+
+    heal = actions[0]
+    assert heal.params[0].kind == BindingKind.ACTOR
+    assert heal.params[0].actor_type == "Player"
+    assert heal.params[0].actor_selector.uid == "Player"
+
+
+def test_accept_actor_base_schema_and_builtin_fields():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def move(player: Player["hero"]):
+            player.x = player.x + player.speed
+        """
+    )
+
+    move = actions[0]
+    assign = move.body[0]
+    assert isinstance(assign, Assign)
+    assert isinstance(assign.target, Attr)
+    assert assign.target.field == "x"
+
+
+def test_accept_actor_uid_field_access():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def copy_uid(player: Player["hero"], actor_uid: Global["actor_uid"]):
+            actor_uid = player.uid
+        """
+    )
+
+    copy_uid = actions[0]
+    assign = copy_uid.body[0]
+    assert isinstance(assign, Assign)
+    assert isinstance(assign.value, Attr)
+    assert assign.value.obj == "player"
+    assert assign.value.field == "uid"
+
+
+def test_accept_scene_instance_calls():
+    actions = compile_source(
+        """
+        class Coin(Actor):
+            pass
+
+        def spawn_bonus(scene: Scene):
+            scene.enable_gravity()
+            scene.spawn(Coin(uid="coin_1", x=10, y=20))
+        """
+    )
+
+    spawn_bonus = actions[0]
+    assert isinstance(spawn_bonus.body[0], CallStmt)
+    assert isinstance(spawn_bonus.body[1], CallStmt)
+    assert spawn_bonus.body[0].name == "scene_set_gravity"
+    assert spawn_bonus.body[1].name == "scene_spawn_actor"
+
+
+def test_accept_scene_spawn_with_actor_constructor_variable_and_alias():
+    actions = compile_source(
+        """
+        class Coin(Actor):
+            pass
+
+        def spawn_bonus(scene: Scene):
+            coin = Coin(x=30, y=30, active=True)
+            retest = coin
+            scene.spawn(retest)
+        """
+    )
+
+    spawn_bonus = actions[0]
+    spawn_call = spawn_bonus.body[-1]
+    assert isinstance(spawn_call, CallStmt)
+    assert spawn_call.name == "scene_spawn_actor"
+    assert isinstance(spawn_call.args[0], Const)
+    assert spawn_call.args[0].value == "Coin"
+    assert isinstance(spawn_call.args[2], ObjectExpr)
+    fields = spawn_call.args[2].fields
+    assert isinstance(fields["x"], Const)
+    assert fields["x"].value == 30
+    assert isinstance(fields["y"], Const)
+    assert fields["y"].value == 30
+    assert isinstance(fields["active"], Const)
+    assert fields["active"].value is True
+
+
 def test_accept_actor_list_bindings_and_typed_iteration():
     actions = compile_source(
         """
@@ -252,3 +436,173 @@ def test_reject_field_access_from_untyped_actor_list_iteration():
                     actor.life = 0
             """
         )
+
+
+def test_accept_pass_in_empty_action_body():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def noop(player: Player["hero"]):
+            pass
+        """
+    )
+
+    assert len(actions) == 1
+    assert actions[0].name == "noop"
+    assert actions[0].body == []
+
+
+def test_accept_pass_inside_control_flow():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def maybe_move(player: Player["hero"]):
+            if player.speed > 0:
+                pass
+            else:
+                player.x = player.x + 1
+        """
+    )
+
+    action = actions[0]
+    assert len(action.body) == 1
+    if_stmt = action.body[0]
+    assert isinstance(if_stmt, If)
+    assert if_stmt.body == []
+    assert len(if_stmt.orelse) == 1
+
+
+def test_accept_tick_binding_and_yield_statements():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def idle(wait_token: Tick, player: Player["hero"]):
+            yield wait_token
+            yield wait_token
+            Actor.play(player, "idle")
+        """
+    )
+
+    idle = actions[0]
+    assert [param.kind for param in idle.params] == [BindingKind.TICK, BindingKind.ACTOR]
+    assert isinstance(idle.body[0], Yield)
+    assert isinstance(idle.body[1], Yield)
+    assert isinstance(idle.body[2], CallStmt)
+    assert idle.body[2].name == "play_animation"
+
+
+def test_reject_yield_for_non_tick_parameter():
+    with pytest.raises(DSLValidationError, match="yield must reference a parameter annotated as Tick"):
+        compile_source(
+            """
+            def bad(counter: Global["counter"]):
+                yield counter
+            """
+        )
+
+
+def test_accept_while_true():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def run_forever(player: Player["hero"]):
+            while True:
+                player.x = player.x + player.speed
+        """
+    )
+
+    run_forever = actions[0]
+    assert isinstance(run_forever.body[0], While)
+    assert isinstance(run_forever.body[0].condition, Const)
+    assert run_forever.body[0].condition.value is True
+
+
+def test_accept_actor_attach_and_detach_calls():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        class Coin(Actor):
+            pass
+
+        def bind_pet(hero: Player["hero"], coin: Coin["coin_pet"]):
+            coin.attached_to(hero)
+            coin.detached()
+        """
+    )
+
+    bind_pet = actions[0]
+    attach_stmt = bind_pet.body[0]
+    detach_stmt = bind_pet.body[1]
+    assert isinstance(attach_stmt, Assign)
+    assert isinstance(attach_stmt.target, Attr)
+    assert attach_stmt.target.obj == "coin"
+    assert attach_stmt.target.field == "parent"
+    assert isinstance(detach_stmt, Assign)
+    assert isinstance(detach_stmt.value, Const)
+    assert detach_stmt.value.value == ""
+
+
+def test_accept_random_expression_calls():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            luck: int
+
+        def randomize(player: Player["hero"], score: Global["score"]):
+            player.luck = Random.int(1, 10)
+            score = Random.float(0, 1)
+        """
+    )
+
+    randomize = actions[0]
+    first_assign = randomize.body[0]
+    second_assign = randomize.body[1]
+    assert isinstance(first_assign, Assign)
+    assert isinstance(first_assign.value, CallExpr)
+    assert first_assign.value.name == "random_int"
+    assert isinstance(second_assign, Assign)
+    assert isinstance(second_assign.value, CallExpr)
+    assert second_assign.value.name == "random_float_uniform"
+
+
+def test_accept_nested_list_field_types():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            path: List[List[int]]
+
+        def keep(player: Player["hero"]):
+            pass
+        """
+    )
+
+    keep = actions[0]
+    assert keep.body == []
+
+
+def test_accept_scene_spawn_with_constructor_expression_fields():
+    actions = compile_source(
+        """
+        class Coin(Actor):
+            pass
+
+        def spawn(scene: Scene, last_coin: Coin[-1]):
+            coin = Coin(x=last_coin.x + 32, y=224, active=True, sprite="coin")
+            scene.spawn(coin)
+        """
+    )
+
+    spawn = actions[0]
+    spawn_call = spawn.body[-1]
+    assert isinstance(spawn_call, CallStmt)
+    assert spawn_call.name == "scene_spawn_actor"

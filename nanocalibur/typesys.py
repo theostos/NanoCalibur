@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
+
 class Prim(Enum):
     INT = "int"
     FLOAT = "float"
@@ -20,7 +21,7 @@ class PrimType(FieldType):
 
 @dataclass(frozen=True)
 class ListType(FieldType):
-    elem: PrimType
+    elem: FieldType
 
 
 def to_ts_type(ft: FieldType) -> str:

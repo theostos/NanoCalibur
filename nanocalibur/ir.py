@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 
 class BindingKind(Enum):
     GLOBAL = "global"
     ACTOR = "actor"
     ACTOR_LIST = "actor_list"
+    SCENE = "scene"
+    TICK = "tick"
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,17 @@ class Range(Expr):
     args: List[Expr]
 
 
+@dataclass(frozen=True)
+class CallExpr(Expr):
+    name: str
+    args: List[Expr]
+
+
+@dataclass(frozen=True)
+class ObjectExpr(Expr):
+    fields: Dict[str, Expr]
+
+
 # Statements
 
 class Stmt:
@@ -81,6 +94,12 @@ class Stmt:
 class Assign(Stmt):
     target: Expr
     value: Expr
+
+
+@dataclass(frozen=True)
+class CallStmt(Stmt):
+    name: str
+    args: List[Expr]
 
 
 @dataclass(frozen=True)
@@ -101,6 +120,11 @@ class For(Stmt):
     var: str
     iterable: Expr
     body: List[Stmt]
+
+
+@dataclass(frozen=True)
+class Yield(Stmt):
+    value: Expr
 
 
 @dataclass(frozen=True)

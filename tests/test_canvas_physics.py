@@ -1,0 +1,281 @@
+import json
+import subprocess
+import textwrap
+from pathlib import Path
+
+
+def test_non_dynamic_actor_post_action_tile_blocking(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        function runCase(actor) {{
+          const physics = new PhysicsSystem({{}});
+          physics.setMap({{
+            width: 5,
+            height: 5,
+            tile_size: 32,
+            tile_grid: [
+              [0, 0, 0, 0, 0],
+              [0, 0, 0, 0, 0],
+              [0, 0, 1, 0, 0],
+              [0, 0, 0, 0, 0],
+              [0, 0, 0, 0, 0]
+            ],
+            tile_defs: {{
+              "1": {{
+                block_mask: 2,
+                sprite: null,
+                color: {{ r: 50, g: 50, b: 50 }}
+              }}
+            }}
+          }});
+
+          const actors = [actor];
+
+          // Snapshot frame start state.
+          physics.syncBodiesFromActors(actors, false);
+          physics.integrate(0);
+
+          // Simulate post-rule movement (e.g. parent binding in interpreter tick).
+          actor.x = 70;
+          actor.y = 70;
+          physics.syncBodiesFromActors(actors, true);
+
+          physics.resolvePostActionSolidCollisions();
+          physics.writeBodiesToActors(actors);
+          return {{ x: actor.x, y: actor.y }};
+        }}
+
+        const blocked = runCase({{
+          uid: "coin_blocked",
+          type: "Coin",
+          x: 50,
+          y: 50,
+          w: 16,
+          h: 16,
+          active: true,
+          block_mask: 1
+        }});
+
+        const unblocked = runCase({{
+          uid: "coin_unblocked",
+          type: "Coin",
+          x: 50,
+          y: 50,
+          w: 16,
+          h: 16,
+          active: true
+        }});
+
+        console.log(JSON.stringify({{ blocked, unblocked }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["blocked"]["x"] == 50
+    assert values["blocked"]["y"] == 50
+    assert values["unblocked"]["x"] == 70
+    assert values["unblocked"]["y"] == 70
+
+
+def test_actor_overlap_does_not_push_by_mask(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        const physics = new PhysicsSystem({{}});
+        physics.setMap({{
+          width: 20,
+          height: 20,
+          tile_size: 32,
+          tile_grid: Array.from({{ length: 20 }}, () => Array.from({{ length: 20 }}, () => 0)),
+          tile_defs: {{}}
+        }});
+
+        const actors = [
+          {{
+            uid: "high",
+            type: "Player",
+            x: 100,
+            y: 100,
+            w: 20,
+            h: 20,
+            active: true,
+            block_mask: 2
+          }},
+          {{
+            uid: "low",
+            type: "Player",
+            x: 110,
+            y: 100,
+            w: 20,
+            h: 20,
+            active: true,
+            block_mask: 1
+          }}
+        ];
+
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0);
+        physics.writeBodiesToActors(actors);
+
+        console.log(JSON.stringify({{
+          highX: actors[0].x,
+          lowX: actors[1].x
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["highX"] == 100
+    assert values["lowX"] == 110
+
+
+def test_actor_overlap_still_reports_collision_pair(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        const physics = new PhysicsSystem({{}});
+        physics.setMap({{
+          width: 20,
+          height: 20,
+          tile_size: 32,
+          tile_grid: Array.from({{ length: 20 }}, () => Array.from({{ length: 20 }}, () => 0)),
+          tile_defs: {{}}
+        }});
+
+        const actors = [
+          {{
+            uid: "hero",
+            type: "Player",
+            x: 100,
+            y: 100,
+            w: 20,
+            h: 20,
+            active: true,
+            block_mask: 1
+          }},
+          {{
+            uid: "coin_pet",
+            type: "Coin",
+            x: 110,
+            y: 100,
+            w: 20,
+            h: 20,
+            active: true,
+            block_mask: 1
+          }}
+        ];
+
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0);
+        physics.writeBodiesToActors(actors);
+
+        const collisions = physics.detectCollisions(actors);
+        console.log(JSON.stringify({{
+          heroX: actors[0].x,
+          petX: actors[1].x,
+          collisions
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["heroX"] == 100
+    assert values["petX"] == 110
+    assert values["collisions"] == [{"aUid": "hero", "bUid": "coin_pet"}]

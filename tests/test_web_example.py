@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-BUILD_SCRIPT = ROOT / "examples" / "build_web_scene.py"
+BUILD_SCRIPT = ROOT / "nanocalibur" / "build_web_scene.py"
 
 
 def _write_scene(path: Path) -> None:
@@ -51,28 +51,48 @@ def test_build_web_scene_generates_excalibur_input_bundle(tmp_path):
         text=True,
     )
 
+    generated_dir = output_dir / "src" / "nanocalibur_generated"
+
     expected_files = {
         "game_spec.json",
         "game_ir.json",
         "game_logic.ts",
-        "game_logic.js",
-        "game_logic.mjs",
         "interpreter.ts",
-        "interpreter.js",
-        "interpreter.mjs",
+        "runtime_core.ts",
+        "canvas_host.ts",
+        "headless_host.ts",
+        "headless_http_server.ts",
+        "symbolic_renderer.ts",
         "bridge.ts",
         "index.ts",
-        "README.generated.md",
+        "node.ts",
     }
-    actual_files = {p.name for p in output_dir.iterdir() if p.is_file()}
+    actual_files = {p.name for p in generated_dir.iterdir() if p.is_file()}
     assert expected_files.issubset(actual_files)
+    assert (generated_dir / "canvas").exists()
+    assert (output_dir / "README.generated.md").exists()
 
-    spec = json.loads((output_dir / "game_spec.json").read_text(encoding="utf-8"))
+    spec = json.loads((generated_dir / "game_spec.json").read_text(encoding="utf-8"))
     assert spec["camera"]["mode"] == "follow"
     assert spec["rules"][0]["condition"]["kind"] == "keyboard"
 
-    bridge_code = (output_dir / "bridge.ts").read_text(encoding="utf-8")
-    assert "class NanoCaliburBridge" in bridge_code
+    bridge_code = (generated_dir / "bridge.ts").read_text(encoding="utf-8")
+    assert "CanvasHost" in bridge_code
+    assert "HeadlessHost" in bridge_code
+    assert "ControllerConfig" not in bridge_code
+
+    index_code = (generated_dir / "index.ts").read_text(encoding="utf-8")
+    assert "createNanoCaliburMCPServer" in index_code
+    assert "HeadlessHttpServer" not in index_code
+    assert "ControllerConfig" not in index_code
+
+    node_code = (generated_dir / "node.ts").read_text(encoding="utf-8")
+    assert "HeadlessHttpServer" in node_code
+
+    types_code = (generated_dir / "canvas" / "types.ts").read_text(encoding="utf-8")
+    assert "controllers?:" not in types_code
+    assert "gravity?:" in types_code
+    assert "gravityScale" not in types_code
 
 
 def test_build_web_scene_syncs_bundle_into_excalibur_project(tmp_path):

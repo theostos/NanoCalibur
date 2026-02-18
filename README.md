@@ -1,130 +1,108 @@
 # NanoCalibur
 
-NanoCalibur is a deterministic Python DSL compiler for small game logic on top of Excalibur-style runtimes.
+NanoCalibur is a deterministic Python DSL compiler for tiny 2D games.
 
 Core guarantees:
 - Python source is parsed with `ast` and never executed.
 - Only a restricted DSL subset is accepted.
-- Compilation is deterministic (`AST -> IR -> TS/JS + JSON spec`).
+- Compilation is deterministic (`AST -> IR -> TS + JSON spec`).
 
 ## Repository Structure
 
 ```text
 nanocalibur/
-  __init__.py
   compiler.py          # Action + predicate compiler (AST -> IR)
   project_compiler.py  # Full game project compiler
-  ir.py                # Intermediate representation
-  game_model.py        # Project/rule/map/camera data models
-  exporter.py          # JSON + TS/JS export pipeline
-  ts_generator.py      # IR -> TypeScript/JavaScript codegen
-  typesys.py           # Field type system
-  schema_registry.py   # Actor schema registry
+  exporter.py          # JSON + TS export pipeline
+  ts_generator.py      # IR -> TypeScript codegen
   dsl_markers.py       # Marker classes/helpers for DSL authoring
   runtime/
-    interpreter.js     # Runtime rule interpreter (Excalibur-friendly JS)
+    interpreter.ts     # Runtime rule interpreter
+    canvas_host.ts     # Standalone canvas runtime host
+    canvas/            # Physics, renderer, assets, animation modules
+  build_web_scene.py   # Python scene -> web bundle generator
+  templates/web_bundle # bridge/index/readme templates used by build_web_scene
+examples/
+  scene.py             # End-to-end DSL scene example
 tests/
-  ...                  # Python unit and end-to-end tests
+  ...                  # Unit and end-to-end tests
 ```
 
-Root files (`compiler.py`, `ts_generator.py`, etc.) are compatibility shims that forward to `nanocalibur/*`.
-
-## DSL Features
+## DSL Overview
 
 ### Actor Schemas
 
 ```python
-class Player(ActorModel):
-    life: int
-    x: int
-    y: int
-    inventory: List[str]
+class Player(Actor):
+    speed: int
 ```
 
-Allowed field types:
+Allowed custom field types:
 - `int`, `float`, `str`, `bool`
 - `List[int|float|str|bool]`
 
-### Action Function Bindings
+Built-in actor fields available on every actor:
+- `uid`, `x`, `y`, `w`, `h`, `z`, `active`, `block_mask`, `parent`, `sprite`
+
+### Bindings in Action Signatures
 
 - `Global["name"]`
-- `Actor["ActorType"]`
+- `Global["name", int|float|str|bool|List[...]]` (optional static hint)
 - `Actor[index]`
+- `Actor["TypeName"]`
+- `Player`
 - `Player["uid"]` / `Player[index]`
 - `List[Actor]`
 - `List[Player]`
+- `Scene`
 
-Typed actor access is validated statically.
+### Conditions
 
-### Global Variables
-
-Supported global values:
-- primitives (`int`, `float`, `str`, `bool`)
-- homogeneous primitive lists
-- actor pointers via `WithUID(...)`:
-  - `WithUID(Actor, "uid")`
-  - `WithUID(Player, "uid")`
-
-When a global pointer is typed (`WithUID(Player, ...)`), actions can safely access actor fields through that global binding.
-
-### Conditions and Rules
-
-Supported conditions:
-- keyboard phases:
-  - `KeyboardCondition.begin_press("A")`
-  - `KeyboardCondition.on_press("A")`
-  - `KeyboardCondition.end_press("A")`
-- mouse phases:
-  - `MouseCondition.begin_click("left")`
-  - `MouseCondition.on_click("left")`
-  - `MouseCondition.end_click("left")`
+- `KeyboardCondition.begin_press("A")`
+- `KeyboardCondition.on_press("A")`
+- `KeyboardCondition.end_press("A")`
+- `KeyboardCondition.end_press(["z", "q", "s", "d"])` (any key match)
+- `MouseCondition.begin_click("left")`
+- `MouseCondition.on_click("left")`
+- `MouseCondition.end_click("left")`
 - `CollisionRelated(selector_a, selector_b)`
 - `LogicalRelated(predicate_fn, selector)`
+- `ToolCalling("tool_name", "tool docstring")`
 
-Selectors:
-- `Any(Actor)` / `Any(Player)`
-- `WithUID(Actor, "uid")` / `WithUID(Player, "uid")`
+Rule declaration styles:
+- `scene.add_rule(condition_expr, action_fn)` (preferred)
+- `game.add_rule(condition_expr, action_fn)` (legacy-compatible)
+- `@condition(condition_expr)` decorator on action functions
 
-Logical predicates are declared as:
+### Scene/Game Split
+
+- `Game` manages globals, resources, sprites, and active scene.
+- `Scene` manages actors, rules, map, camera, gravity toggle, and spawn actions.
 
 ```python
-def is_dead(player: Player) -> bool:
-    return player.life <= 0
+game = Game()
+scene = Scene(gravity=False)
+game.set_scene(scene)
 ```
 
-### Map and Camera
-
-Map:
-```python
-game.set_map(TileMap(width=16, height=12, tile_size=32, solid=[(0, 0), (1, 1)]))
-```
-
-Camera:
-```python
-game.set_camera(Camera.fixed(100, 200))
-game.set_camera(Camera.follow("main_character"))
-```
-
-## Compile and Export
+## Compile and Export (Python)
 
 ```python
-from exporter import export_project
+from nanocalibur import export_project
 
 source = """
-class Player(ActorModel):
-    life: int
-    x: int
-    y: int
+class Player(Actor):
+    speed: int
 
-def heal(player: Player["main_character"], amount: Global["heal"]):
-    player.life = player.life + amount
+def move_right(player: Player["hero"]):
+    player.x = player.x + player.speed
 
 game = Game()
-game.add_global("heal", 2)
-game.add_actor(Player, "main_character", life=1, x=5, y=7)
-game.add_rule(KeyboardCondition.on_press("A"), heal)
-game.set_camera(Camera.follow("main_character"))
-game.set_map(TileMap(width=10, height=10, tile_size=16, solid=[(1, 1)]))
+scene = Scene(gravity=False)
+game.set_scene(scene)
+scene.add_actor(Player(uid="hero", x=100, y=100, speed=4))
+scene.add_rule(KeyboardCondition.on_press("d"), move_right)
+scene.set_camera(Camera.follow("hero"))
 """
 
 export_project(source, "build")
@@ -134,82 +112,80 @@ Generated files:
 - `build/game_spec.json`
 - `build/game_ir.json`
 - `build/game_logic.ts`
-- `build/game_logic.js`
-- `build/game_logic.mjs`
 
-## Runtime Interpreter (JavaScript)
+## Build Web Bundle
 
-Use `nanocalibur/runtime/interpreter.js` with generated `game_spec.json` and `game_logic.js`.
-For browser ES modules, use `nanocalibur/runtime/interpreter.mjs` with `game_logic.mjs`.
-
-It supports:
-- rule evaluation per tick (`keyboard`, `mouse`, `collision`, `logical`)
-- action dispatch
-- actor/global state updates
-- map solid tile lookup (`isSolidAtWorld`)
-- camera state (`fixed` / `follow`)
-
-Per-frame input payload shape for phased input:
-
-```json
-{
-  "keyboard": { "begin": ["A"], "on": ["A"], "end": [] },
-  "mouse": { "begin": ["left"], "on": ["left"], "end": [] },
-  "collisions": [{ "aUid": "player_1", "bUid": "enemy_1" }]
-}
-```
-
-Interactive runtime smoke test:
+Use `nanocalibur/build_web_scene.py` to compile a Python scene and generate a browser-ready TypeScript bundle.
 
 ```bash
-node examples/interactive_runtime.js build/game_spec.json build/game_logic.js
+python nanocalibur/build_web_scene.py examples/scene.py --project ./my-web-game
 ```
 
-## Excalibur Project Input Generation
+This generates a bundle (default `build/nanocalibur_generated/src/nanocalibur_generated`) and, with `--project`, copies it to:
 
-Use `examples/build_web_scene.py` to compile a DSL scene into an input bundle for an Excalibur TypeScript project.
+- `my-web-game/src/nanocalibur_generated/`
 
-Example (targeting the local `sample-tiled-webpack` project):
-
-```bash
-python examples/build_web_scene.py path/to/scene.py --project ./sample-tiled-webpack
-```
-
-This generates a bundle (default: `build/nanocalibur_generated`) and copies it to:
-
-`sample-tiled-webpack/src/nanocalibur_generated/`
-
-Generated files include:
+Generated runtime files include:
 - `game_spec.json`
 - `game_ir.json`
 - `game_logic.ts`
 - `interpreter.ts`
+- `runtime_core.ts`
+- `canvas_host.ts`
+- `headless_host.ts`
+- `headless_http_server.ts`
+- `symbolic_renderer.ts`
+- `canvas/*.ts`
 - `bridge.ts`
 - `index.ts`
 
-Then in your Excalibur entry file (for example `sample-tiled-webpack/src/main.ts`):
+Minimal usage in your web app (`src/main.ts`):
 
 ```ts
 import { attachNanoCalibur } from './nanocalibur_generated';
 
-const bridge = attachNanoCalibur(game.currentScene);
-game.on('postupdate', () => {
-  bridge.tick();
+const canvas = document.getElementById('game');
+if (!(canvas instanceof HTMLCanvasElement)) {
+  throw new Error('Canvas element #game not found.');
+}
+
+const host = attachNanoCalibur(canvas, {
+  showHud: true,
 });
+
+void host.start();
 ```
 
-Full blank-project walkthrough:
-- `docs/blank-excalibur-tutorial.md`
+Detailed walkthrough:
+- `docs/blank-web-canvas-tutorial.md`
 
-## Test Suite
+## Runtime Summary
+
+The standalone TypeScript runtime supports:
+- fixed-step update loop
+- keyboard/mouse phase inputs
+- rule evaluation (`keyboard`, `mouse`, `collision`, `logical`, `tool`)
+- scene gravity toggle + actor spawn
+- mask-based tile/actor blocking
+- sprite animation playback and image preloading
+- z-ordered rendering
+- headless symbolic rendering (`HeadlessHost`)
+- HTTP endpoint layer for remote clients (`HeadlessHttpServer`)
+- minimal MCP-style tool bridge (`NanoCaliburMCPServer`)
+
+Python MCP adapter:
+- `nanocalibur.mcp_bridge.NanoCaliburHTTPClient`
+- `nanocalibur.mcp_bridge.build_fastmcp_from_http(...)` to generate a FastMCP server from a running headless HTTP instance
+
+## Tests
 
 ```bash
-python -m pytest -q
+PYTHONPATH=. pytest -q
 ```
 
-Current coverage includes:
-- action compiler validation
-- TS/JS code generation
-- project compiler (globals/rules/conditions/map/camera)
+Coverage includes:
+- compiler validation
+- project compiler and schema checks
 - exporter outputs
-- end-to-end Python -> exported JS -> Node runtime execution
+- runtime behavior (input phases, collisions, parenting, animation/assets)
+- end-to-end Python -> exported TS -> Node runtime execution

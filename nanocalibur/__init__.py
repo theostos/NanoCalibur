@@ -6,6 +6,7 @@ from nanocalibur.exporter import (
     project_to_dict,
     project_to_ir_dict,
 )
+from nanocalibur.mcp_bridge import NanoCaliburHTTPClient, build_fastmcp_from_http
 from nanocalibur.project_compiler import ProjectCompiler
 from nanocalibur.ts_generator import TSGenerator
 
@@ -17,6 +18,8 @@ __all__ = [
     "TSGenerator",
     "compile_project",
     "export_project",
+    "NanoCaliburHTTPClient",
+    "build_fastmcp_from_http",
     "project_to_dict",
     "project_to_ir_dict",
 ]

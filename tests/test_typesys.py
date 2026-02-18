@@ -2,7 +2,7 @@ import dataclasses
 
 import pytest
 
-from typesys import FieldType, ListType, Prim, PrimType, to_ts_type
+from nanocalibur.typesys import FieldType, ListType, Prim, PrimType, to_ts_type
 
 
 def test_to_ts_type_for_primitives():
@@ -15,6 +15,10 @@ def test_to_ts_type_for_primitives():
 def test_to_ts_type_for_primitive_lists():
     assert to_ts_type(ListType(PrimType(Prim.INT))) == "Array<number>"
     assert to_ts_type(ListType(PrimType(Prim.STR))) == "Array<string>"
+
+
+def test_to_ts_type_for_nested_lists():
+    assert to_ts_type(ListType(ListType(PrimType(Prim.INT)))) == "Array<Array<number>>"
 
 
 def test_to_ts_type_rejects_unknown_field_type():

@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Any, Dict
 
 from nanocalibur.game_model import (
+    AnimationClipSpec,
     ActorRefValue,
+    ButtonConditionSpec,
     CameraMode,
     CameraSpec,
     CollisionConditionSpec,
@@ -15,18 +17,24 @@ from nanocalibur.game_model import (
     LogicalConditionSpec,
     MouseConditionSpec,
     ProjectSpec,
+    ResourceSpec,
     RuleSpec,
+    SceneSpec,
     SelectorKind,
+    SpriteSpec,
+    ToolConditionSpec,
 )
 from nanocalibur.project_compiler import ProjectCompiler
 from nanocalibur.ts_generator import TSGenerator
 
 
-def compile_project(source: str) -> ProjectSpec:
-    return ProjectCompiler().compile(source)
+def compile_project(source: str, source_path: str | None = None) -> ProjectSpec:
+    """Compile DSL source into a :class:`ProjectSpec`."""
+    return ProjectCompiler().compile(source, source_path=source_path)
 
 
 def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
+    """Serialize a :class:`ProjectSpec` into the JSON game spec payload."""
     return {
         "schemas": project.actor_schemas,
         "globals": [_global_to_dict(g) for g in project.globals],
@@ -39,8 +47,29 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
             for actor in project.actors
         ],
         "rules": [_rule_to_dict(rule) for rule in project.rules],
+        "tools": _tools_to_dict(project.rules),
         "map": _map_to_dict(project.tile_map),
         "camera": _camera_to_dict(project.camera),
+        "scene": _scene_to_dict(project.scene),
+        "interface_html": project.interface_html,
+        "resources": [_resource_to_dict(resource) for resource in project.resources],
+        "sprites": {
+            "by_name": {
+                sprite.name: _sprite_to_dict(sprite)
+                for sprite in project.sprites
+                if sprite.name is not None
+            },
+            "by_uid": {
+                sprite.uid: _sprite_to_dict(sprite)
+                for sprite in project.sprites
+                if sprite.uid is not None
+            },
+            "by_type": {
+                sprite.actor_type: _sprite_to_dict(sprite)
+                for sprite in project.sprites
+                if sprite.actor_type is not None
+            },
+        },
         "actions": [action.name for action in project.actions],
         "predicates": [
             {
@@ -52,16 +81,15 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
     }
 
 
-def export_project(source: str, output_dir: str) -> ProjectSpec:
-    project = compile_project(source)
+def export_project(source: str, output_dir: str, source_path: str | None = None) -> ProjectSpec:
+    """Compile and write spec/IR/TypeScript outputs to ``output_dir``."""
+    project = compile_project(source, source_path=source_path)
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     spec_path = out_dir / "game_spec.json"
     ir_path = out_dir / "game_ir.json"
     ts_path = out_dir / "game_logic.ts"
-    js_path = out_dir / "game_logic.js"
-    esm_path = out_dir / "game_logic.mjs"
 
     spec_path.write_text(
         json.dumps(project_to_dict(project), indent=2, sort_keys=True),
@@ -76,19 +104,12 @@ def export_project(source: str, output_dir: str) -> ProjectSpec:
     ts_path.write_text(
         generator.generate(project.actions, project.predicates), encoding="utf-8"
     )
-    js_path.write_text(
-        generator.generate_javascript(project.actions, project.predicates),
-        encoding="utf-8",
-    )
-    esm_path.write_text(
-        generator.generate_esm_javascript(project.actions, project.predicates),
-        encoding="utf-8",
-    )
 
     return project
 
 
 def project_to_ir_dict(project: ProjectSpec) -> Dict[str, Any]:
+    """Serialize action/predicate IR payloads."""
     return {
         "actions": [_serialize_ir(action) for action in project.actions],
         "predicates": [_serialize_ir(predicate) for predicate in project.predicates],
@@ -116,6 +137,11 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "phase": condition.phase.value,
             "button": condition.button,
         }
+    if isinstance(condition, ButtonConditionSpec):
+        return {
+            "kind": "button",
+            "name": condition.name,
+        }
     if isinstance(condition, CollisionConditionSpec):
         return {
             "kind": "collision",
@@ -127,6 +153,12 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "kind": "logical",
             "predicate": condition.predicate_name,
             "target": _selector_to_dict(condition.target),
+        }
+    if isinstance(condition, ToolConditionSpec):
+        return {
+            "kind": "tool",
+            "name": condition.name,
+            "tool_docstring": condition.tool_docstring,
         }
     raise TypeError(f"Unsupported condition: {condition!r}")
 
@@ -157,11 +189,29 @@ def _global_to_dict(global_var: GlobalVariableSpec) -> Dict[str, Any]:
 def _map_to_dict(map_spec):
     if map_spec is None:
         return None
+    tile_defs_payload: Dict[str, Any] = {}
+    for tile_id, tile_def in map_spec.tile_defs.items():
+        tile_defs_payload[str(tile_id)] = {
+            "block_mask": tile_def.block_mask,
+            "sprite": tile_def.sprite,
+            "color": (
+                {
+                    "r": tile_def.color.r,
+                    "g": tile_def.color.g,
+                    "b": tile_def.color.b,
+                    "symbol": tile_def.color.symbol,
+                    "description": tile_def.color.description,
+                }
+                if tile_def.color is not None
+                else None
+            ),
+        }
     return {
         "width": map_spec.width,
         "height": map_spec.height,
         "tile_size": map_spec.tile_size,
-        "solid_tiles": map_spec.solid_tiles,
+        "tile_grid": map_spec.tile_grid,
+        "tile_defs": tile_defs_payload,
     }
 
 
@@ -178,6 +228,66 @@ def _camera_to_dict(camera: CameraSpec | None):
         "mode": camera.mode.value,
         "target_uid": camera.target_uid,
     }
+
+
+def _resource_to_dict(resource: ResourceSpec) -> Dict[str, Any]:
+    return {
+        "name": resource.name,
+        "path": resource.path,
+    }
+
+
+def _scene_to_dict(scene: SceneSpec | None) -> Dict[str, Any] | None:
+    if scene is None:
+        return None
+    return {
+        "gravity_enabled": scene.gravity_enabled,
+    }
+
+
+def _clip_to_dict(clip: AnimationClipSpec) -> Dict[str, Any]:
+    return {
+        "frames": clip.frames,
+        "ticks_per_frame": clip.ticks_per_frame,
+        "loop": clip.loop,
+    }
+
+
+def _sprite_to_dict(sprite: SpriteSpec) -> Dict[str, Any]:
+    return {
+        "resource": sprite.resource,
+        "frame_width": sprite.frame_width,
+        "frame_height": sprite.frame_height,
+        "row": sprite.row,
+        "scale": sprite.scale,
+        "flip_x": sprite.flip_x,
+        "offset_x": sprite.offset_x,
+        "offset_y": sprite.offset_y,
+        "symbol": sprite.symbol,
+        "description": sprite.description,
+        "default_clip": sprite.default_clip,
+        "clips": {clip.name: _clip_to_dict(clip) for clip in sprite.clips},
+    }
+
+
+def _tools_to_dict(rules: list[RuleSpec]) -> list[Dict[str, Any]]:
+    tools: list[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for rule in rules:
+        condition = rule.condition
+        if not isinstance(condition, ToolConditionSpec):
+            continue
+        if condition.name in seen:
+            continue
+        seen.add(condition.name)
+        tools.append(
+            {
+                "name": condition.name,
+                "tool_docstring": condition.tool_docstring,
+                "action": rule.action_name,
+            }
+        )
+    return tools
 
 
 def _serialize_ir(value):
