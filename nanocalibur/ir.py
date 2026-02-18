@@ -41,7 +41,7 @@ class Expr:
 
 @dataclass(frozen=True)
 class Const(Expr):
-    value: Union[int, float, str, bool]
+    value: Union[int, float, str, bool, None]
 
 
 @dataclass(frozen=True)
@@ -125,6 +125,11 @@ class For(Stmt):
 @dataclass(frozen=True)
 class Yield(Stmt):
     value: Expr
+
+
+@dataclass(frozen=True)
+class Continue(Stmt):
+    pass
 
 
 @dataclass(frozen=True)

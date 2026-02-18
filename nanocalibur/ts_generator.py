@@ -9,6 +9,7 @@ from nanocalibur.ir import (
     BindingKind,
     CallExpr,
     CallStmt,
+    Continue,
     Const,
     For,
     If,
@@ -301,6 +302,9 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
         if isinstance(stmt, Yield):
             return [pad + f"yield {self._emit_expr(stmt.value)};"]
 
+        if isinstance(stmt, Continue):
+            return [pad + "continue;"]
+
         raise DSLValidationError(f"Unsupported statement IR node: {type(stmt).__name__}")
 
     def _action_uses_yield(self, action: ActionIR) -> bool:
@@ -353,6 +357,8 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
     def _emit_expr(self, expr):
         if isinstance(expr, Const):
             value = expr.value
+            if value is None:
+                return "null"
             if isinstance(value, bool):
                 return "true" if value else "false"
             if isinstance(value, str):

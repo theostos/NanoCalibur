@@ -1702,6 +1702,13 @@
     {
       "action": "spawn_bonus",
       "condition": {
+        "kind": "button",
+        "name": "spawn_bonus"
+      }
+    },
+    {
+      "action": "spawn_bonus",
+      "condition": {
         "kind": "tool",
         "name": "spawn_bonus",
         "tool_docstring": "Spawn one bonus coin near the hero"

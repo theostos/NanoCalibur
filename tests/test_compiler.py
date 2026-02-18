@@ -11,6 +11,7 @@ from nanocalibur.ir import (
     BindingKind,
     CallExpr,
     CallStmt,
+    Continue,
     Const,
     For,
     If,
@@ -523,6 +524,79 @@ def test_accept_while_true():
     assert isinstance(run_forever.body[0], While)
     assert isinstance(run_forever.body[0].condition, Const)
     assert run_forever.body[0].condition.value is True
+
+
+def test_accept_none_comparisons_on_actor_bindings():
+    actions = compile_source(
+        """
+        class Coin(Actor):
+            pass
+
+        def maybe_destroy(last_coin: Coin[-1]):
+            if last_coin is None:
+                pass
+            if last_coin is not None:
+                Actor.destroy(last_coin)
+        """
+    )
+
+    action = actions[0]
+    first_if = action.body[0]
+    second_if = action.body[1]
+    assert isinstance(first_if, If)
+    assert isinstance(first_if.condition, Binary)
+    assert first_if.condition.op == "=="
+    assert isinstance(second_if, If)
+    assert isinstance(second_if.condition, Binary)
+    assert second_if.condition.op == "!="
+
+
+def test_accept_continue_inside_loops():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def skip_steps(player: Player["hero"]):
+            for i in range(0, 5):
+                continue
+            while player.speed > 0:
+                continue
+        """
+    )
+
+    action = actions[0]
+    assert isinstance(action.body[0], For)
+    assert isinstance(action.body[0].body[0], Continue)
+    assert isinstance(action.body[1], While)
+    assert isinstance(action.body[1].body[0], Continue)
+
+
+def test_reject_continue_outside_loop():
+    with pytest.raises(DSLValidationError, match="only allowed inside loops"):
+        compile_source(
+            """
+            class Player(Actor):
+                speed: int
+
+            def bad(player: Player["hero"]):
+                continue
+            """
+        )
+
+
+def test_reject_is_comparison_without_none():
+    with pytest.raises(DSLValidationError, match="only supported with None"):
+        compile_source(
+            """
+            class Player(Actor):
+                speed: int
+
+            def bad(a: Player["hero"], b: Player["hero"]):
+                if a is b:
+                    pass
+            """
+        )
 
 
 def test_accept_actor_attach_and_detach_calls():

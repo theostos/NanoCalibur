@@ -213,3 +213,36 @@ def test_ts_emits_negative_index_lookup_for_typed_actor_binding():
 
     assert 'const __actors_last_coin = ctx.actors.filter((a: any) => a?.type === "Coin");' in ts
     assert "let last_coin = __actors_last_coin[__actors_last_coin.length + (-1)];" in ts
+
+
+def test_ts_emits_null_checks_for_none_comparisons():
+    ts = compile_to_ts(
+        """
+        class Coin(Actor):
+            pass
+
+        def maybe_destroy(last_coin: Coin[-1]):
+            if last_coin is None:
+                pass
+            if last_coin is not None:
+                Actor.destroy(last_coin)
+        """
+    )
+
+    assert "if ((last_coin == null)) {" in ts
+    assert "if ((last_coin != null)) {" in ts
+
+
+def test_ts_emits_continue_statement():
+    ts = compile_to_ts(
+        """
+        class Player(Actor):
+            speed: int
+
+        def skip_steps(player: Player["hero"]):
+            for i in range(0, 4):
+                continue
+        """
+    )
+
+    assert "continue;" in ts

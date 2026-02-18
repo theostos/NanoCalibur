@@ -76,12 +76,13 @@ def disable_gravity(scene: Scene):
 def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
     for _ in range(20):
         yield tick
-    coin = Coin(x=last_coin.x + 32,
-        y=224,
-        active=True,
-        sprite="coin",
-    )
-    scene.spawn(coin)
+    if last_coin is not None:
+        coin = Coin(x=last_coin.x + 32,
+            y=224,
+            active=True,
+            sprite="coin",
+        )
+        scene.spawn(coin)
 
 
 game = Game()

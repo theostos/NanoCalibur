@@ -12,6 +12,7 @@ from nanocalibur.ir import (
     BindingKind,
     CallExpr,
     CallStmt,
+    Continue,
     Const,
     Expr,
     For,
@@ -49,6 +50,8 @@ _ALLOWED_CMP = {
     ast.LtE: "<=",
     ast.Gt: ">",
     ast.GtE: ">=",
+    ast.Is: "==",
+    ast.IsNot: "!=",
 }
 
 _ALLOWED_UNARY = {
@@ -263,7 +266,7 @@ class DSLCompiler:
             )
             body = []
             for stmt in fn.body:
-                compiled = self._compile_stmt(stmt, scope)
+                compiled = self._compile_stmt(stmt, scope, loop_depth=0)
                 if compiled is not None:
                     body.append(compiled)
             return ActionIR(fn.name, params, body)
@@ -425,7 +428,7 @@ class DSLCompiler:
 
     # ---------------- Statements ----------------
 
-    def _compile_stmt(self, stmt: ast.stmt, scope: ActionScope):
+    def _compile_stmt(self, stmt: ast.stmt, scope: ActionScope, loop_depth: int):
         with dsl_node_context(stmt):
             if isinstance(stmt, ast.Assign):
                 if len(stmt.targets) != 1:
@@ -464,12 +467,12 @@ class DSLCompiler:
             if isinstance(stmt, ast.If):
                 body = []
                 for child in stmt.body:
-                    compiled = self._compile_stmt(child, scope)
+                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth)
                     if compiled is not None:
                         body.append(compiled)
                 orelse = []
                 for child in stmt.orelse:
-                    compiled = self._compile_stmt(child, scope)
+                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth)
                     if compiled is not None:
                         orelse.append(compiled)
                 return If(
@@ -481,7 +484,7 @@ class DSLCompiler:
             if isinstance(stmt, ast.While):
                 body = []
                 for child in stmt.body:
-                    compiled = self._compile_stmt(child, scope)
+                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth + 1)
                     if compiled is not None:
                         body.append(compiled)
                 return While(
@@ -505,7 +508,7 @@ class DSLCompiler:
                 scope.actor_list_var_types.pop(stmt.target.id, None)
                 body = []
                 for child in stmt.body:
-                    compiled = self._compile_stmt(child, scope)
+                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth + 1)
                     if compiled is not None:
                         body.append(compiled)
                 return For(
@@ -522,6 +525,11 @@ class DSLCompiler:
 
             if isinstance(stmt, ast.Pass):
                 return None
+
+            if isinstance(stmt, ast.Continue):
+                if loop_depth <= 0:
+                    raise DSLValidationError("'continue' is only allowed inside loops.")
+                return Continue()
 
             raise DSLValidationError(f"Unsupported statement: {type(stmt).__name__}")
 
@@ -906,11 +914,15 @@ class DSLCompiler:
     def _compile_expr(self, expr: ast.AST, scope: ActionScope, allow_range_call: bool):
         with dsl_node_context(expr):
             if isinstance(expr, ast.Constant):
+                if expr.value is None:
+                    return Const(None)
                 if isinstance(expr.value, bool):
                     return Const(expr.value)
                 if isinstance(expr.value, (int, float, str)):
                     return Const(expr.value)
-                raise DSLValidationError("Only int, float, str, bool constants are allowed.")
+                raise DSLValidationError(
+                    "Only int, float, str, bool, and None constants are allowed."
+                )
 
             if isinstance(expr, ast.Name):
                 if expr.id not in scope.defined_names:
@@ -960,17 +972,27 @@ class DSLCompiler:
             if isinstance(expr, ast.Compare):
                 if len(expr.ops) != 1 or len(expr.comparators) != 1:
                     raise DSLValidationError("Chained comparisons are not supported.")
-                op = _ALLOWED_CMP.get(type(expr.ops[0]))
+                left_expr = self._compile_expr(expr.left, scope, allow_range_call=False)
+                right_expr = self._compile_expr(
+                    expr.comparators[0], scope, allow_range_call=False
+                )
+                op_node = type(expr.ops[0])
+                if op_node in {ast.Is, ast.IsNot}:
+                    left_is_none = isinstance(left_expr, Const) and left_expr.value is None
+                    right_is_none = isinstance(right_expr, Const) and right_expr.value is None
+                    if not (left_is_none or right_is_none):
+                        raise DSLValidationError(
+                            "'is'/'is not' comparisons are only supported with None."
+                        )
+                op = _ALLOWED_CMP.get(op_node)
                 if op is None:
                     raise DSLValidationError(
                         f"Unsupported comparison operator: {type(expr.ops[0]).__name__}"
                     )
                 return Binary(
                     op=op,
-                    left=self._compile_expr(expr.left, scope, allow_range_call=False),
-                    right=self._compile_expr(
-                        expr.comparators[0], scope, allow_range_call=False
-                    ),
+                    left=left_expr,
+                    right=right_expr,
                 )
 
             if isinstance(expr, ast.Call):
