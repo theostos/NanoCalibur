@@ -349,9 +349,40 @@ def test_export_project_serializes_roles_and_role_scoped_conditions(tmp_path):
     spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
 
     assert spec["roles"] == [
-        {"id": "human_1", "kind": "human", "required": True},
-        {"id": "ai_1", "kind": "ai", "required": False},
+        {"id": "human_1", "kind": "human", "required": True, "type": "Role", "fields": {}},
+        {"id": "ai_1", "kind": "ai", "required": False, "type": "Role", "fields": {}},
     ]
     assert spec["rules"][0]["condition"]["role_id"] == "human_1"
     assert spec["rules"][1]["condition"]["role_id"] == "ai_1"
     assert spec["tools"][0]["role_id"] == "ai_1"
+
+
+def test_export_project_serializes_role_schemas_and_fields(tmp_path):
+    source = textwrap.dedent(
+        """
+        class HumanRole(Role):
+            score: int
+            cards: List[str]
+
+        class Player(Actor):
+            pass
+
+        def move(player: Player["hero"], self_role: HumanRole["human_1"]):
+            if self_role.score > 0:
+                player.x = player.x + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=2))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["role_schemas"]["HumanRole"]["score"] == "int"
+    assert spec["role_schemas"]["HumanRole"]["cards"] == "list[str]"
+    assert spec["roles"][0]["type"] == "HumanRole"
+    assert spec["roles"][0]["fields"] == {"score": 2, "cards": []}

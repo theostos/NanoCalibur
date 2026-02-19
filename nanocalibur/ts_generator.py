@@ -59,9 +59,12 @@ export interface RuntimeSceneContext {
 export interface GameContext {
   globals: Record<string, any>;
   actors: any[];
+  roles?: Record<string, any>;
+  self?: any;
   tick: number;
   elapsed?: number;
   getActorByUid?: (uid: string) => any;
+  getRoleById?: (id: string) => any;
   playAnimation?: (actor: any, clipName: string) => void;
   destroyActor?: (actor: any) => void;
   scene?: RuntimeSceneContext;
@@ -183,6 +186,21 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                     global_bindings.append((param.name, param.global_name))
                     continue
 
+                if param.kind == BindingKind.ROLE:
+                    selector = param.role_selector
+                    if selector is None:
+                        raise DSLValidationError(
+                            f"Role binding missing selector for '{param.name}'."
+                        )
+                    lines.extend(
+                        self._emit_role_binding_lines(
+                            param_name=param.name,
+                            role_id=selector.id,
+                            role_type=param.role_type,
+                        )
+                    )
+                    continue
+
                 if param.kind == BindingKind.ACTOR_LIST:
                     if param.actor_list_type is None:
                         lines.append(f"  let {param.name} = ctx.actors;")
@@ -302,6 +320,21 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
 
         raise DSLValidationError(f"Unsupported actor selector for '{param.name}'.")
 
+    def _emit_role_binding_lines(
+        self,
+        param_name: str,
+        role_id: str,
+        role_type: str | None,
+    ) -> list[str]:
+        escaped_id = json.dumps(role_id)
+        out = [f"  let {param_name} = (ctx.getRoleById ? ctx.getRoleById({escaped_id}) : null);"]
+        if role_type is not None:
+            escaped_type = json.dumps(role_type)
+            out.append(
+                f"  if ({param_name} && {param_name}.type !== {escaped_type}) {{ {param_name} = null; }}"
+            )
+        return out
+
     def _emit_predicate(self, predicate: PredicateIR, typed: bool, exported: bool):
         previous_tick_vars = getattr(self, "_tick_vars", set())
         previous_scene_vars = getattr(self, "_scene_vars", set())
@@ -331,6 +364,21 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                 if param.kind == BindingKind.GLOBAL:
                     lines.append(
                         f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
+                    )
+                    continue
+
+                if param.kind == BindingKind.ROLE:
+                    selector = param.role_selector
+                    if selector is None:
+                        raise DSLValidationError(
+                            f"Role binding missing selector for '{param.name}'."
+                        )
+                    lines.extend(
+                        self._emit_role_binding_lines(
+                            param_name=param.name,
+                            role_id=selector.id,
+                            role_type=param.role_type,
+                        )
                     )
                     continue
 

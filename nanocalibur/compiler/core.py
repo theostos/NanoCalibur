@@ -23,6 +23,7 @@ from nanocalibur.ir import (
     ParamBinding,
     PredicateIR,
     Range,
+    RoleSelector,
     SubscriptExpr,
     Unary,
     Var,
@@ -59,6 +60,7 @@ class ActionScope:
     defined_names: Set[str]
     actor_var_types: Dict[str, str]
     actor_list_var_types: Dict[str, Optional[str]]
+    role_var_types: Dict[str, str]
     scene_vars: Set[str]
     tick_vars: Set[str]
     spawn_actor_templates: Dict[str, tuple[str, Expr, Expr]]
@@ -133,36 +135,78 @@ class DSLCompiler:
                 raise DSLValidationError("Decorators are not allowed on actor schemas.")
 
             if len(node.bases) != 1:
-                raise DSLValidationError("Actor schema must inherit from Actor or ActorModel only.")
+                raise DSLValidationError(
+                    "Schema class must inherit from Actor, ActorModel, or Role."
+                )
 
             base = node.bases[0]
-            if not isinstance(base, ast.Name) or base.id not in {"Actor", "ActorModel"}:
-                raise DSLValidationError("Only Actor or ActorModel subclasses are allowed.")
+            if not isinstance(base, ast.Name):
+                raise DSLValidationError(
+                    "Schema class must inherit from Actor, ActorModel, or Role."
+                )
 
-            fields: Dict[str, FieldType] = dict(BASE_ACTOR_FIELDS)
-            for stmt in node.body:
-                with dsl_node_context(stmt):
-                    if isinstance(stmt, ast.Pass):
-                        continue
-                    if not isinstance(stmt, ast.AnnAssign):
-                        raise DSLValidationError(
-                            "Actor schema body can only contain annotated fields."
-                        )
-                    if stmt.value is not None:
-                        raise DSLValidationError(
-                            "Actor schema fields cannot have default values."
-                        )
-                    if not isinstance(stmt.target, ast.Name):
-                        raise DSLValidationError("Actor schema field target must be a name.")
+            if base.id in {"Actor", "ActorModel"}:
+                fields: Dict[str, FieldType] = dict(BASE_ACTOR_FIELDS)
+                for stmt in node.body:
+                    with dsl_node_context(stmt):
+                        if isinstance(stmt, ast.Pass):
+                            continue
+                        if not isinstance(stmt, ast.AnnAssign):
+                            raise DSLValidationError(
+                                "Actor schema body can only contain annotated fields."
+                            )
+                        if stmt.value is not None:
+                            raise DSLValidationError(
+                                "Actor schema fields cannot have default values."
+                            )
+                        if not isinstance(stmt.target, ast.Name):
+                            raise DSLValidationError(
+                                "Actor schema field target must be a name."
+                            )
 
-                    field_name = stmt.target.id
-                    if field_name in fields and field_name not in BASE_ACTOR_FIELDS:
-                        raise DSLValidationError(
-                            f"Duplicate field '{field_name}' in actor '{node.name}'."
-                        )
-                    fields[field_name] = self._parse_field_type(stmt.annotation)
+                        field_name = stmt.target.id
+                        if field_name in fields and field_name not in BASE_ACTOR_FIELDS:
+                            raise DSLValidationError(
+                                f"Duplicate field '{field_name}' in actor '{node.name}'."
+                            )
+                        fields[field_name] = self._parse_field_type(stmt.annotation)
 
-            self.schemas.register_actor(node.name, fields)
+                self.schemas.register_actor(node.name, fields)
+                return
+
+            if base.id == "Role":
+                fields: Dict[str, FieldType] = {}
+                reserved = {"id", "required", "kind"}
+                for stmt in node.body:
+                    with dsl_node_context(stmt):
+                        if isinstance(stmt, ast.Pass):
+                            continue
+                        if not isinstance(stmt, ast.AnnAssign):
+                            raise DSLValidationError(
+                                "Role schema body can only contain annotated fields."
+                            )
+                        if stmt.value is not None:
+                            raise DSLValidationError(
+                                "Role schema fields cannot have default values."
+                            )
+                        if not isinstance(stmt.target, ast.Name):
+                            raise DSLValidationError(
+                                "Role schema field target must be a name."
+                            )
+                        field_name = stmt.target.id
+                        if field_name in reserved:
+                            raise DSLValidationError(
+                                f"Role schema field '{field_name}' is reserved."
+                            )
+                        if field_name in fields:
+                            raise DSLValidationError(
+                                f"Duplicate field '{field_name}' in role '{node.name}'."
+                            )
+                        fields[field_name] = self._parse_field_type(stmt.annotation)
+                self.schemas.register_role(node.name, fields)
+                return
+
+            raise DSLValidationError("Only Actor, ActorModel, or Role subclasses are allowed.")
 
     def _parse_field_type(self, annotation: ast.AST) -> FieldType:
         if isinstance(annotation, ast.Name) and annotation.id in _PRIM_NAMES:
@@ -214,11 +258,14 @@ class DSLCompiler:
 
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
+            role_var_types: Dict[str, str] = {}
             for param in params:
                 if param.kind == BindingKind.ACTOR and param.actor_type is not None:
                     actor_var_types[param.name] = param.actor_type
                 if param.kind == BindingKind.ACTOR_LIST:
                     actor_list_var_types[param.name] = param.actor_list_type
+                if param.kind == BindingKind.ROLE and param.role_type is not None:
+                    role_var_types[param.name] = param.role_type
                 if (
                     param.kind == BindingKind.GLOBAL
                     and param.global_name in self.global_actor_types
@@ -230,6 +277,7 @@ class DSLCompiler:
                 defined_names={p.name for p in params},
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
+                role_var_types=role_var_types,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
                 spawn_actor_templates={},
@@ -266,11 +314,14 @@ class DSLCompiler:
 
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
+            role_var_types: Dict[str, str] = {}
             for param in params:
                 if param.kind == BindingKind.ACTOR and param.actor_type is not None:
                     actor_var_types[param.name] = param.actor_type
                 if param.kind == BindingKind.ACTOR_LIST:
                     actor_list_var_types[param.name] = param.actor_list_type
+                if param.kind == BindingKind.ROLE and param.role_type is not None:
+                    role_var_types[param.name] = param.role_type
                 if (
                     param.kind == BindingKind.GLOBAL
                     and param.global_name in self.global_actor_types
@@ -298,6 +349,7 @@ class DSLCompiler:
                 defined_names={p.name for p in params},
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
+                role_var_types=role_var_types,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
                 spawn_actor_templates={},
@@ -323,6 +375,7 @@ class DSLCompiler:
             params: List[str] = []
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
+            role_var_types: Dict[str, str] = {}
             scene_vars: Set[str] = set()
             tick_vars: Set[str] = set()
 
@@ -341,6 +394,8 @@ class DSLCompiler:
                             tick_vars.add(arg.arg)
                         elif ann.id in self.schemas.actor_fields:
                             actor_var_types[arg.arg] = ann.id
+                        elif ann.id in self.schemas.role_fields:
+                            role_var_types[arg.arg] = ann.id
                         continue
 
                     if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
@@ -351,6 +406,8 @@ class DSLCompiler:
                             tick_vars.add(arg.arg)
                         elif head in self.schemas.actor_fields:
                             actor_var_types[arg.arg] = head
+                        elif head in self.schemas.role_fields:
+                            role_var_types[arg.arg] = head
                         elif head in {"List", "list"} and isinstance(ann.slice, ast.Name):
                             if ann.slice.id == "Actor":
                                 actor_list_var_types[arg.arg] = None
@@ -373,6 +430,7 @@ class DSLCompiler:
                 defined_names=set(params),
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
+                role_var_types=role_var_types,
                 scene_vars=scene_vars,
                 tick_vars=tick_vars,
                 spawn_actor_templates={},
@@ -416,6 +474,12 @@ class DSLCompiler:
                     kind=BindingKind.ACTOR,
                     actor_selector=ActorSelector(uid=ann.id),
                     actor_type=ann.id,
+                )
+            if isinstance(ann, ast.Name) and ann.id == "Role":
+                raise DSLValidationError('Role binding must be Role["role_id"].')
+            if isinstance(ann, ast.Name) and ann.id in self.schemas.role_fields:
+                raise DSLValidationError(
+                    f'{ann.id} role binding must be {ann.id}["role_id"].'
                 )
 
             if not isinstance(ann, ast.Subscript):
@@ -462,6 +526,22 @@ class DSLCompiler:
                         actor_type=actor_type,
                     )
 
+            if head == "Role":
+                role_id: Optional[str] = None
+                if isinstance(selector, ast.Constant) and isinstance(selector.value, str):
+                    role_id = selector.value
+                elif _parse_int_literal(selector) is not None:
+                    raise DSLValidationError(
+                        'Role binding does not support index selectors. Use Role["role_id"].'
+                    )
+                if role_id is None:
+                    raise DSLValidationError('Role binding must be Role["role_id"].')
+                return ParamBinding(
+                    name=arg.arg,
+                    kind=BindingKind.ROLE,
+                    role_selector=RoleSelector(id=role_id),
+                )
+
             # Typed actor binding using actor schema name as the binding head:
             #   player: Player["hero_uid"] or player: Player[-1]
             if head in self.schemas.actor_fields:
@@ -484,6 +564,25 @@ class DSLCompiler:
 
                 raise DSLValidationError(
                     f'{head} binding must be {head}["uid"] or {head}[index].'
+                )
+
+            if head in self.schemas.role_fields:
+                role_id: Optional[str] = None
+                if isinstance(selector, ast.Constant) and isinstance(selector.value, str):
+                    role_id = selector.value
+                elif _parse_int_literal(selector) is not None:
+                    raise DSLValidationError(
+                        f'{head} binding does not support index selectors. Use {head}["role_id"].'
+                    )
+                if role_id is None:
+                    raise DSLValidationError(
+                        f'{head} binding must be {head}["role_id"].'
+                    )
+                return ParamBinding(
+                    name=arg.arg,
+                    kind=BindingKind.ROLE,
+                    role_selector=RoleSelector(id=role_id),
+                    role_type=head,
                 )
 
             if head in {"List", "list"}:
@@ -999,7 +1098,7 @@ class DSLCompiler:
             ):
                 raise DSLValidationError("tick.elapsed is read-only.")
             return compiled
-        raise DSLValidationError("Assignment target must be a variable or actor field.")
+        raise DSLValidationError("Assignment target must be a variable or actor/role field.")
 
     # ---------------- Expressions ----------------
 
@@ -1236,12 +1335,21 @@ class DSLCompiler:
             return Attr(obj=obj_name, field="elapsed")
 
         actor_type = scope.actor_var_types.get(obj_name)
+        role_type = scope.role_var_types.get(obj_name)
+        if role_type is not None:
+            if not self.schemas.has_role_field(role_type, expr.attr):
+                raise DSLValidationError(
+                    f"Role '{role_type}' has no field '{expr.attr}'."
+                )
+            return Attr(obj=obj_name, field=expr.attr)
+
         if actor_type is None:
             raise DSLValidationError(
                 f"Actor variable '{obj_name}' must use Actor[\"Type\"] or "
-                "Type[...] binding to allow field access."
+                "Type[...] binding to allow field access. "
+                "Role fields require RoleType[\"role_id\"] bindings."
             )
-        if not self.schemas.has_field(actor_type, expr.attr):
+        if not self.schemas.has_actor_field(actor_type, expr.attr):
             raise DSLValidationError(
                 f"Actor '{actor_type}' has no field '{expr.attr}'."
             )
@@ -1261,6 +1369,10 @@ class DSLCompiler:
                 ]
             else:
                 scope.actor_list_var_types.pop(target_name, None)
+            if value.name in scope.role_var_types:
+                scope.role_var_types[target_name] = scope.role_var_types[value.name]
+            else:
+                scope.role_var_types.pop(target_name, None)
             if value.name in scope.spawn_actor_templates:
                 scope.spawn_actor_templates[target_name] = scope.spawn_actor_templates[
                     value.name
@@ -1271,6 +1383,7 @@ class DSLCompiler:
 
         scope.actor_var_types.pop(target_name, None)
         scope.actor_list_var_types.pop(target_name, None)
+        scope.role_var_types.pop(target_name, None)
         scope.spawn_actor_templates.pop(target_name, None)
 
     def _iterated_actor_type(self, iterable, scope: ActionScope) -> Optional[str]:

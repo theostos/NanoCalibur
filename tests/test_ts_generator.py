@@ -337,6 +337,22 @@ def test_ts_emits_list_literals_and_subscript_access():
     assert "values = [last, 1, 2];" in ts
 
 
+def test_ts_emits_role_lookup_binding():
+    ts = compile_to_ts(
+        """
+        class HumanRole(Role):
+            score: int
+
+        def increment(self_role: HumanRole["human_1"]):
+            self_role.score = self_role.score + 1
+        """
+    )
+
+    assert 'getRoleById?: (id: string) => any;' in ts
+    assert 'let self_role = (ctx.getRoleById ? ctx.getRoleById("human_1") : null);' in ts
+    assert 'if (self_role && self_role.type !== "HumanRole") { self_role = null; }' in ts
+
+
 def test_ts_emits_callable_helpers_and_invocations():
     ts = compile_project_to_ts(
         """

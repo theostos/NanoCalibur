@@ -212,10 +212,18 @@ class ProjectCompiler:
                 }
                 for actor_type, fields in compiler.schemas.actor_fields.items()
             }
+            role_schemas = {
+                role_type: {
+                    field_name: _field_type_label(field_type)
+                    for field_name, field_type in fields.items()
+                }
+                for role_type, fields in compiler.schemas.role_fields.items()
+            }
             contains_next_turn_call = any(
                 _action_contains_next_turn(action) for action in actions.values()
             )
             self._validate_condition_role_ids(rules, roles)
+            self._validate_role_bindings(actions, predicates, roles)
             if (
                 multiplayer is not None
                 and multiplayer.default_loop
@@ -231,6 +239,7 @@ class ProjectCompiler:
 
             return ProjectSpec(
                 actor_schemas=actor_schemas,
+                role_schemas=role_schemas,
                 globals=globals_spec,
                 actors=actors,
                 rules=rules,
@@ -616,7 +625,10 @@ class ProjectCompiler:
                                 declared_multiplayer_vars[target.id] = resolved_call
                             if (
                                 isinstance(resolved_call.func, ast.Name)
-                                and resolved_call.func.id == "Role"
+                                and (
+                                    resolved_call.func.id == "Role"
+                                    or resolved_call.func.id in compiler.schemas.role_fields
+                                )
                             ):
                                 declared_role_vars[target.id] = resolved_call
                             if self._is_condition_expr(resolved_call):
@@ -792,7 +804,10 @@ class ProjectCompiler:
                                 active_scene_vars.discard(target.id)
                             elif (
                                 isinstance(resolved_call.func, ast.Name)
-                                and resolved_call.func.id == "Role"
+                                and (
+                                    resolved_call.func.id == "Role"
+                                    or resolved_call.func.id in compiler.schemas.role_fields
+                                )
                             ):
                                 declared_role_vars[target.id] = resolved_call
                                 declared_actor_vars.pop(target.id, None)
@@ -944,7 +959,8 @@ class ProjectCompiler:
                         if len(args) != 1:
                             raise DSLValidationError("add_role(...) expects one argument.")
                         role = self._parse_role(
-                            self._resolve_role_arg(args[0], declared_role_vars)
+                            self._resolve_role_arg(args[0], declared_role_vars),
+                            compiler,
                         )
                         existing = roles_by_id.get(role.id)
                         if existing is not None and existing != role:
@@ -1357,23 +1373,29 @@ class ProjectCompiler:
             return declared_role_vars[node.id]
         return node
 
-    def _parse_role(self, node: ast.AST) -> RoleSpec:
+    def _parse_role(self, node: ast.AST, compiler: DSLCompiler) -> RoleSpec:
         if not isinstance(node, ast.Call):
             raise DSLValidationError("add_role(...) expects Role(...).")
-        if not isinstance(node.func, ast.Name) or node.func.id != "Role":
+        if not isinstance(node.func, ast.Name):
             raise DSLValidationError("add_role(...) expects Role(...).")
+        role_type = node.func.id
+        if role_type != "Role" and role_type not in compiler.schemas.role_fields:
+            raise DSLValidationError(
+                "add_role(...) expects Role(...) or RoleSchema(...)."
+            )
         if node.args:
             raise DSLValidationError("Role(...) only supports keyword arguments.")
 
         kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
-        allowed = {"id", "required", "kind"}
+        role_schema_fields = compiler.schemas.role_fields.get(role_type, {})
+        allowed = {"id", "required", "kind", *role_schema_fields.keys()}
         unexpected = sorted(set(kwargs.keys()) - allowed)
         if unexpected:
             raise DSLValidationError(
-                f"Role(...) received unsupported arguments: {unexpected}"
+                f"{role_type}(...) received unsupported arguments: {unexpected}"
             )
         if "id" not in kwargs:
-            raise DSLValidationError("Role(...) missing required argument: ['id']")
+            raise DSLValidationError(f"{role_type}(...) missing required argument: ['id']")
 
         role_id = _expect_string(kwargs["id"], "role id")
         if not role_id:
@@ -1381,7 +1403,19 @@ class ProjectCompiler:
 
         required = _expect_bool_or_default(kwargs.get("required"), "role required", True)
         kind = _parse_role_kind(kwargs.get("kind"))
-        return RoleSpec(id=role_id, required=required, kind=kind)
+        fields: Dict[str, object] = {}
+        for field_name, field_type in role_schema_fields.items():
+            if field_name in kwargs:
+                fields[field_name] = _parse_typed_value(kwargs[field_name], field_type)
+            else:
+                fields[field_name] = _default_value_for_type(field_type)
+        return RoleSpec(
+            id=role_id,
+            required=required,
+            kind=kind,
+            role_type=role_type,
+            fields=cast(Dict[str, object], fields),
+        )
 
     def _validate_condition_role_ids(
         self,
@@ -1413,6 +1447,48 @@ class ProjectCompiler:
                 f"Condition for action '{rule.action_name}' references unknown role id '{role_id}'. "
                 f"Declared roles: {declared_list}."
             )
+
+    def _validate_role_bindings(
+        self,
+        actions: Dict[str, ActionIR],
+        predicates: Dict[str, PredicateIR],
+        roles: List[RoleSpec],
+    ) -> None:
+        declared = {role.id: role for role in roles}
+        declared_ids = sorted(declared.keys())
+
+        def validate_param(owner: str, param: ParamBinding) -> None:
+            if param.kind != BindingKind.ROLE:
+                return
+            selector = param.role_selector
+            role_id = selector.id if selector is not None else ""
+            if not role_id:
+                raise DSLValidationError(
+                    f"{owner} role binding '{param.name}' is missing a role id."
+                )
+            target = declared.get(role_id)
+            if target is None:
+                if not declared:
+                    raise DSLValidationError(
+                        f"{owner} role binding '{param.name}' references role id '{role_id}', "
+                        "but no roles were declared via game.add_role(...)."
+                    )
+                raise DSLValidationError(
+                    f"{owner} role binding '{param.name}' references unknown role id '{role_id}'. "
+                    f"Declared roles: {', '.join(declared_ids)}."
+                )
+            if param.role_type is not None and target.role_type != param.role_type:
+                raise DSLValidationError(
+                    f"{owner} role binding '{param.name}' expects role type "
+                    f"'{param.role_type}' but role '{role_id}' has type '{target.role_type}'."
+                )
+
+        for action in actions.values():
+            for param in action.params:
+                validate_param(f"Action '{action.name}'", param)
+        for predicate in predicates.values():
+            for param in predicate.params:
+                validate_param(f"Predicate '{predicate.name}'", param)
 
     def _parse_global_value(
         self, node: ast.AST, compiler: DSLCompiler
@@ -1698,7 +1774,11 @@ class ProjectCompiler:
             head = ann.value.id
             if head in {"List", "list"}:
                 continue
-            if head in {"Scene", "Tick", "Actor", "Global"} or head in compiler.schemas.actor_fields:
+            if (
+                head in {"Scene", "Tick", "Actor", "Role", "Global"}
+                or head in compiler.schemas.actor_fields
+                or head in compiler.schemas.role_fields
+            ):
                 warnings.warn(
                     format_dsl_diagnostic(
                         f"Selector annotation on callable parameter '{arg.arg}' is ignored; callable parameters are fully determined by the caller.",
@@ -2993,15 +3073,18 @@ def _is_supported_action_binding_annotation(
     compiler: DSLCompiler,
 ) -> bool:
     if isinstance(annotation, ast.Name):
-        if annotation.id in {"Scene", "Tick", "Actor"}:
+        if annotation.id in {"Scene", "Tick", "Actor", "Role"}:
             return True
-        return annotation.id in compiler.schemas.actor_fields
+        return (
+            annotation.id in compiler.schemas.actor_fields
+            or annotation.id in compiler.schemas.role_fields
+        )
 
     if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name):
         head = annotation.value.id
-        if head in {"Scene", "Tick", "Actor", "Global", "List", "list"}:
+        if head in {"Scene", "Tick", "Actor", "Role", "Global", "List", "list"}:
             return True
-        return head in compiler.schemas.actor_fields
+        return head in compiler.schemas.actor_fields or head in compiler.schemas.role_fields
 
     return False
 

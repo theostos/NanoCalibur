@@ -205,6 +205,8 @@ class RoleSpec:
     id: str
     required: bool = True
     kind: RoleKind = RoleKind.HYBRID
+    role_type: str = "Role"
+    fields: Dict[str, Union[PrimitiveValue, ListValue]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -249,6 +251,7 @@ class SceneSpec:
 @dataclass(frozen=True)
 class ProjectSpec:
     actor_schemas: Dict[str, Dict[str, str]]
+    role_schemas: Dict[str, Dict[str, str]]
     globals: List[GlobalVariableSpec]
     actors: List[ActorInstanceSpec]
     rules: List[RuleSpec]

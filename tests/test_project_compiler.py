@@ -15,7 +15,7 @@ from nanocalibur.game_model import (
     ToolConditionSpec,
     VisibilityMode,
 )
-from nanocalibur.ir import Attr
+from nanocalibur.ir import Attr, BindingKind
 from nanocalibur.project_compiler import ProjectCompiler
 
 
@@ -243,6 +243,8 @@ def test_project_parses_roles_and_role_scoped_conditions():
     assert [role.id for role in project.roles] == ["human_1", "ai_1"]
     assert project.roles[0].kind == RoleKind.HUMAN
     assert project.roles[1].kind == RoleKind.AI
+    assert project.roles[0].role_type == "Role"
+    assert project.roles[1].role_type == "Role"
 
     keyboard_rule = project.rules[0]
     assert isinstance(keyboard_rule.condition, KeyboardConditionSpec)
@@ -251,6 +253,96 @@ def test_project_parses_roles_and_role_scoped_conditions():
     tool_rule = project.rules[1]
     assert isinstance(tool_rule.condition, ToolConditionSpec)
     assert tool_rule.condition.role_id == "ai_1"
+
+
+def test_project_parses_role_schema_and_role_bindings():
+    project = compile_project(
+        """
+        class HumanRole(Role):
+            score: int
+            buffs: List[List[int]]
+
+        class Player(Actor):
+            pass
+
+        def add_score(self_role: HumanRole["human_1"]):
+            self_role.score = self_role.score + 1
+
+        def can_win(player: Player, self_role: HumanRole["human_1"]) -> bool:
+            return self_role.score >= 10
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=3))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), add_score)
+        scene.add_rule(OnLogicalCondition(can_win, Player), add_score)
+        """
+    )
+
+    assert "HumanRole" in project.role_schemas
+    assert project.role_schemas["HumanRole"]["score"] == "int"
+    assert project.role_schemas["HumanRole"]["buffs"] == "list[list[int]]"
+    assert project.roles[0].id == "human_1"
+    assert project.roles[0].role_type == "HumanRole"
+    assert project.roles[0].fields["score"] == 3
+    assert project.roles[0].fields["buffs"] == []
+
+    add_score = project.actions[0]
+    assert add_score.params[0].kind == BindingKind.ROLE
+    assert add_score.params[0].role_selector is not None
+    assert add_score.params[0].role_selector.id == "human_1"
+    assert add_score.params[0].role_type == "HumanRole"
+
+
+def test_role_binding_requires_declared_role_id():
+    with pytest.raises(DSLValidationError, match="references unknown role id 'human_2'"):
+        compile_project(
+            """
+            class HumanRole(Role):
+                score: int
+
+            class Player(Actor):
+                pass
+
+            def add_score(self_role: HumanRole["human_2"]):
+                self_role.score = self_role.score + 1
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=3))
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), add_score)
+            """
+        )
+
+
+def test_role_binding_rejects_type_mismatch_with_declared_role():
+    with pytest.raises(DSLValidationError, match="expects role type 'HumanRole'"):
+        compile_project(
+            """
+            class HumanRole(Role):
+                score: int
+
+            class AIRole(Role):
+                score: int
+
+            class Player(Actor):
+                pass
+
+            def add_score(self_role: HumanRole["human_1"]):
+                self_role.score = self_role.score + 1
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(AIRole(id="human_1", kind=RoleKind.HYBRID, score=3))
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), add_score)
+            """
+        )
 
 
 def test_role_scoped_condition_requires_declared_role_id():

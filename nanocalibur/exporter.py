@@ -40,6 +40,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
     """Serialize a :class:`ProjectSpec` into the JSON game spec payload."""
     return {
         "schemas": project.actor_schemas,
+        "role_schemas": project.role_schemas,
         "globals": [_global_to_dict(g) for g in project.globals],
         "actors": [
             {
@@ -256,6 +257,8 @@ def _role_to_dict(role: RoleSpec) -> Dict[str, Any]:
         "id": role.id,
         "required": role.required,
         "kind": role.kind.value,
+        "type": role.role_type,
+        "fields": role.fields,
     }
 
 
@@ -315,6 +318,7 @@ def _param_binding_to_dict(param: ParamBinding) -> Dict[str, Any]:
         "global_name": param.global_name,
         "actor_type": param.actor_type,
         "actor_list_type": param.actor_list_type,
+        "role_type": param.role_type,
     }
     if param.actor_selector is None:
         payload["actor_selector"] = None
@@ -322,6 +326,12 @@ def _param_binding_to_dict(param: ParamBinding) -> Dict[str, Any]:
         payload["actor_selector"] = {
             "uid": param.actor_selector.uid,
             "index": param.actor_selector.index,
+        }
+    if param.role_selector is None:
+        payload["role_selector"] = None
+    else:
+        payload["role_selector"] = {
+            "id": param.role_selector.id,
         }
     return payload
 

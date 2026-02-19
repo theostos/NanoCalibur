@@ -265,12 +265,21 @@ class RoleKind(StrEnum):
 class Role:
     """Role declaration for multiplayer sessions."""
 
+    id: str
+    required: bool
+    kind: str
+
+    def __class_getitem__(cls, item):
+        """Allow ``Role[...]`` syntax in type annotations."""
+        return cls
+
     def __init__(
         self,
         *,
         id: str,
         required: bool = True,
         kind: RoleKind | str = RoleKind.HYBRID,
+        **_fields: Any,
     ):
         return None
 
