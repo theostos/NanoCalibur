@@ -123,10 +123,28 @@ class SessionSnapshotRenderer {
       cloned.y = y + vy * elapsedSeconds;
       return cloned;
     });
-    return {
+    const nextState = {
       ...this.latestState,
       actors,
     } as InterpreterState;
+
+    if (
+      nextState.camera &&
+      typeof nextState.camera === 'object' &&
+      nextState.camera.mode === 'follow' &&
+      typeof nextState.camera.target_uid === 'string'
+    ) {
+      const target = actors.find((actor) => actor.uid === nextState.camera?.target_uid);
+      if (target && typeof target.x === 'number' && typeof target.y === 'number') {
+        nextState.camera = {
+          ...nextState.camera,
+          x: target.x,
+          y: target.y,
+        };
+      }
+    }
+
+    return nextState;
   }
 
   private buildInterfaceGlobals(state: InterpreterState): Record<string, any> {
@@ -376,6 +394,7 @@ async function startSessionBrowserClient(
         {
           access_token: accessToken,
           commands: [command],
+          tick: false,
         },
       );
       if (response && typeof response === 'object' && response.state && response.frame) {
@@ -391,6 +410,9 @@ async function startSessionBrowserClient(
   };
 
   window.addEventListener('keydown', (event) => {
+    if (event.repeat) {
+      return;
+    }
     const command = mapBrowserKeyDownToCommand(event);
     if (!command) {
       return;

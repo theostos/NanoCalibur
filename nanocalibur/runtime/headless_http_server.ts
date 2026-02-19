@@ -350,7 +350,13 @@ export class HeadlessHttpServer {
       }
       const commands = this.normalizeSessionCommands(payload.commands);
       this.sessionManager.enqueueAuthorizedCommands(sessionId, accessToken, commands);
-      const result = this.sessionManager.tickSession(sessionId);
+      const shouldTick = payload.tick !== false;
+      const result = shouldTick
+        ? this.sessionManager.tickSession(sessionId)
+        : {
+            frame: this.sessionManager.getSessionFrame(sessionId),
+            state: this.sessionManager.getSessionState(sessionId),
+          };
       this.respondJson(res, 200, {
         frame: result.frame,
         state: result.state,
