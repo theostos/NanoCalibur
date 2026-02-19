@@ -565,6 +565,8 @@ def test_add_sprite_accepts_named_sprite_variable():
             frame_width=16,
             frame_height=16,
             default_clip="idle",
+            symbol="@",
+            description="hero player",
             clips={
                 "idle": {"frames": [0, 1], "ticks_per_frame": 8, "loop": True},
             },
@@ -581,7 +583,71 @@ def test_add_sprite_accepts_named_sprite_variable():
     assert sprite.frame_width == 16
     assert sprite.frame_height == 16
     assert sprite.default_clip == "idle"
+    assert sprite.symbol == "@"
+    assert sprite.description == "hero player"
     assert [clip.name for clip in sprite.clips] == ["idle"]
+
+
+def test_add_sprite_rejects_unknown_resource():
+    with pytest.raises(DSLValidationError, match="unknown resource"):
+        compile_project(
+            """
+            class Player(Actor):
+                speed: int
+
+            def noop(player: Player["hero"]):
+                player.x = player.x + 0
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=10, y=20, speed=2, sprite="hero"))
+
+            game.add_sprite(
+                Sprite(
+                    name="hero",
+                    resource="missing_sheet",
+                    frame_width=16,
+                    frame_height=16,
+                    default_clip="idle",
+                    clips={"idle": [0]},
+                )
+            )
+            scene.add_rule(KeyboardCondition.on_press("A"), noop)
+            """
+        )
+
+
+def test_add_sprite_accepts_bind_selector_and_scene_gravity():
+    project = compile_project(
+        """
+        class Player(Actor):
+            speed: int
+
+        def noop(player: Player["hero"]):
+            player.play("idle")
+
+        game = Game()
+        game.set_scene(Scene(gravity=True))
+        game.add_actor(Player(uid="hero", x=0, y=0, speed=1))
+        game.add_resource("hero_sheet", "hero.png")
+        game.add_sprite(
+            Sprite(
+                bind=Player["hero"],
+                resource="hero_sheet",
+                frame_width=16,
+                frame_height=16,
+                clips={"idle": [0, 1]},
+            )
+        )
+        game.add_rule(KeyboardCondition.on_press("A"), noop)
+        """
+    )
+
+    assert project.scene is not None
+    assert project.scene.gravity_enabled is True
+    assert len(project.sprites) == 1
+    assert project.sprites[0].uid == "hero"
 
 
 def test_game_set_map_and_camera_accept_named_variables():
@@ -1106,3 +1172,34 @@ def test_unreferenced_functions_emit_ignore_warnings():
             scene.add_actor(Player(uid="hero", x=0, y=0))
             """
         )
+
+
+def test_callable_dependency_chain_is_retained_when_referenced():
+    project = compile_project(
+        """
+        class Coin(Actor):
+            pass
+
+        @callable
+        def add_one(x: int) -> int:
+            return x + 1
+
+        @callable
+        def add_two(x: int) -> int:
+            return add_one(x) + 1
+
+        @condition(KeyboardCondition.begin_press("e"))
+        def spawn(scene: Scene, last_coin: Coin[-1]):
+            if last_coin is not None:
+                new_x = add_two(last_coin.x)
+                scene.spawn(Coin(x=new_x, y=0, active=True))
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Coin(uid="coin_1", x=0, y=0, active=True))
+        """
+    )
+
+    callable_names = sorted(callable_fn.name for callable_fn in project.callables)
+    assert callable_names == ["add_one", "add_two"]

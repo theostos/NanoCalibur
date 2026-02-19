@@ -201,3 +201,49 @@ def test_export_project_serializes_overlap_and_contact_modes(tmp_path):
     assert spec["rules"][0]["condition"]["mode"] == "overlap"
     assert spec["rules"][1]["condition"]["kind"] == "collision"
     assert spec["rules"][1]["condition"]["mode"] == "contact"
+
+
+def test_export_project_serializes_sprite_bindings_resources_and_callables(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            speed: int
+
+        @callable
+        def next_speed(speed: int) -> int:
+            return speed + 1
+
+        @condition(KeyboardCondition.on_press("d"))
+        def boost(player: Player["hero"]):
+            player.speed = next_speed(player.speed)
+            player.play("run")
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0, speed=1, sprite="hero"))
+        game.add_resource("hero_sheet", "res/hero.png")
+        game.add_sprite(
+            Sprite(
+                name="hero",
+                resource="hero_sheet",
+                frame_width=16,
+                frame_height=16,
+                symbol="@",
+                description="hero sprite",
+                default_clip="idle",
+                clips={"idle": [0, 1], "run": [2, 3]},
+            )
+        )
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    assert spec["resources"] == [{"name": "hero_sheet", "path": "res/hero.png"}]
+    assert spec["sprites"]["by_name"]["hero"]["resource"] == "hero_sheet"
+    assert spec["sprites"]["by_name"]["hero"]["symbol"] == "@"
+    assert spec["sprites"]["by_name"]["hero"]["description"] == "hero sprite"
+    assert spec["sprites"]["by_name"]["hero"]["clips"]["run"]["frames"] == [2, 3]
+    assert spec["callables"] == ["next_speed"]

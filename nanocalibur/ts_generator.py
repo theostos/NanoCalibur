@@ -122,6 +122,17 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             params = ", ".join(helper.params)
             lines = [f"{prefix}function {helper.name}({params}) {{"]
 
+        helper_local_names = [
+            name
+            for name in self._collect_assigned_var_names(helper.body)
+            if name not in set(helper.params)
+        ]
+        for local_name in helper_local_names:
+            if typed:
+                lines.append(f"  let {local_name}: any;")
+            else:
+                lines.append(f"  let {local_name};")
+
         for stmt in helper.body:
             lines.extend(self._emit_stmt(stmt, indent=1))
         lines.append(f"  return {self._emit_expr(helper.return_expr)};")
@@ -130,8 +141,12 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
 
     def _emit_action(self, action: ActionIR, typed: bool, exported: bool):
         previous_tick_vars = getattr(self, "_tick_vars", set())
+        previous_scene_vars = getattr(self, "_scene_vars", set())
         self._tick_vars = {
             param.name for param in action.params if param.kind == BindingKind.TICK
+        }
+        self._scene_vars = {
+            param.name for param in action.params if param.kind == BindingKind.SCENE
         }
         is_generator = self._action_uses_yield(action)
         try:
@@ -150,6 +165,7 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
 
             global_bindings = []
             post_yield_refresh_calls: list[str] = []
+            action_param_names = {param.name for param in action.params}
             for param in action.params:
                 if param.kind == BindingKind.SCENE:
                     lines.append(f"  let {param.name} = ctx.scene;")
@@ -205,6 +221,17 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                 ):
                     lines.append(f"  {binding_line}")
 
+            action_local_names = [
+                name
+                for name in self._collect_assigned_var_names(action.body)
+                if name not in action_param_names
+            ]
+            for local_name in action_local_names:
+                if typed:
+                    lines.append(f"  let {local_name}: any;")
+                else:
+                    lines.append(f"  let {local_name};")
+
             for stmt in action.body:
                 lines.extend(
                     self._emit_stmt(
@@ -221,6 +248,7 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             return "\n".join(lines)
         finally:
             self._tick_vars = previous_tick_vars
+            self._scene_vars = previous_scene_vars
 
     def _emit_actor_binding_lines(
         self,
@@ -275,8 +303,12 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
 
     def _emit_predicate(self, predicate: PredicateIR, typed: bool, exported: bool):
         previous_tick_vars = getattr(self, "_tick_vars", set())
+        previous_scene_vars = getattr(self, "_scene_vars", set())
         self._tick_vars = {
             param.name for param in predicate.params if param.kind == BindingKind.TICK
+        }
+        self._scene_vars = {
+            param.name for param in predicate.params if param.kind == BindingKind.SCENE
         }
         try:
             if typed:
@@ -324,6 +356,7 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             return "\n".join(lines)
         finally:
             self._tick_vars = previous_tick_vars
+            self._scene_vars = previous_scene_vars
 
     def _emit_stmt(self, stmt, indent, post_yield_refresh_calls=None):
         pad = "  " * indent
@@ -453,6 +486,40 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
 
         raise DSLValidationError(f"Unsupported statement IR node: {type(stmt).__name__}")
 
+    def _collect_assigned_var_names(self, stmts) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def add(name: str) -> None:
+            if name in seen:
+                return
+            seen.add(name)
+            ordered.append(name)
+
+        def visit_stmt(stmt) -> None:
+            if isinstance(stmt, Assign):
+                if isinstance(stmt.target, Var):
+                    add(stmt.target.name)
+                return
+            if isinstance(stmt, If):
+                for child in stmt.body:
+                    visit_stmt(child)
+                for child in stmt.orelse:
+                    visit_stmt(child)
+                return
+            if isinstance(stmt, While):
+                for child in stmt.body:
+                    visit_stmt(child)
+                return
+            if isinstance(stmt, For):
+                for child in stmt.body:
+                    visit_stmt(child)
+                return
+
+        for stmt in stmts:
+            visit_stmt(stmt)
+        return ordered
+
     def _action_uses_yield(self, action: ActionIR) -> bool:
         return any(self._stmt_contains_yield(stmt) for stmt in action.body)
 
@@ -527,6 +594,9 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             tick_vars = getattr(self, "_tick_vars", set())
             if expr.obj in tick_vars and expr.field == "elapsed":
                 return "(ctx.elapsed ?? ctx.tick)"
+            scene_vars = getattr(self, "_scene_vars", set())
+            if expr.obj in scene_vars and expr.field == "elapsed":
+                return f"({expr.obj}?.elapsed ?? ctx.elapsed ?? ctx.tick)"
             return f"{expr.obj}.{expr.field}"
 
         if isinstance(expr, Binary):

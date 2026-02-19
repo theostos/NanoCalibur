@@ -152,6 +152,9 @@ def test_ts_emits_generator_action_for_tick_yield():
     assert "export function* idle(ctx: GameContext): Generator<number, void, unknown> {" in ts
     assert "let wait_tick = ctx.tick;" in ts
     assert "yield wait_tick;" in ts
+    assert "playAnimation?: (actor: any, clipName: string) => void;" in ts
+    assert "if (ctx.playAnimation) {" in ts
+    assert 'ctx.playAnimation(player, "idle");' in ts
 
 
 def test_ts_refreshes_actor_selector_bindings_after_yield():
@@ -301,6 +304,7 @@ def test_ts_emits_predicate_with_context_bindings():
     assert 'let score = ctx.globals["score"];' in ts
     assert "let wait_tick = ctx.tick;" in ts
     assert "__nanocalibur_logical_target__" in ts
+    assert "(scene?.elapsed ?? ctx.elapsed ?? ctx.tick)" in ts
 
 
 def test_ts_emits_tick_elapsed_expression():
@@ -328,6 +332,7 @@ def test_ts_emits_list_literals_and_subscript_access():
         """
     )
 
+    assert "let last: any;" in ts
     assert "last = values[values.length + (-1)];" in ts
     assert "values = [last, 1, 2];" in ts
 
@@ -356,4 +361,5 @@ def test_ts_emits_callable_helpers_and_invocations():
     )
 
     assert "export function next_x(x: any, offset: any): any {" in ts
+    assert "let x: any;" in ts
     assert "x = next_x(last_coin.x, 32);" in ts

@@ -595,6 +595,9 @@ def test_accept_none_comparisons_on_actor_bindings():
     assert isinstance(second_if, If)
     assert isinstance(second_if.condition, Binary)
     assert second_if.condition.op == "!="
+    assert len(second_if.body) == 1
+    assert isinstance(second_if.body[0], CallStmt)
+    assert second_if.body[0].name == "destroy_actor"
 
 
 def test_accept_continue_inside_loops():

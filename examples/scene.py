@@ -74,7 +74,7 @@ def disable_gravity(scene: Scene):
 def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
     for _ in range(20):
         yield tick
-    if last_coin is not None:
+    if last_coin is not None and scene.elapsed > 300:
         new_x = last_coin.x + 32
         coin = Coin(x=new_x,
             y=224,
@@ -91,8 +91,8 @@ game.add_global("score", 0)
 game.set_interface(
     """
 <div style="position:absolute;left:12px;top:12px;padding:8px 10px;background:rgba(8,10,14,0.62);color:#f2f5fa;border-radius:8px;font-family:monospace;">
-  <div>Score: {{score}}</div>
   <div>Actors: {{__actors_count}}</div>
+  <div>Score: {{score}}</div>
 </div>
 """
 )
