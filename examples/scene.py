@@ -6,6 +6,7 @@ from nanocalibur.dsl_markers import (
     Game,
     Global,
     KeyboardCondition,
+    Multiplayer,
     OnOverlap,
     Scene,
     Sprite,
@@ -82,11 +83,24 @@ def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
             sprite="coin",
         )
         scene.spawn(coin)
+    scene.next_turn()
 
 
 game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
+game.set_multiplayer(
+    Multiplayer(
+        default_loop="hybrid",
+        allowed_loops=["hybrid", "turn_based", "real_time"],
+        default_visibility="shared",
+        tick_rate=20,
+        turn_timeout_ms=15000,
+        hybrid_window_ms=600,
+        game_time_scale=0.75,
+        max_catchup_steps=1,
+    )
+)
 game.add_global("score", 0)
 game.set_interface(
     """

@@ -100,13 +100,37 @@ Examples:
 ### Scene/Game Split
 
 - `Game` manages globals, resources, sprites, and active scene.
-- `Scene` manages actors, rules, map, camera, gravity toggle, and spawn actions.
+- `Scene` manages actors, rules, map, camera, gravity toggle, spawn actions, and turn progression via `scene.next_turn()`.
 
 ```python
 game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
 ```
+
+### Multiplayer Loop Configuration
+
+Configure default loop mode and pacing with `game.set_multiplayer(...)`.
+
+```python
+game.set_multiplayer(
+    Multiplayer(
+        default_loop="hybrid",
+        allowed_loops=["turn_based", "hybrid", "real_time"],
+        default_visibility="shared",
+        tick_rate=20,
+        turn_timeout_ms=15000,
+        hybrid_window_ms=600,
+        game_time_scale=0.75,
+        max_catchup_steps=1,
+    )
+)
+```
+
+Rules:
+- If `default_loop` is `turn_based` or `hybrid`, at least one action must call `scene.next_turn()`.
+- `game_time_scale` slows game-time progression for remote/LLM compute budgets (`> 0` and `<= 1.0`).
+- Exported specs include `multiplayer` and `contains_next_turn_call`.
 
 ### Interface Overlay (Optional)
 
@@ -221,7 +245,9 @@ The standalone TypeScript runtime supports:
 - sprite animation playback and image preloading
 - z-ordered rendering
 - headless symbolic rendering (`HeadlessHost`)
-- HTTP endpoint layer for remote clients (`HeadlessHttpServer`)
+- session runtime scheduling (`SessionRuntime`) with `real_time`/`turn_based`/`hybrid` loop modes
+- session orchestration (`SessionManager`) with role invites/tokens and unique per-session seed allocation
+- HTTP endpoint layer for remote clients (`HeadlessHttpServer`) including session endpoints (`/sessions`, `/join`, `/open-roles`, `/sessions/{id}/commands`, `/sessions/{id}/stream`, `/sessions/{id}/pace`)
 - minimal MCP-style tool bridge (`NanoCaliburMCPServer`)
 
 Python MCP adapter:
