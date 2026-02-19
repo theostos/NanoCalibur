@@ -24,8 +24,9 @@ def _write_scene(path: Path) -> None:
 
 
             game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
             game.add_actor(Player, "main_character", x=10, y=20, speed=2)
-            game.add_rule(KeyboardCondition.on_press("ArrowRight"), move_right)
+            game.add_rule(KeyboardCondition.on_press("ArrowRight", id="human_1"), move_right)
             game.set_camera(Camera.follow("main_character"))
             """
         ),

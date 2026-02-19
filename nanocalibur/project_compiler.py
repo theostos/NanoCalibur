@@ -1814,11 +1814,11 @@ class ProjectCompiler:
                 unexpected = sorted(set(kwargs.keys()) - {"id"})
                 if unexpected:
                     raise DSLValidationError(
-                        "KeyboardCondition.<phase>(...) only accepts optional keyword 'id'."
+                        "KeyboardCondition.<phase>(...) only accepts keyword 'id'."
                     )
                 if len(node.args) not in {1, 2}:
                     raise DSLValidationError(
-                        "KeyboardCondition.<phase>(...) expects key and optional role id."
+                        "KeyboardCondition.<phase>(...) expects key and required role id."
                     )
                 role_id = _expect_string(node.args[1], "condition role id") if len(node.args) == 2 else None
                 if len(node.args) == 2 and "id" in kwargs:
@@ -1827,6 +1827,11 @@ class ProjectCompiler:
                     )
                 if role_id is None and "id" in kwargs:
                     role_id = _expect_string(kwargs["id"], "condition role id")
+                if role_id is None:
+                    raise DSLValidationError(
+                        "KeyboardCondition.<phase>(...) requires role id. "
+                        "Use id=\"<role_id>\" and declare it with game.add_role(Role(...))."
+                    )
                 return KeyboardConditionSpec(
                     key=_expect_string_or_string_list(node.args[0], "keyboard key"),
                     phase=phase,
@@ -1841,11 +1846,11 @@ class ProjectCompiler:
                 unexpected = sorted(set(kwargs.keys()) - {"id"})
                 if unexpected:
                     raise DSLValidationError(
-                        "MouseCondition.<phase>(...) only accepts optional keyword 'id'."
+                        "MouseCondition.<phase>(...) only accepts keyword 'id'."
                     )
                 if len(node.args) > 2:
                     raise DSLValidationError(
-                        "MouseCondition.<phase>(...) accepts button and optional role id."
+                        "MouseCondition.<phase>(...) accepts button and required role id."
                     )
                 button = "left"
                 if len(node.args) >= 1:
@@ -1857,6 +1862,11 @@ class ProjectCompiler:
                     )
                 if role_id is None and "id" in kwargs:
                     role_id = _expect_string(kwargs["id"], "condition role id")
+                if role_id is None:
+                    raise DSLValidationError(
+                        "MouseCondition.<phase>(...) requires role id. "
+                        "Use id=\"<role_id>\" and declare it with game.add_role(Role(...))."
+                    )
                 return MouseConditionSpec(
                     button=button,
                     phase=phase,
@@ -1906,17 +1916,22 @@ class ProjectCompiler:
             unexpected = sorted(set(kwargs.keys()) - {"id"})
             if unexpected:
                 raise DSLValidationError(
-                    "OnToolCall(...) only accepts optional keyword 'id'."
+                    "OnToolCall(...) only accepts keyword 'id'."
                 )
             if len(node.args) not in {2, 3}:
                 raise DSLValidationError(
-                    "OnToolCall(...) expects tool name, docstring, and optional role id."
+                    "OnToolCall(...) expects tool name, docstring, and required role id."
                 )
             role_id = _expect_string(node.args[2], "condition role id") if len(node.args) == 3 else None
             if len(node.args) == 3 and "id" in kwargs:
                 raise DSLValidationError("OnToolCall(...) role id must be provided once.")
             if role_id is None and "id" in kwargs:
                 role_id = _expect_string(kwargs["id"], "condition role id")
+            if role_id is None:
+                raise DSLValidationError(
+                    "OnToolCall(...) requires role id. "
+                    "Use id=\"<role_id>\" and declare it with game.add_role(Role(...))."
+                )
             return ToolConditionSpec(
                 name=_expect_string(node.args[0], "tool name"),
                 tool_docstring=_expect_string(node.args[1], "tool docstring"),

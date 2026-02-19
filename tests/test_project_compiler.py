@@ -47,12 +47,13 @@ def test_compile_project_with_conditions_map_and_camera():
             return player.life <= 0
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.add_global("heal", 2)
         game.add_global("is_dead", False)
         game.add_actor(Player, "main_character", life=3, x=10, y=20)
         game.add_actor(Enemy, "enemy_1", life=5)
 
-        cond_key = KeyboardCondition.on_press("A")
+        cond_key = KeyboardCondition.on_press("A", id="human_1")
         cond_collision = OnOverlap(Player["main_character"], Enemy)
         cond_logic = OnLogicalCondition(is_dead, Player)
 
@@ -93,10 +94,11 @@ def test_project_parses_multiplayer_configuration():
             player.x = player.x + 0
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0))
-        scene.add_rule(KeyboardCondition.on_press("A"), noop)
+        scene.add_rule(KeyboardCondition.on_press("A", id="human_1"), noop)
         game.set_multiplayer(
             Multiplayer(
                 default_loop="real_time",
@@ -137,6 +139,7 @@ def test_actor_base_fields_include_velocity_components():
             player.vx = player.speed
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene()
         game.set_scene(scene)
         scene.add_actor(
@@ -149,7 +152,7 @@ def test_actor_base_fields_include_velocity_components():
                 speed=42,
             )
         )
-        scene.add_rule(KeyboardCondition.on_press("d"), noop)
+        scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), noop)
         """
     )
 
@@ -171,10 +174,11 @@ def test_turn_based_multiplayer_requires_next_turn_call():
                 player.x = player.x + 1
 
             game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
             scene = Scene(gravity=False)
             game.set_scene(scene)
             scene.add_actor(Player(uid="hero", x=0, y=0))
-            scene.add_rule(KeyboardCondition.on_press("A"), noop)
+            scene.add_rule(KeyboardCondition.on_press("A", id="human_1"), noop)
             game.set_multiplayer(
                 Multiplayer(
                     default_loop="turn_based",
@@ -196,10 +200,11 @@ def test_turn_based_multiplayer_accepts_next_turn_call():
             scene.next_turn()
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0))
-        scene.add_rule(KeyboardCondition.on_press("A"), advance)
+        scene.add_rule(KeyboardCondition.on_press("A", id="human_1"), advance)
         game.set_multiplayer(
             Multiplayer(
                 default_loop="turn_based",
@@ -263,6 +268,59 @@ def test_role_scoped_condition_requires_declared_role_id():
             game.set_scene(scene)
             scene.add_actor(Player(uid="hero", x=0, y=0))
             scene.add_rule(KeyboardCondition.on_press("d", id="missing_role"), move_right)
+            """
+        )
+
+
+def test_keyboard_condition_requires_role_id():
+    with pytest.raises(DSLValidationError, match="KeyboardCondition\\.<phase>\\(\\.\\.\\.\\) requires role id"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            def move_right(player: Player["hero"]):
+                player.x = player.x + 1
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_rule(KeyboardCondition.on_press("d"), move_right)
+            """
+        )
+
+
+def test_mouse_condition_requires_role_id():
+    with pytest.raises(DSLValidationError, match="MouseCondition\\.<phase>\\(\\.\\.\\.\\) requires role id"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            def noop(player: Player["hero"]):
+                player.x = player.x + 0
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            game.add_actor(Player(uid="hero", x=0, y=0))
+            game.add_rule(MouseCondition.begin_click("left"), noop)
+            """
+        )
+
+
+def test_tool_condition_requires_role_id():
+    with pytest.raises(DSLValidationError, match="OnToolCall\\(\\.\\.\\.\\) requires role id"):
+        compile_project(
+            """
+            def noop(scene: Scene):
+                scene.enable_gravity()
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            game.set_scene(Scene(gravity=False))
+            game.add_rule(OnToolCall("spawn", "spawn something"), noop)
             """
         )
 
@@ -344,10 +402,11 @@ def test_compile_project_with_scene_managed_actors_rules_map_and_camera():
             player.x = player.x + player.speed
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=10, y=20, speed=2))
-        scene.add_rule(KeyboardCondition.on_press("D"), move_right)
+        scene.add_rule(KeyboardCondition.on_press("D", id="human_1"), move_right)
         scene.set_camera(Camera.follow("hero"))
         scene.set_map(
             TileMap(
@@ -490,6 +549,7 @@ def test_general_top_level_aliasing_for_calls_and_callables():
             player.x = player.x + player.speed
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
 
         bind_scene = game.set_scene
@@ -502,7 +562,7 @@ def test_general_top_level_aliasing_for_calls_and_callables():
         add_actor(hero)
 
         keyboard_end = KeyboardCondition.end_press
-        cond = keyboard_end(["d", "q"])
+        cond = keyboard_end(["d", "q"], id="human_1")
 
         action = move_right
         add_rule = scene.add_rule
@@ -741,6 +801,7 @@ def test_add_sprite_accepts_named_sprite_variable():
             speed: int
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=10, y=20, speed=2, sprite="hero"))
@@ -800,7 +861,7 @@ def test_add_sprite_rejects_unknown_resource():
                     clips={"idle": [0]},
                 )
             )
-            scene.add_rule(KeyboardCondition.on_press("A"), noop)
+            scene.add_rule(KeyboardCondition.on_press("A", id="human_1"), noop)
             """
         )
 
@@ -815,6 +876,7 @@ def test_add_sprite_accepts_bind_selector_and_scene_gravity():
             player.play("idle")
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.set_scene(Scene(gravity=True))
         game.add_actor(Player(uid="hero", x=0, y=0, speed=1))
         game.add_resource("hero_sheet", "hero.png")
@@ -827,7 +889,7 @@ def test_add_sprite_accepts_bind_selector_and_scene_gravity():
                 clips={"idle": [0, 1]},
             )
         )
-        game.add_rule(KeyboardCondition.on_press("A"), noop)
+        game.add_rule(KeyboardCondition.on_press("A", id="human_1"), noop)
         """
     )
 
@@ -884,7 +946,7 @@ def test_scene_methods_require_game_set_scene_binding():
             game = Game()
             scene = Scene(gravity=False)
             scene.add_actor(Player, "hero", x=10, y=20, speed=2)
-            scene.add_rule(KeyboardCondition.on_press("D"), move_right)
+            scene.add_rule(KeyboardCondition.on_press("D", id="human_1"), move_right)
             """
         )
 
@@ -899,13 +961,14 @@ def test_keyboard_and_mouse_condition_phases():
             player.life = player.life
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.add_actor(Player, "main", life=1)
-        game.add_rule(KeyboardCondition.begin_press("A"), noop)
-        game.add_rule(KeyboardCondition.on_press("A"), noop)
-        game.add_rule(KeyboardCondition.end_press("A"), noop)
-        game.add_rule(MouseCondition.begin_click("left"), noop)
-        game.add_rule(MouseCondition.on_click("left"), noop)
-        game.add_rule(MouseCondition.end_click("left"), noop)
+        game.add_rule(KeyboardCondition.begin_press("A", id="human_1"), noop)
+        game.add_rule(KeyboardCondition.on_press("A", id="human_1"), noop)
+        game.add_rule(KeyboardCondition.end_press("A", id="human_1"), noop)
+        game.add_rule(MouseCondition.begin_click("left", id="human_1"), noop)
+        game.add_rule(MouseCondition.on_click("left", id="human_1"), noop)
+        game.add_rule(MouseCondition.end_click("left", id="human_1"), noop)
         """
     )
 
@@ -925,8 +988,9 @@ def test_keyboard_condition_accepts_key_lists():
             player.life = player.life
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.add_actor(Player, "main", life=1)
-        game.add_rule(KeyboardCondition.end_press(["z", "q", "s", "d"]), noop)
+        game.add_rule(KeyboardCondition.end_press(["z", "q", "s", "d"], id="human_1"), noop)
         """
     )
 
@@ -939,11 +1003,12 @@ def test_keyboard_condition_accepts_key_lists():
 def test_condition_decorator_adds_rule_without_add_rule_call():
     project = compile_project(
         """
-        @condition(KeyboardCondition.begin_press("g"))
+        @condition(KeyboardCondition.begin_press("g", id="human_1"))
         def enable_gravity(scene: Scene):
             Scene.enable_gravity(scene)
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.set_scene(Scene(gravity=False))
         """
     )
@@ -958,11 +1023,12 @@ def test_condition_decorator_adds_rule_without_add_rule_call():
 def test_condition_decorator_supports_tool_calling():
     project = compile_project(
         """
-        @condition(OnToolCall("spawn_bonus", "Spawn one bonus coin"))
+        @condition(OnToolCall("spawn_bonus", "Spawn one bonus coin", id="human_1"))
         def spawn(scene: Scene):
             scene.enable_gravity()
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.set_scene(Scene(gravity=False))
         """
     )
@@ -978,11 +1044,11 @@ def test_tool_calling_name_cannot_bind_multiple_actions():
     with pytest.raises(DSLValidationError, match="already bound to action"):
         compile_project(
             """
-            @condition(OnToolCall("toggle", "Enable gravity"))
+            @condition(OnToolCall("toggle", "Enable gravity", id="human_1"))
             def enable(scene: Scene):
                 scene.enable_gravity()
 
-            @condition(OnToolCall("toggle", "Disable gravity"))
+            @condition(OnToolCall("toggle", "Disable gravity", id="human_1"))
             def disable(scene: Scene):
                 scene.disable_gravity()
 
@@ -1002,9 +1068,10 @@ def test_global_actor_pointer_typed_allows_field_access():
             target.life = target.life + 1
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.add_global("target_player", Player["main_character"])
         game.add_actor(Player, "main_character", life=3)
-        game.add_rule(KeyboardCondition.on_press("A"), heal)
+        game.add_rule(KeyboardCondition.on_press("A", id="human_1"), heal)
         """
     )
 
@@ -1028,7 +1095,7 @@ def test_global_actor_pointer_any_rejects_field_access():
             game = Game()
             game.add_global("target_actor", Actor["main_character"])
             game.add_actor(Player, "main_character", life=3)
-            game.add_rule(KeyboardCondition.on_press("A"), bad)
+            game.add_rule(KeyboardCondition.on_press("A", id="human_1"), bad)
             """
         )
 
@@ -1299,13 +1366,14 @@ def test_callable_helper_can_be_used_from_action_and_is_exported():
         def next_x(x: float, offset: int) -> float:
             return x + offset
 
-        @condition(KeyboardCondition.begin_press("e"))
+        @condition(KeyboardCondition.begin_press("e", id="human_1"))
         def spawn(scene: Scene, last_coin: Coin[-1]):
             if last_coin is not None:
                 x = next_x(last_coin.x, 32)
                 scene.spawn(Coin(x=x, y=0, active=True))
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Coin(uid="coin_1", x=0, y=0, active=True))
@@ -1329,11 +1397,12 @@ def test_callable_selector_annotations_warn_and_are_ignored():
             def get_speed(hero: Player["hero"]) -> int:
                 return hero.speed
 
-            @condition(KeyboardCondition.on_press("d"))
+            @condition(KeyboardCondition.on_press("d", id="human_1"))
             def move(hero: Player["hero"]):
                 hero.x = hero.x + get_speed(hero)
 
             game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
             scene = Scene(gravity=False)
             game.set_scene(scene)
             scene.add_actor(Player(uid="hero", x=0, y=0, speed=1))
@@ -1375,13 +1444,14 @@ def test_callable_dependency_chain_is_retained_when_referenced():
         def add_two(x: int) -> int:
             return add_one(x) + 1
 
-        @condition(KeyboardCondition.begin_press("e"))
+        @condition(KeyboardCondition.begin_press("e", id="human_1"))
         def spawn(scene: Scene, last_coin: Coin[-1]):
             if last_coin is not None:
                 new_x = add_two(last_coin.x)
                 scene.spawn(Coin(x=new_x, y=0, active=True))
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Coin(uid="coin_1", x=0, y=0, active=True))

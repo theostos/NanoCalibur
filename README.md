@@ -73,21 +73,22 @@ Static forms like `Actor.play(player, ...)` and `Actor.destroy(player)` are not 
 
 ### Conditions
 
-- `KeyboardCondition.begin_press("A")`
-- `KeyboardCondition.on_press("A")`
-- `KeyboardCondition.end_press("A")`
-- `KeyboardCondition.end_press(["z", "q", "s", "d"])` (any key match)
-- `KeyboardCondition.on_press("A", id="human_1")` (optional role-scoped trigger)
-- `MouseCondition.begin_click("left")`
-- `MouseCondition.on_click("left")`
-- `MouseCondition.end_click("left")`
-- `MouseCondition.on_click("left", id="human_1")` (optional role-scoped trigger)
+- `KeyboardCondition.begin_press("A", id="human_1")`
+- `KeyboardCondition.on_press("A", id="human_1")`
+- `KeyboardCondition.end_press("A", id="human_1")`
+- `KeyboardCondition.end_press(["z", "q", "s", "d"], id="human_1")` (any key match)
+- `MouseCondition.begin_click("left", id="human_1")`
+- `MouseCondition.on_click("left", id="human_1")`
+- `MouseCondition.end_click("left", id="human_1")`
 - `OnOverlap(selector_a, selector_b)`
 - `OnContact(selector_a, selector_b)`
 - `OnLogicalCondition(predicate_fn, selector)`
-- `OnToolCall("tool_name", "tool docstring")`
-- `OnToolCall("tool_name", "tool docstring", id="ai_1")` (optional role-scoped trigger)
+- `OnToolCall("tool_name", "tool docstring", id="human_1")`
+- `OnToolCall("tool_name", "tool docstring", id="ai_1")`
 - `OnButton("button_name")`
+
+`id` is mandatory for `KeyboardCondition`, `MouseCondition`, and `OnToolCall`.
+The `id` value must match a role declared with `game.add_role(Role(...))`.
 
 Rule declaration styles:
 - `scene.add_rule(condition_expr, action_fn)` (preferred)
@@ -193,8 +194,9 @@ def move_right(player: Player["hero"]):
 game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
+game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
 scene.add_actor(Player(uid="hero", x=100, y=100, speed=4))
-scene.add_rule(KeyboardCondition.on_press("d"), move_right)
+scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move_right)
 scene.set_camera(Camera.follow("hero"))
 """
 

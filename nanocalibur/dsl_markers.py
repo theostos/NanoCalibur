@@ -327,17 +327,17 @@ class KeyboardCondition:
     """Keyboard input condition helpers."""
 
     @staticmethod
-    def begin_press(_key: str | list[str], id: str | None = None):
+    def begin_press(_key: str | list[str], id: str):
         """Trigger when a key is pressed this frame."""
         return None
 
     @staticmethod
-    def on_press(_key: str | list[str], id: str | None = None):
+    def on_press(_key: str | list[str], id: str):
         """Trigger while a key is held."""
         return None
 
     @staticmethod
-    def end_press(_key: str | list[str], id: str | None = None):
+    def end_press(_key: str | list[str], id: str):
         """Trigger when a key is released this frame."""
         return None
 
@@ -381,17 +381,17 @@ class MouseCondition:
     """Mouse input condition helpers."""
 
     @staticmethod
-    def begin_click(_button: str = "left", id: str | None = None):
+    def begin_click(_button: str = "left", *, id: str):
         """Trigger when a mouse button is pressed this frame."""
         return None
 
     @staticmethod
-    def on_click(_button: str = "left", id: str | None = None):
+    def on_click(_button: str = "left", *, id: str):
         """Trigger while a mouse button is held."""
         return None
 
     @staticmethod
-    def end_click(_button: str = "left", id: str | None = None):
+    def end_click(_button: str = "left", *, id: str):
         """Trigger when a mouse button is released this frame."""
         return None
 
@@ -482,7 +482,7 @@ def OnLogicalCondition(_predicate, _selector):
     return None
 
 
-def OnToolCall(_name: str, _tool_docstring: str, id: str | None = None):
+def OnToolCall(_name: str, _tool_docstring: str, id: str):
     """Condition helper exposing an action as an external LLM-callable tool."""
     return None
 
@@ -503,7 +503,7 @@ def condition(_condition_expr) -> Callable[[F], F]:
     """Attach a rule condition directly to an action function.
 
     Example:
-        ``@condition(KeyboardCondition.begin_press("g"))``
+        ``@condition(KeyboardCondition.begin_press("g", id="human_1"))``
     """
 
     def _decorate(fn: F) -> F:

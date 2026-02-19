@@ -18,14 +18,15 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
         def is_dead(player: Player) -> bool:
             return player.life <= 0
 
-        @condition(OnToolCall("boost_heal", "Increase heal amount by one"))
+        @condition(OnToolCall("boost_heal", "Increase heal amount by one", id="human_1"))
         def boost_heal(amount: Global["heal"]):
             amount = amount + 1
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.add_global("heal", 2)
         game.add_actor(Player, "main_character", life=1, x=5, y=6)
-        game.add_rule(KeyboardCondition.on_press("A"), heal)
+        game.add_rule(KeyboardCondition.on_press("A", id="human_1"), heal)
         game.add_rule(OnLogicalCondition(is_dead, Player), heal)
         game.set_map(
             TileMap(
@@ -214,12 +215,13 @@ def test_export_project_serializes_sprite_bindings_resources_and_callables(tmp_p
         def next_speed(speed: int) -> int:
             return speed + 1
 
-        @condition(KeyboardCondition.on_press("d"))
+        @condition(KeyboardCondition.on_press("d", id="human_1"))
         def boost(player: Player["hero"]):
             player.speed = next_speed(player.speed)
             player.play("run")
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0, speed=1, sprite="hero"))
@@ -261,10 +263,11 @@ def test_export_project_serializes_multiplayer_and_next_turn_metadata(tmp_path):
             scene.next_turn()
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0))
-        scene.add_rule(KeyboardCondition.on_press("A"), advance)
+        scene.add_rule(KeyboardCondition.on_press("A", id="human_1"), advance)
         game.set_multiplayer(
             Multiplayer(
                 default_loop="hybrid",

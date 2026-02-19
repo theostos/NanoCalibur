@@ -83,7 +83,15 @@ void host.start();
 Create `scene.py` in project root:
 
 ```python
-from nanocalibur.dsl_markers import Actor, Camera, Game, KeyboardCondition, Scene
+from nanocalibur.dsl_markers import (
+    Actor,
+    Camera,
+    Game,
+    KeyboardCondition,
+    Role,
+    RoleKind,
+    Scene,
+)
 
 
 class Player(Actor):
@@ -97,9 +105,10 @@ def move_right(player: Player["hero"]):
 game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
+game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
 
 scene.add_actor(Player(uid="hero", x=100, y=100, speed=3))
-scene.add_rule(KeyboardCondition.on_press("d"), move_right)
+scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move_right)
 scene.set_camera(Camera.follow("hero"))
 ```
 
