@@ -24,6 +24,11 @@ interface SessionBrowserConfig {
   inviteToken: string;
 }
 
+interface SessionSummary {
+  session_id?: string;
+  status?: string;
+}
+
 const DEFAULT_CANVAS_OPTIONS: CanvasHostOptions = {
   width: 960,
   height: 640,
@@ -175,6 +180,21 @@ async function requestJson(
   return decoded as Record<string, any>;
 }
 
+async function fetchSessionStatus(
+  baseUrl: string,
+  sessionId: string,
+): Promise<string | null> {
+  const payload = await requestJson(baseUrl, '/sessions', 'GET');
+  const sessions = Array.isArray(payload.sessions)
+    ? (payload.sessions as SessionSummary[])
+    : [];
+  const target = sessions.find((entry) => entry?.session_id === sessionId);
+  if (!target || typeof target.status !== 'string' || !target.status) {
+    return null;
+  }
+  return target.status;
+}
+
 function mapBrowserKeyToCommand(event: KeyboardEvent): Record<string, any> | null {
   const key = event.key.toLowerCase();
   if (key === 'arrowup' || key === 'z' || key === 'w') {
@@ -221,10 +241,51 @@ async function startSessionBrowserClient(
   const sessionId = joined.session_id;
   const accessToken = joined.access_token;
 
-  const renderSnapshot = (snapshot: SessionSnapshot): void => {
-    symbolicPanel.textContent = formatSessionSnapshot(snapshot);
-    drawSymbolicFrameOnCanvas(canvas, snapshot.frame);
+  let latestSnapshot: SessionSnapshot | null = null;
+  let sessionWarning: string | null = null;
+
+  const renderPanel = (): void => {
+    if (!latestSnapshot) {
+      const lines = [
+        `Session: ${sessionId}`,
+        sessionWarning ? `WARNING: ${sessionWarning}` : '',
+        'Waiting for first snapshot...',
+      ].filter((line) => line.length > 0);
+      symbolicPanel.textContent = lines.join('\n');
+      return;
+    }
+    const warningPrefix = sessionWarning ? `WARNING: ${sessionWarning}\n\n` : '';
+    symbolicPanel.textContent = `${warningPrefix}${formatSessionSnapshot(latestSnapshot)}`;
+    drawSymbolicFrameOnCanvas(canvas, latestSnapshot.frame);
   };
+
+  const renderSnapshot = (snapshot: SessionSnapshot): void => {
+    latestSnapshot = snapshot;
+    renderPanel();
+  };
+
+  const refreshSessionWarning = async (): Promise<void> => {
+    try {
+      const status = await fetchSessionStatus(config.baseUrl, sessionId);
+      if (status && status !== 'running') {
+        sessionWarning = (
+          `Session status is '${status}'. `
+          + `Ask admin to start it: POST /sessions/${sessionId}/start`
+        );
+      } else {
+        sessionWarning = null;
+      }
+      renderPanel();
+    } catch (error) {
+      console.warn('Failed to read session status for warning banner.', error);
+    }
+  };
+
+  renderPanel();
+  await refreshSessionWarning();
+  const statusPollHandle = window.setInterval(() => {
+    void refreshSessionWarning();
+  }, 1500);
 
   let commandInFlight = false;
   window.addEventListener('keydown', async (event) => {
@@ -262,6 +323,7 @@ async function startSessionBrowserClient(
     },
   );
   if (!streamResponse.ok || !streamResponse.body) {
+    window.clearInterval(statusPollHandle);
     const text = await streamResponse.text();
     throw new Error(text || `Session stream failed: ${streamResponse.status}`);
   }
@@ -269,40 +331,44 @@ async function startSessionBrowserClient(
   const decoder = new TextDecoder('utf-8');
   let sseBuffer = '';
   const reader = streamResponse.body.getReader();
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) {
-      break;
-    }
-    sseBuffer += decoder.decode(chunk.value, { stream: true });
+  try {
     while (true) {
-      const split = sseBuffer.indexOf('\n\n');
-      if (split < 0) {
+      const chunk = await reader.read();
+      if (chunk.done) {
         break;
       }
-      const rawEvent = sseBuffer.slice(0, split);
-      sseBuffer = sseBuffer.slice(split + 2);
+      sseBuffer += decoder.decode(chunk.value, { stream: true });
+      while (true) {
+        const split = sseBuffer.indexOf('\n\n');
+        if (split < 0) {
+          break;
+        }
+        const rawEvent = sseBuffer.slice(0, split);
+        sseBuffer = sseBuffer.slice(split + 2);
 
-      const lines = rawEvent.split('\n');
-      let eventName = '';
-      let dataPayload = '';
-      for (const line of lines) {
-        if (line.startsWith('event:')) {
-          eventName = line.slice('event:'.length).trim();
-        } else if (line.startsWith('data:')) {
-          dataPayload += line.slice('data:'.length).trim();
+        const lines = rawEvent.split('\n');
+        let eventName = '';
+        let dataPayload = '';
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            eventName = line.slice('event:'.length).trim();
+          } else if (line.startsWith('data:')) {
+            dataPayload += line.slice('data:'.length).trim();
+          }
+        }
+        if (eventName !== 'snapshot' || !dataPayload) {
+          continue;
+        }
+        try {
+          const snapshot = JSON.parse(dataPayload) as SessionSnapshot;
+          renderSnapshot(snapshot);
+        } catch (error) {
+          console.error('Invalid session snapshot payload', error);
         }
       }
-      if (eventName !== 'snapshot' || !dataPayload) {
-        continue;
-      }
-      try {
-        const snapshot = JSON.parse(dataPayload) as SessionSnapshot;
-        renderSnapshot(snapshot);
-      } catch (error) {
-        console.error('Invalid session snapshot payload', error);
-      }
     }
+  } finally {
+    window.clearInterval(statusPollHandle);
   }
 }
 
