@@ -29,56 +29,67 @@ class Coin(Actor):
 
 @condition(KeyboardCondition.on_press("d", id="human_1"))
 def move_right(player: Player["hero"]):
-    player.x = player.x + player.speed
+    player.vx = player.speed
     player.play("run")
 
 @condition(KeyboardCondition.on_press("q", id="human_1"))
 def move_left(player: Player["hero"]):
-    player.x = player.x - player.speed
+    player.vx = -player.speed
     player.play("run")
 
 @condition(KeyboardCondition.on_press("z", id="human_1"))
 def move_up(player: Player["hero"]):
-    player.y = player.y - player.speed
+    player.vy = -player.speed
     player.play("run")
 
 @condition(KeyboardCondition.on_press("s", id="human_1"))
 def move_down(player: Player["hero"]):
-    player.y = player.y + player.speed
+    player.vy = player.speed
     player.play("run")
 
 
-@condition(KeyboardCondition.end_press(["z", "q", "s", "d"], id="human_1"))
-def idle(player: Player["hero"]):
-    player.play("idle")
+@condition(KeyboardCondition.end_press(["d", "q"], id="human_1"))
+def stop_horizontal(player: Player["hero"]):
+    player.vx = 0
+    if player.vy == 0:
+        player.play("idle")
+
+
+@condition(KeyboardCondition.end_press(["z", "s"], id="human_1"))
+def stop_vertical(player: Player["hero"]):
+    player.vy = 0
+    if player.vx == 0:
+        player.play("idle")
 
 
 @condition(OnToolCall("llm_dummy_move_right", "Move llm_dummy right", id="dummy_1"))
 def llm_dummy_move_right(bot: Player["llm_dummy"]):
-    bot.x = bot.x + bot.speed
+    bot.vx = bot.speed
     bot.play("run")
 
 
 @condition(OnToolCall("llm_dummy_move_left", "Move llm_dummy left", id="dummy_1"))
 def llm_dummy_move_left(bot: Player["llm_dummy"]):
-    bot.x = bot.x - bot.speed
+    bot.vx = -bot.speed
     bot.play("run")
 
 
 @condition(OnToolCall("llm_dummy_move_up", "Move llm_dummy up", id="dummy_1"))
 def llm_dummy_move_up(bot: Player["llm_dummy"]):
-    bot.y = bot.y - bot.speed
+    bot.vy = -bot.speed
     bot.play("run")
 
 
 @condition(OnToolCall("llm_dummy_move_down", "Move llm_dummy down", id="dummy_1"))
 def llm_dummy_move_down(bot: Player["llm_dummy"]):
-    bot.y = bot.y + bot.speed
+    bot.vy = bot.speed
     bot.play("run")
 
 
 @condition(OnToolCall("llm_dummy_idle", "Set llm_dummy to idle animation", id="dummy_1"))
 def llm_dummy_idle(bot: Player["llm_dummy"]):
+    bot.vx = 0
+    bot.vy = 0
     bot.play("idle")
 
 
@@ -155,7 +166,7 @@ hero_player = Player(
         y=224,
         w=32,
         h=32,
-        speed=5,
+        speed=180,
         z=1,
         block_mask=1,
         sprite="hero",
@@ -169,7 +180,7 @@ llm_dummy_player = Player(
         y=224,
         w=32,
         h=32,
-        speed=4,
+        speed=140,
         z=1,
         block_mask=1,
         sprite="hero",

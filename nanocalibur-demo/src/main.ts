@@ -43,7 +43,8 @@ class SessionSnapshotRenderer {
   private readonly renderer: CanvasRenderer;
   private readonly interfaceOverlay: InterfaceOverlay | null;
   private ready = false;
-  private pendingSnapshot: SessionSnapshot | null = null;
+  private latestState: InterpreterState | null = null;
+  private latestSnapshotAtMs = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -62,17 +63,31 @@ class SessionSnapshotRenderer {
   async start(): Promise<void> {
     await this.assets.preload();
     this.ready = true;
-    if (this.pendingSnapshot) {
-      this.render(this.pendingSnapshot);
-    }
+    this.renderLoop();
   }
 
   render(snapshot: SessionSnapshot): void {
-    this.pendingSnapshot = snapshot;
+    this.latestState = (snapshot.state || {}) as InterpreterState;
+    this.latestSnapshotAtMs = performance.now();
     if (!this.ready) {
       return;
     }
-    const state = (snapshot.state || {}) as InterpreterState;
+    this.renderFrame();
+  }
+
+  private renderLoop = (): void => {
+    if (!this.ready) {
+      return;
+    }
+    this.renderFrame();
+    window.requestAnimationFrame(this.renderLoop);
+  };
+
+  private renderFrame(): void {
+    const state = this.buildInterpolatedState();
+    if (!state) {
+      return;
+    }
     const actors = Array.isArray(state.actors)
       ? (state.actors as ActorState[])
       : [];
@@ -84,6 +99,34 @@ class SessionSnapshotRenderer {
     if (this.interfaceOverlay) {
       this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals(state));
     }
+  }
+
+  private buildInterpolatedState(): InterpreterState | null {
+    if (!this.latestState) {
+      return null;
+    }
+    const nowMs = performance.now();
+    const elapsedSeconds = Math.max(
+      0,
+      Math.min(0.25, (nowMs - this.latestSnapshotAtMs) / 1000),
+    );
+    const sourceActors = Array.isArray(this.latestState.actors)
+      ? (this.latestState.actors as ActorState[])
+      : [];
+    const actors = sourceActors.map((actor) => {
+      const cloned = { ...actor };
+      const x = typeof actor.x === 'number' ? actor.x : 0;
+      const y = typeof actor.y === 'number' ? actor.y : 0;
+      const vx = typeof actor.vx === 'number' ? actor.vx : 0;
+      const vy = typeof actor.vy === 'number' ? actor.vy : 0;
+      cloned.x = x + vx * elapsedSeconds;
+      cloned.y = y + vy * elapsedSeconds;
+      return cloned;
+    });
+    return {
+      ...this.latestState,
+      actors,
+    } as InterpreterState;
   }
 
   private buildInterfaceGlobals(state: InterpreterState): Record<string, any> {
@@ -168,58 +211,6 @@ function formatSessionSnapshot(snapshot: SessionSnapshot): string {
   return `${header}${formatSymbolicFrame(snapshot.frame)}`;
 }
 
-function colorForSymbol(symbol: string): string {
-  if (symbol === '#') return '#6f7ea8';
-  if (symbol === '@') return '#f3f6ff';
-  if (symbol === 'c') return '#f4d35e';
-  return '#dce3ff';
-}
-
-function drawSymbolicFrameOnCanvas(
-  canvas: HTMLCanvasElement,
-  frame: SymbolicFrame,
-): void {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return;
-  }
-
-  const rows = Array.isArray(frame.rows) ? frame.rows : [];
-  const rowCount = rows.length;
-  const colCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
-  if (rowCount === 0 || colCount === 0) {
-    ctx.fillStyle = '#121826';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    return;
-  }
-
-  ctx.fillStyle = '#121826';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const cellW = canvas.width / colCount;
-  const cellH = canvas.height / rowCount;
-  const fontSize = Math.max(10, Math.floor(Math.min(cellW, cellH) * 0.86));
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `${fontSize}px "Iosevka", "Fira Code", monospace`;
-
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex];
-    for (let colIndex = 0; colIndex < row.length; colIndex += 1) {
-      const symbol = row[colIndex];
-      if (symbol === '.') {
-        continue;
-      }
-      ctx.fillStyle = colorForSymbol(symbol);
-      ctx.fillText(
-        symbol,
-        colIndex * cellW + cellW / 2,
-        rowIndex * cellH + cellH / 2,
-      );
-    }
-  }
-}
-
 async function requestJson(
   baseUrl: string,
   path: string,
@@ -266,27 +257,32 @@ async function fetchSessionStatus(
   return target.status;
 }
 
-function mapBrowserKeyToCommand(event: KeyboardEvent): Record<string, any> | null {
-  const key = event.key.toLowerCase();
-  if (key === 'arrowup' || key === 'z' || key === 'w') {
-    return { kind: 'input', keyboard: { on: ['z'] } };
-  }
-  if (key === 'arrowleft' || key === 'q' || key === 'a') {
-    return { kind: 'input', keyboard: { on: ['q'] } };
-  }
-  if (key === 'arrowdown' || key === 's') {
-    return { kind: 'input', keyboard: { on: ['s'] } };
-  }
-  if (key === 'arrowright' || key === 'd') {
-    return { kind: 'input', keyboard: { on: ['d'] } };
-  }
-  if (key === 'e') {
-    return { kind: 'tool', name: 'spawn_bonus' };
-  }
-  if (key === 'n') {
-    return { kind: 'tool', name: 'llm_dummy_next_turn' };
-  }
+function normalizeMovementKey(rawKey: string): string | null {
+  const key = rawKey.toLowerCase();
+  if (key === 'arrowup' || key === 'z' || key === 'w') return 'z';
+  if (key === 'arrowleft' || key === 'q' || key === 'a') return 'q';
+  if (key === 'arrowdown' || key === 's') return 's';
+  if (key === 'arrowright' || key === 'd') return 'd';
   return null;
+}
+
+function mapBrowserKeyDownToCommand(event: KeyboardEvent): Record<string, any> | null {
+  const movement = normalizeMovementKey(event.key);
+  if (movement) {
+    return { kind: 'input', keyboard: { on: [movement] } };
+  }
+  const key = event.key.toLowerCase();
+  if (key === 'e') return { kind: 'tool', name: 'spawn_bonus' };
+  if (key === 'n') return { kind: 'tool', name: 'llm_dummy_next_turn' };
+  return null;
+}
+
+function mapBrowserKeyUpToCommand(event: KeyboardEvent): Record<string, any> | null {
+  const movement = normalizeMovementKey(event.key);
+  if (!movement) {
+    return null;
+  }
+  return { kind: 'input', keyboard: { end: [movement] } };
 }
 
 async function startSessionBrowserClient(
@@ -371,16 +367,9 @@ async function startSessionBrowserClient(
     void refreshSessionWarning();
   }, 1500);
 
-  let commandInFlight = false;
-  window.addEventListener('keydown', async (event) => {
-    const command = mapBrowserKeyToCommand(event);
-    if (!command || commandInFlight) {
-      return;
-    }
-    event.preventDefault();
-    commandInFlight = true;
+  const sendCommand = async (command: Record<string, any>): Promise<void> => {
     try {
-      await requestJson(
+      const response = await requestJson(
         config.baseUrl,
         `/sessions/${encodeURIComponent(sessionId)}/commands`,
         'POST',
@@ -389,11 +378,34 @@ async function startSessionBrowserClient(
           commands: [command],
         },
       );
+      if (response && typeof response === 'object' && response.state && response.frame) {
+        renderSnapshot({
+          session_id: sessionId,
+          frame: response.frame as SymbolicFrame,
+          state: response.state as Record<string, any>,
+        });
+      }
     } catch (error) {
       console.error('Failed to send command', error);
-    } finally {
-      commandInFlight = false;
     }
+  };
+
+  window.addEventListener('keydown', (event) => {
+    const command = mapBrowserKeyDownToCommand(event);
+    if (!command) {
+      return;
+    }
+    event.preventDefault();
+    void sendCommand(command);
+  });
+
+  window.addEventListener('keyup', (event) => {
+    const command = mapBrowserKeyUpToCommand(event);
+    if (!command) {
+      return;
+    }
+    event.preventDefault();
+    void sendCommand(command);
   });
 
   const streamResponse = await fetch(
