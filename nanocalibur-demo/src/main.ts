@@ -398,11 +398,15 @@ async function startSessionBrowserClient(
         },
       );
       if (response && typeof response === 'object' && response.state && response.frame) {
-        renderSnapshot({
-          session_id: sessionId,
-          frame: response.frame as SymbolicFrame,
-          state: response.state as Record<string, any>,
-        });
+        const currentElapsed = latestSnapshot?.state?.scene?.elapsed;
+        const nextElapsed = (response.state as Record<string, any>)?.scene?.elapsed;
+        if (typeof currentElapsed !== 'number' || nextElapsed !== currentElapsed) {
+          renderSnapshot({
+            session_id: sessionId,
+            frame: response.frame as SymbolicFrame,
+            state: response.state as Record<string, any>,
+          });
+        }
       }
     } catch (error) {
       console.error('Failed to send command', error);

@@ -25,6 +25,12 @@ export interface NanoCaliburFrameInput {
   collisions?: CollisionFrameInput[];
   contacts?: CollisionFrameInput[];
   toolCalls?: Array<string | ToolFrameInput>;
+  parentPreviousPositions?: Array<{
+    uid: string;
+    x?: number;
+    y?: number;
+    z?: number;
+  }>;
   roleId?: string;
   role_id?: string;
   keysJustPressed?: string[];
@@ -119,7 +125,11 @@ export class NanoCaliburInterpreter {
   }
 
   tick(frame: NanoCaliburFrameInput = {}): void {
-    const previousPositions = this.captureActorPositions();
+    const fallbackPreviousPositions = this.captureActorPositions();
+    const previousPositions = this.resolveParentPreviousPositions(
+      frame.parentPreviousPositions,
+      fallbackPreviousPositions,
+    );
     this.sceneState.turnChangedThisStep = false;
     this.advanceRunningActions();
     for (const rule of this.rules) {
@@ -899,6 +909,37 @@ export class NanoCaliburInterpreter {
         y: this.numberOrZero(actor.y),
         z: this.numberOrZero(actor.z),
       });
+    }
+    return out;
+  }
+
+  private resolveParentPreviousPositions(
+    encoded:
+      | Array<{
+          uid: string;
+          x?: number;
+          y?: number;
+          z?: number;
+        }>
+      | undefined,
+    fallback: Map<string, { x: number; y: number; z: number }>,
+  ): Map<string, { x: number; y: number; z: number }> {
+    if (!Array.isArray(encoded) || encoded.length === 0) {
+      return fallback;
+    }
+    const out = new Map<string, { x: number; y: number; z: number }>();
+    for (const item of encoded) {
+      if (!item || typeof item.uid !== "string" || !item.uid) {
+        continue;
+      }
+      out.set(item.uid, {
+        x: this.numberOrZero(item.x),
+        y: this.numberOrZero(item.y),
+        z: this.numberOrZero(item.z),
+      });
+    }
+    if (out.size === 0) {
+      return fallback;
     }
     return out;
   }

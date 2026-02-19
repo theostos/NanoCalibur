@@ -315,6 +315,85 @@ def test_session_runtime_keeps_velocity_set_by_action(tmp_path):
     assert values["afterPassiveX"] > values["afterInputX"]
 
 
+def test_parent_bound_child_follows_parent_physics_motion(tmp_path):
+    runtime_path, headless_path, session_runtime_path = _compile_runtime(tmp_path)
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+        const {{ SessionRuntime }} = require({json.dumps(str(session_runtime_path))});
+
+        const spec = {{
+          actors: [
+            {{
+              type: "Player",
+              uid: "hero",
+              fields: {{ x: 100, y: 100, w: 32, h: 32, vx: 0, vy: 0, speed: 120, active: true }}
+            }},
+            {{
+              type: "Coin",
+              uid: "pet",
+              fields: {{ x: 132, y: 100, w: 16, h: 16, vx: 0, vy: 0, parent: "hero", active: true }}
+            }}
+          ],
+          globals: [],
+          predicates: [],
+          rules: [
+            {{
+              condition: {{ kind: "keyboard", phase: "on", key: "d", role_id: "human_1" }},
+              action: "move_right"
+            }}
+          ],
+          multiplayer: {{ default_loop: "hybrid" }}
+        }};
+
+        const actions = {{
+          move_right: (ctx) => {{
+            const hero = ctx.getActorByUid("hero");
+            hero.vx = hero.speed;
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, actions, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        const runtime = new SessionRuntime(host, {{
+          loopMode: "hybrid",
+          roleOrder: ["human_1", "dummy_1"],
+          defaultStepSeconds: 0.05
+        }});
+
+        const before = host.getState().actors;
+        const heroBeforeX = before.find((actor) => actor.uid === "hero").x;
+        const petBeforeX = before.find((actor) => actor.uid === "pet").x;
+
+        runtime.enqueue("human_1", {{ kind: "input", keyboard: {{ on: ["d"] }} }});
+        runtime.tick();
+        runtime.tick();
+        runtime.tick();
+
+        const after = host.getState().actors;
+        const heroAfter = after.find((actor) => actor.uid === "hero");
+        const petAfter = after.find((actor) => actor.uid === "pet");
+
+        console.log(JSON.stringify({{
+          heroDx: heroAfter.x - heroBeforeX,
+          petDx: petAfter.x - petBeforeX
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["heroDx"] > 0
+    assert values["petDx"] == values["heroDx"]
+
+
 def test_session_manager_enforces_unique_seeds(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_dir = root / "nanocalibur" / "runtime"
