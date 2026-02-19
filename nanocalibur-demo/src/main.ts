@@ -113,14 +113,62 @@ class SessionSnapshotRenderer {
     const sourceActors = Array.isArray(this.latestState.actors)
       ? (this.latestState.actors as ActorState[])
       : [];
-    const actors = sourceActors.map((actor) => {
-      const cloned = { ...actor };
+    const sourceActorsByUid = new Map<string, ActorState>();
+    for (const actor of sourceActors) {
+      if (typeof actor.uid === 'string' && actor.uid.length > 0) {
+        sourceActorsByUid.set(actor.uid, actor);
+      }
+    }
+    const projectedByUid = new Map<string, { x: number; y: number }>();
+    const visiting = new Set<string>();
+    const projectActor = (actor: ActorState): { x: number; y: number } => {
+      const uid = typeof actor.uid === 'string' ? actor.uid : '';
+      if (uid.length > 0) {
+        const cached = projectedByUid.get(uid);
+        if (cached) {
+          return cached;
+        }
+        if (visiting.has(uid)) {
+          return {
+            x: typeof actor.x === 'number' ? actor.x : 0,
+            y: typeof actor.y === 'number' ? actor.y : 0,
+          };
+        }
+        visiting.add(uid);
+      }
+
       const x = typeof actor.x === 'number' ? actor.x : 0;
       const y = typeof actor.y === 'number' ? actor.y : 0;
       const vx = typeof actor.vx === 'number' ? actor.vx : 0;
       const vy = typeof actor.vy === 'number' ? actor.vy : 0;
-      cloned.x = x + vx * elapsedSeconds;
-      cloned.y = y + vy * elapsedSeconds;
+      let projectedX = x + vx * elapsedSeconds;
+      let projectedY = y + vy * elapsedSeconds;
+
+      const parentUid = typeof actor.parent === 'string' ? actor.parent : '';
+      const hasOwnVelocity = Math.abs(vx) > 1e-6 || Math.abs(vy) > 1e-6;
+      if (parentUid.length > 0 && !hasOwnVelocity) {
+        const parent = sourceActorsByUid.get(parentUid);
+        if (parent) {
+          const parentProjected = projectActor(parent);
+          const parentX = typeof parent.x === 'number' ? parent.x : 0;
+          const parentY = typeof parent.y === 'number' ? parent.y : 0;
+          projectedX += parentProjected.x - parentX;
+          projectedY += parentProjected.y - parentY;
+        }
+      }
+
+      const projected = { x: projectedX, y: projectedY };
+      if (uid.length > 0) {
+        projectedByUid.set(uid, projected);
+        visiting.delete(uid);
+      }
+      return projected;
+    };
+    const actors = sourceActors.map((actor) => {
+      const cloned = { ...actor };
+      const projected = projectActor(actor);
+      cloned.x = projected.x;
+      cloned.y = projected.y;
       return cloned;
     });
     const nextState = {
@@ -370,8 +418,12 @@ async function startSessionBrowserClient(
 
   let latestSnapshot: SessionSnapshot | null = null;
   let sessionWarning: string | null = null;
+  let lastSymbolicRenderAtMs = 0;
 
   const renderPanel = (): void => {
+    const nowMs = performance.now();
+    const shouldRenderSymbolic =
+      nowMs - lastSymbolicRenderAtMs >= 100 || !latestSnapshot;
     if (!latestSnapshot) {
       const lines = [
         `Session: ${sessionId}`,
@@ -379,10 +431,14 @@ async function startSessionBrowserClient(
         'Waiting for first snapshot...',
       ].filter((line) => line.length > 0);
       symbolicPanel.textContent = lines.join('\n');
+      lastSymbolicRenderAtMs = nowMs;
       return;
     }
-    const warningPrefix = sessionWarning ? `WARNING: ${sessionWarning}\n\n` : '';
-    symbolicPanel.textContent = `${warningPrefix}${formatSessionSnapshot(latestSnapshot)}`;
+    if (shouldRenderSymbolic) {
+      const warningPrefix = sessionWarning ? `WARNING: ${sessionWarning}\n\n` : '';
+      symbolicPanel.textContent = `${warningPrefix}${formatSessionSnapshot(latestSnapshot)}`;
+      lastSymbolicRenderAtMs = nowMs;
+    }
     sessionRenderer.render(latestSnapshot);
   };
 
@@ -533,14 +589,18 @@ function startLocalCanvasHost(
   symbolicPanel: HTMLElement,
 ): void {
   const host = attachNanoCalibur(canvas, DEFAULT_CANVAS_OPTIONS);
-  const renderSymbolic = (): void => {
-    const frame = host.getSymbolicFrame();
-    symbolicPanel.textContent = formatSymbolicFrame(frame);
+  let lastSymbolicRenderAtMs = 0;
+  const renderSymbolic = (nowMs: number): void => {
+    if (nowMs - lastSymbolicRenderAtMs >= 100) {
+      const frame = host.getSymbolicFrame();
+      symbolicPanel.textContent = formatSymbolicFrame(frame);
+      lastSymbolicRenderAtMs = nowMs;
+    }
     window.requestAnimationFrame(renderSymbolic);
   };
 
   void host.start().then(() => {
-    renderSymbolic();
+    window.requestAnimationFrame(renderSymbolic);
   }).catch((error: unknown) => {
     console.error('Failed to start NanoCalibur CanvasHost.', error);
   });
