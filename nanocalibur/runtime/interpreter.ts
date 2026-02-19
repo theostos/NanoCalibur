@@ -39,6 +39,9 @@ export interface NanoCaliburFrameInput {
 export interface InterpreterSceneState {
   gravityEnabled: boolean;
   elapsed: number;
+  turn: number;
+  loopMode: "real_time" | "turn_based" | "hybrid";
+  turnChangedThisStep: boolean;
 }
 
 export interface InterpreterState {
@@ -114,6 +117,7 @@ export class NanoCaliburInterpreter {
 
   tick(frame: NanoCaliburFrameInput = {}): void {
     const previousPositions = this.captureActorPositions();
+    this.sceneState.turnChangedThisStep = false;
     this.advanceRunningActions();
     for (const rule of this.rules) {
       const match = this.conditionMatches(rule.condition, frame);
@@ -144,6 +148,9 @@ export class NanoCaliburInterpreter {
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
+        turn: this.sceneState.turn,
+        loopMode: this.sceneState.loopMode,
+        turnChangedThisStep: this.sceneState.turnChangedThisStep,
       },
     };
   }
@@ -156,6 +163,9 @@ export class NanoCaliburInterpreter {
     return {
       gravityEnabled: this.sceneState.gravityEnabled,
       elapsed: this.sceneState.elapsed,
+      turn: this.sceneState.turn,
+      loopMode: this.sceneState.loopMode,
+      turnChangedThisStep: this.sceneState.turnChangedThisStep,
     };
   }
 
@@ -244,6 +254,7 @@ export class NanoCaliburInterpreter {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        nextTurn: () => this.nextTurn(),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -338,10 +349,30 @@ export class NanoCaliburInterpreter {
   }
 
   private initSceneState(sceneSpec: Record<string, any> | null): InterpreterSceneState {
+    const loopMode = this.resolveLoopMode(
+      this.spec?.multiplayer && typeof this.spec.multiplayer === "object"
+        ? this.spec.multiplayer.default_loop
+        : null,
+    );
     return {
       gravityEnabled: Boolean(sceneSpec && sceneSpec.gravity_enabled),
       elapsed: 0,
+      turn: 0,
+      loopMode,
+      turnChangedThisStep: false,
     };
+  }
+
+  private resolveLoopMode(value: unknown): "real_time" | "turn_based" | "hybrid" {
+    if (value === "turn_based" || value === "hybrid" || value === "real_time") {
+      return value;
+    }
+    return "real_time";
+  }
+
+  private nextTurn(): void {
+    this.sceneState.turn += 1;
+    this.sceneState.turnChangedThisStep = true;
   }
 
   private buildMaskedTileSet(mapSpec: Record<string, any> | null): Set<string> {
