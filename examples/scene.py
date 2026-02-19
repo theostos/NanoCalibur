@@ -13,7 +13,6 @@ from nanocalibur.dsl_markers import (
     Tile,
     TileMap,
     OnToolCall,
-    Random,
     condition,
 )
 
@@ -52,27 +51,38 @@ def idle(player: Player["hero"]):
     player.play("idle")
 
 
-def llm_dummy_is_active(bot: Player) -> bool:
-    return bot.active
+@condition(OnToolCall("llm_dummy_move_right", "Move llm_dummy right"))
+def llm_dummy_move_right(bot: Player["llm_dummy"]):
+    bot.x = bot.x + bot.speed
+    bot.play("run")
 
 
-@condition(OnLogicalCondition(llm_dummy_is_active, Player["llm_dummy"]))
-def llm_dummy_step(bot: Player["llm_dummy"]):
-    direction = Random.int(0, 4)
-    if direction == 0:
-        bot.x = bot.x + bot.speed
-        bot.play("run")
-    elif direction == 1:
-        bot.x = bot.x - bot.speed
-        bot.play("run")
-    elif direction == 2:
-        bot.y = bot.y - bot.speed
-        bot.play("run")
-    elif direction == 3:
-        bot.y = bot.y + bot.speed
-        bot.play("run")
-    else:
-        bot.play("idle")
+@condition(OnToolCall("llm_dummy_move_left", "Move llm_dummy left"))
+def llm_dummy_move_left(bot: Player["llm_dummy"]):
+    bot.x = bot.x - bot.speed
+    bot.play("run")
+
+
+@condition(OnToolCall("llm_dummy_move_up", "Move llm_dummy up"))
+def llm_dummy_move_up(bot: Player["llm_dummy"]):
+    bot.y = bot.y - bot.speed
+    bot.play("run")
+
+
+@condition(OnToolCall("llm_dummy_move_down", "Move llm_dummy down"))
+def llm_dummy_move_down(bot: Player["llm_dummy"]):
+    bot.y = bot.y + bot.speed
+    bot.play("run")
+
+
+@condition(OnToolCall("llm_dummy_idle", "Set llm_dummy to idle animation"))
+def llm_dummy_idle(bot: Player["llm_dummy"]):
+    bot.play("idle")
+
+
+@condition(OnToolCall("llm_dummy_next_turn", "Advance scene turn"))
+def llm_dummy_next_turn(scene: Scene):
+    scene.next_turn()
 
 @condition(OnOverlap(Player["hero"], Coin))
 def collect_coin(
