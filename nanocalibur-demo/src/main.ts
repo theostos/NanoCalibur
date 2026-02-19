@@ -38,10 +38,12 @@ interface SessionSummary {
 }
 
 class SessionSnapshotRenderer {
+  private readonly canvas: HTMLCanvasElement;
   private readonly animation: AnimationSystem;
   private readonly assets: AssetStore;
   private readonly renderer: CanvasRenderer;
-  private readonly interfaceOverlay: InterfaceOverlay | null;
+  private interfaceOverlay: InterfaceOverlay | null;
+  private interfaceHtml: string;
   private ready = false;
   private latestState: InterpreterState | null = null;
   private latestSnapshotAtMs = 0;
@@ -51,9 +53,11 @@ class SessionSnapshotRenderer {
     options: CanvasHostOptions,
     interfaceHtml: string,
   ) {
+    this.canvas = canvas;
     this.assets = new AssetStore(options);
     this.animation = new AnimationSystem(options, () => undefined);
     this.renderer = new CanvasRenderer(canvas, options, this.assets, this.animation);
+    this.interfaceHtml = interfaceHtml;
     this.interfaceOverlay =
       interfaceHtml.trim().length > 0
         ? new InterfaceOverlay(canvas, interfaceHtml)
@@ -96,6 +100,7 @@ class SessionSnapshotRenderer {
       state,
       (state.map || null) as MapSpec | null,
     );
+    this.syncInterfaceOverlay(state);
     if (this.interfaceOverlay) {
       this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals(state));
     }
@@ -212,6 +217,30 @@ class SessionSnapshotRenderer {
         ? state.scene.elapsed
         : 0;
     return globals;
+  }
+
+  private syncInterfaceOverlay(state: InterpreterState): void {
+    const scene = state.scene as Record<string, any> | null;
+    const nextHtml =
+      scene && typeof scene.interfaceHtml === 'string'
+        ? scene.interfaceHtml
+        : this.interfaceHtml;
+    if (nextHtml === this.interfaceHtml) {
+      return;
+    }
+    this.interfaceHtml = nextHtml;
+    if (nextHtml.trim().length === 0) {
+      if (this.interfaceOverlay) {
+        this.interfaceOverlay.destroy();
+        this.interfaceOverlay = null;
+      }
+      return;
+    }
+    if (this.interfaceOverlay) {
+      this.interfaceOverlay.setHtml(nextHtml);
+      return;
+    }
+    this.interfaceOverlay = new InterfaceOverlay(this.canvas, nextHtml);
   }
 }
 

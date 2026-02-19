@@ -25,11 +25,13 @@ export type {
 export class CanvasHost {
   private readonly core: RuntimeCore;
   private readonly options: CanvasHostOptions;
+  private readonly canvas: HTMLCanvasElement;
 
   private readonly assets: AssetStore;
   private readonly renderer: CanvasRenderer;
   private readonly symbolicRenderer: SymbolicRenderer;
-  private readonly interfaceOverlay: InterfaceOverlay | null;
+  private interfaceOverlay: InterfaceOverlay | null = null;
+  private interfaceHtml = "";
 
   private readonly keysDown = new Set<string>();
   private previousKeysDown = new Set<string>();
@@ -122,6 +124,7 @@ export class CanvasHost {
     interpreter: NanoCaliburInterpreter,
     options: CanvasHostOptions = {},
   ) {
+    this.canvas = canvas;
     this.core = new RuntimeCore(interpreter, options);
     this.options = this.core.getOptions();
 
@@ -142,16 +145,7 @@ export class CanvasHost {
       this.core.getAnimationSystem(),
     );
     this.symbolicRenderer = new SymbolicRenderer(this.options);
-    const spec = this.core.getInterpreter().getSpec();
-    const interfaceHtml =
-      spec && typeof spec.interface_html === "string" ? spec.interface_html : "";
-    this.interfaceOverlay =
-      interfaceHtml.trim().length > 0
-        ? new InterfaceOverlay(canvas, interfaceHtml)
-        : null;
-    if (this.interfaceOverlay) {
-      this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals());
-    }
+    this.syncInterfaceOverlay();
     this.renderer.render(this.core.getState(), this.core.getMap());
   }
 
@@ -201,6 +195,7 @@ export class CanvasHost {
     this.previousMouseDown = new Set(this.mouseDown);
 
     this.core.step(dtSeconds, { keyboard, mouse, uiButtons });
+    this.syncInterfaceOverlay();
     if (this.interfaceOverlay) {
       this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals());
     }
@@ -259,5 +254,32 @@ export class CanvasHost {
     this.previousKeysDown.clear();
     this.mouseDown.clear();
     this.previousMouseDown.clear();
+  }
+
+  private syncInterfaceOverlay(): void {
+    const scene = this.core.getState().scene as Record<string, any> | null;
+    const nextHtml =
+      scene && typeof scene.interfaceHtml === "string"
+        ? scene.interfaceHtml
+        : "";
+    if (nextHtml === this.interfaceHtml) {
+      return;
+    }
+
+    this.interfaceHtml = nextHtml;
+    if (nextHtml.trim().length === 0) {
+      if (this.interfaceOverlay) {
+        this.interfaceOverlay.destroy();
+        this.interfaceOverlay = null;
+      }
+      return;
+    }
+
+    if (this.interfaceOverlay) {
+      this.interfaceOverlay.setHtml(nextHtml);
+    } else {
+      this.interfaceOverlay = new InterfaceOverlay(this.canvas, nextHtml);
+    }
+    this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals());
   }
 }
