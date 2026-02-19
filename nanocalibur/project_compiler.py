@@ -209,6 +209,21 @@ class ProjectCompiler:
                 }
                 for actor_type, fields in compiler.schemas.actor_fields.items()
             }
+            contains_next_turn_call = any(
+                _action_contains_next_turn(action) for action in actions.values()
+            )
+            if (
+                multiplayer is not None
+                and multiplayer.default_loop
+                in {
+                    MultiplayerLoopMode.TURN_BASED,
+                    MultiplayerLoopMode.HYBRID,
+                }
+                and not contains_next_turn_call
+            ):
+                raise DSLValidationError(
+                    "Multiplayer default_loop is turn_based/hybrid but no action calls scene.next_turn()."
+                )
 
             return ProjectSpec(
                 actor_schemas=actor_schemas,
@@ -225,6 +240,7 @@ class ProjectCompiler:
                 scene=scene,
                 interface_html=interface_html,
                 multiplayer=multiplayer,
+                contains_next_turn_call=contains_next_turn_call,
             )
 
     def _discover_game_variable(self, module: ast.Module) -> str:
@@ -2829,6 +2845,24 @@ def _looks_like_predicate(fn: ast.FunctionDef, compiler: DSLCompiler) -> bool:
             continue
         return False
     return True
+
+
+def _action_contains_next_turn(action: ActionIR) -> bool:
+    return any(_stmt_contains_next_turn(stmt) for stmt in action.body)
+
+
+def _stmt_contains_next_turn(stmt: object) -> bool:
+    if isinstance(stmt, CallStmt):
+        return stmt.name == "scene_next_turn"
+    if isinstance(stmt, If):
+        return any(_stmt_contains_next_turn(child) for child in stmt.body) or any(
+            _stmt_contains_next_turn(child) for child in stmt.orelse
+        )
+    if isinstance(stmt, While):
+        return any(_stmt_contains_next_turn(child) for child in stmt.body)
+    if isinstance(stmt, For):
+        return any(_stmt_contains_next_turn(child) for child in stmt.body)
+    return False
 
 
 def _as_game_method_call(

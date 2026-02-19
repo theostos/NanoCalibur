@@ -81,6 +81,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
             for predicate in project.predicates
         ],
         "callables": [callable_fn.name for callable_fn in project.callables],
+        "contains_next_turn_call": project.contains_next_turn_call,
     }
 
 
