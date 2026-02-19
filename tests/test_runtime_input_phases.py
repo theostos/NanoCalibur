@@ -173,6 +173,98 @@ def test_runtime_tool_condition_and_tools_metadata(tmp_path):
     assert values["tools"][0]["name"] == "spawn_bonus"
 
 
+def test_runtime_role_scoped_input_and_tool_conditions(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "kb", kind: "int", value: 0 }},
+            {{ name: "tool", kind: "int", value: 0 }}
+          ],
+          predicates: [],
+          tools: [
+            {{ name: "bot_move", tool_docstring: "bot move", action: "inc_tool", role_id: "dummy_1" }}
+          ],
+          rules: [
+            {{
+              condition: {{ kind: "keyboard", phase: "on", key: "d", role_id: "human_1" }},
+              action: "inc_kb"
+            }},
+            {{
+              condition: {{ kind: "tool", name: "bot_move", role_id: "dummy_1" }},
+              action: "inc_tool"
+            }}
+          ]
+        }};
+
+        const actions = {{
+          inc_kb: (ctx) => {{
+            ctx.globals.kb = ctx.globals.kb + 1;
+          }},
+          inc_tool: (ctx) => {{
+            ctx.globals.tool = ctx.globals.tool + 1;
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+
+        i.tick({{
+          keyboard: {{ on: ["d"] }},
+          role_id: "dummy_1"
+        }});
+        i.tick({{
+          keyboard: {{ on: ["d"] }},
+          role_id: "human_1"
+        }});
+        i.tick({{
+          toolCalls: [{{ name: "bot_move", payload: {{}}, role_id: "human_1" }}]
+        }});
+        i.tick({{
+          toolCalls: [{{ name: "bot_move", payload: {{}}, role_id: "dummy_1" }}]
+        }});
+
+        console.log(JSON.stringify(i.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["kb"] == 1
+    assert values["tool"] == 1
+
+
 def test_runtime_scene_next_turn_updates_turn_state(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"

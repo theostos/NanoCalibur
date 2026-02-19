@@ -279,26 +279,39 @@ def test_headless_http_server_session_endpoints_support_join_start_and_commands(
                 "loop_mode": "turn_based",
             },
         )
-        assert created["session_id"] == "sess_1"
+        assert isinstance(created["session_id"], str)
+        assert created["session_id"]
+        assert created["session_id"] != "sess_1"
         assert created["admin_token"]
+        assert created["loop_mode"] == "real_time"
+        assert any(role["role_id"] == "llm_1" for role in created["roles"])
+        session_id = created["session_id"]
         invite_token = created["invites"][0]["invite_token"]
 
         open_roles = _http_get_json(base_url + "/open-roles")
-        assert any(entry["session_id"] == "sess_1" for entry in open_roles["sessions"])
+        assert any(entry["session_id"] == session_id for entry in open_roles["sessions"])
+
+        sessions_payload = _http_get_json(base_url + "/sessions")
+        assert any(entry["session_id"] == session_id for entry in sessions_payload["sessions"])
+        listed = next(
+            entry for entry in sessions_payload["sessions"] if entry["session_id"] == session_id
+        )
+        assert listed["loop_mode"] == "real_time"
+        assert any(role["role_id"] == "llm_1" for role in listed["roles"])
 
         joined = _http_post_json(base_url + "/join", {"invite_token": invite_token})
-        assert joined["session_id"] == "sess_1"
+        assert joined["session_id"] == session_id
         assert joined["role_id"] == "llm_1"
         assert joined["access_token"]
 
         started = _http_post_json(
-            base_url + "/sessions/sess_1/start",
+            base_url + f"/sessions/{session_id}/start",
             {"admin_token": created["admin_token"]},
         )
         assert started["status"] == "running"
 
         command_result = _http_post_json(
-            base_url + "/sessions/sess_1/commands",
+            base_url + f"/sessions/{session_id}/commands",
             {
                 "access_token": joined["access_token"],
                 "commands": [{"kind": "tool", "name": "nudge"}],
@@ -306,7 +319,7 @@ def test_headless_http_server_session_endpoints_support_join_start_and_commands(
         )
         assert command_result["state"]["globals"]["count"] == 1
 
-        session_open_roles = _http_get_json(base_url + "/sessions/sess_1/open-roles")
+        session_open_roles = _http_get_json(base_url + f"/sessions/{session_id}/open-roles")
         assert session_open_roles["roles"] == []
     finally:
         if proc.stdin:

@@ -15,6 +15,7 @@ export interface CollisionFrameInput {
 export interface ToolFrameInput {
   name: string;
   payload?: Record<string, any>;
+  role_id?: string;
 }
 
 export interface NanoCaliburFrameInput {
@@ -24,6 +25,8 @@ export interface NanoCaliburFrameInput {
   collisions?: CollisionFrameInput[];
   contacts?: CollisionFrameInput[];
   toolCalls?: Array<string | ToolFrameInput>;
+  roleId?: string;
+  role_id?: string;
   keysJustPressed?: string[];
   keysBegin?: string[];
   keysPressed?: string[];
@@ -169,9 +172,9 @@ export class NanoCaliburInterpreter {
     };
   }
 
-  getTools(): Array<{ name: string; tool_docstring: string; action: string }> {
+  getTools(): Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> {
     const fromSpec = Array.isArray(this.spec.tools) ? this.spec.tools : [];
-    const out: Array<{ name: string; tool_docstring: string; action: string }> = [];
+    const out: Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> = [];
     const seen = new Set<string>();
     for (const item of fromSpec) {
       if (!item || typeof item.name !== "string" || !item.name) {
@@ -186,6 +189,7 @@ export class NanoCaliburInterpreter {
         tool_docstring:
           typeof item.tool_docstring === "string" ? item.tool_docstring : "",
         action: typeof item.action === "string" ? item.action : "",
+        role_id: typeof item.role_id === "string" ? item.role_id : undefined,
       });
     }
     return out;
@@ -444,11 +448,17 @@ export class NanoCaliburInterpreter {
     }
 
     if (condition.kind === "keyboard" || condition.kind === "keyboard_pressed") {
+      if (!this.matchesRoleScope(condition, frame)) {
+        return { matched: false };
+      }
       const phase = condition.phase || "on";
       return { matched: this.matchKeyboardPhase(frame, phase, condition.key) };
     }
 
     if (condition.kind === "mouse" || condition.kind === "mouse_clicked") {
+      if (!this.matchesRoleScope(condition, frame)) {
+        return { matched: false };
+      }
       const phase = condition.phase || "on";
       return {
         matched: this.matchMousePhase(frame, phase, condition.button || "left"),
@@ -528,7 +538,7 @@ export class NanoCaliburInterpreter {
       }
       const toolCalls = this.normalizeToolCalls(frame.toolCalls);
       for (const toolCall of toolCalls) {
-        if (toolCall.name === toolName) {
+        if (toolCall.name === toolName && this.matchesRoleScope(condition, frame, toolCall)) {
           return { matched: true, toolCall };
         }
       }
@@ -669,10 +679,52 @@ export class NanoCaliburInterpreter {
             typeof (item as ToolFrameInput).payload === "object"
               ? (item as ToolFrameInput).payload
               : {},
+          role_id:
+            typeof (item as ToolFrameInput).role_id === "string"
+              ? (item as ToolFrameInput).role_id
+              : undefined,
         });
       }
     }
     return out;
+  }
+
+  private matchesRoleScope(
+    condition: Record<string, any>,
+    frame: NanoCaliburFrameInput,
+    toolCall: ToolFrameInput | null = null,
+  ): boolean {
+    const scopedRoleId =
+      condition && typeof condition.role_id === "string" && condition.role_id
+        ? condition.role_id
+        : null;
+    if (!scopedRoleId) {
+      return true;
+    }
+    const frameRoleId = this.readFrameRoleId(frame, toolCall);
+    return frameRoleId === scopedRoleId;
+  }
+
+  private readFrameRoleId(
+    frame: NanoCaliburFrameInput,
+    toolCall: ToolFrameInput | null = null,
+  ): string | null {
+    if (!frame || typeof frame !== "object") {
+      if (toolCall && typeof toolCall.role_id === "string" && toolCall.role_id) {
+        return toolCall.role_id;
+      }
+      return null;
+    }
+    if (typeof frame.role_id === "string" && frame.role_id) {
+      return frame.role_id;
+    }
+    if (typeof frame.roleId === "string" && frame.roleId) {
+      return frame.roleId;
+    }
+    if (toolCall && typeof toolCall.role_id === "string" && toolCall.role_id) {
+      return toolCall.role_id;
+    }
+    return null;
   }
 
   private selectActors(selector: Record<string, any>): Record<string, any>[] {

@@ -24,6 +24,8 @@ export interface RuntimeStepInput {
   mouse?: PhasePayload;
   uiButtons?: string[];
   toolCalls?: Array<string | ToolFrameInput>;
+  roleId?: string;
+  role_id?: string;
 }
 
 function toSpriteConfig(specSprite: SpecSpriteDef): SpriteAnimationConfig | null {
@@ -237,6 +239,12 @@ export class RuntimeCore {
       mouse: input.mouse,
       uiButtons: input.uiButtons,
       toolCalls: input.toolCalls,
+      roleId:
+        typeof input.roleId === "string"
+          ? input.roleId
+          : typeof input.role_id === "string"
+            ? input.role_id
+            : undefined,
       collisions: overlapFrameEvents,
       contacts: contacts.map((pair) => ({ aUid: pair.aUid, bUid: pair.bUid })),
     };

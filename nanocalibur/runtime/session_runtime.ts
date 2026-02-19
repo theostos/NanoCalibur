@@ -182,7 +182,7 @@ export class SessionRuntime {
       if (!command) {
         break;
       }
-      this.applyCommand(command, dtSeconds);
+      this.applyCommand(roleId, command, dtSeconds);
       const afterTurn = this.readCurrentTurn();
       if (afterTurn !== turnAtStart) {
         break;
@@ -204,7 +204,7 @@ export class SessionRuntime {
           continue;
         }
         consumedAny = true;
-        this.applyCommand(command, dtSeconds);
+        this.applyCommand(roleId, command, dtSeconds);
         const afterTurn = this.readCurrentTurn();
         if (afterTurn !== turnAtStart) {
           return;
@@ -229,7 +229,7 @@ export class SessionRuntime {
         continue;
       }
       consumedAny = true;
-      this.applyCommand(command, dtSeconds);
+      this.applyCommand(roleId, command, dtSeconds);
     }
 
     if (!consumedAny) {
@@ -245,10 +245,11 @@ export class SessionRuntime {
     return 0;
   }
 
-  private applyCommand(command: SessionCommand, dtSeconds: number): void {
+  private applyCommand(roleId: string, command: SessionCommand, dtSeconds: number): void {
     if (command.kind === "tool") {
       this.host.step({
         dtSeconds,
+        roleId,
         toolCalls: [
           {
             name: command.name,
@@ -256,6 +257,7 @@ export class SessionRuntime {
               command.payload && typeof command.payload === "object"
                 ? command.payload
                 : {},
+            role_id: roleId,
           },
         ],
       });
@@ -265,6 +267,7 @@ export class SessionRuntime {
     if (command.kind === "button") {
       this.host.step({
         dtSeconds,
+        roleId,
         uiButtons: [command.name],
       });
       return;
@@ -273,6 +276,7 @@ export class SessionRuntime {
     if (command.kind === "input") {
       this.host.step({
         dtSeconds,
+        roleId,
         keyboard: command.keyboard,
         mouse: command.mouse,
         uiButtons: command.uiButtons,

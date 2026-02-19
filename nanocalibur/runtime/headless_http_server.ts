@@ -87,6 +87,13 @@ export class HeadlessHttpServer {
     try {
       const url = this.parseRequestUrl(req.url);
       const method = typeof req.method === "string" ? req.method.toUpperCase() : "";
+      this.applyCorsHeaders(res);
+
+      if (method === "OPTIONS") {
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
 
       if (this.sessionManager) {
         const handled = await this.handleSessionRequest(req, res, method, url);
@@ -187,30 +194,24 @@ export class HeadlessHttpServer {
       return true;
     }
 
+    if (method === "GET" && url.pathname === "/sessions") {
+      this.respondJson(res, 200, {
+        sessions: this.sessionManager.listSessionsSummary(),
+      });
+      return true;
+    }
+
     if (method === "POST" && url.pathname === "/sessions") {
       const payload = await this.readJsonBody(req);
-      const sessionId =
-        payload && typeof payload.session_id === "string" && payload.session_id
-          ? payload.session_id
-          : this.generateSessionId();
-
       const host = this.createHostForSession();
+      const sessionId = this.generateUniqueSessionId();
+      const loopMode = this.resolveSessionLoopMode(host);
+      const rolesFromSpec = this.resolveSessionRoles(host);
+      const fallbackRoles = this.parseRoleConfigsFromPayload(payload);
       const created = this.sessionManager.createSession(sessionId, host, {
         seed: typeof payload.seed === "string" ? payload.seed : undefined,
-        loopMode:
-          typeof payload.loop_mode === "string"
-            ? (payload.loop_mode as any)
-            : undefined,
-        roles: Array.isArray(payload.roles)
-          ? payload.roles
-              .filter((entry) => entry && typeof entry === "object")
-              .map((entry) => ({
-                id: String(entry.id || ""),
-                type: typeof entry.type === "string" ? entry.type : undefined,
-                required:
-                  typeof entry.required === "boolean" ? entry.required : undefined,
-              }))
-          : undefined,
+        loopMode,
+        roles: rolesFromSpec.length > 0 ? rolesFromSpec : fallbackRoles,
         pace: {
           gameTimeScale:
             typeof payload.game_time_scale === "number"
@@ -236,6 +237,8 @@ export class HeadlessHttpServer {
         seed: created.seed,
         status: created.status,
         admin_token: created.adminToken,
+        loop_mode: created.runtime.getLoopMode(),
+        roles: this.sessionManager.listSessionRoles(created.id),
         invites,
       });
       return true;
@@ -272,7 +275,7 @@ export class HeadlessHttpServer {
     if (method === "POST" && startMatch) {
       const sessionId = decodeURIComponent(startMatch[1]);
       const payload = await this.readJsonBody(req);
-      const adminToken = this.resolveAdminToken(req, payload);
+      const adminToken = this.resolveAdminToken(req, payload, url);
       if (!adminToken) {
         this.respondJson(res, 401, { error: "Missing admin token." });
         return true;
@@ -286,7 +289,7 @@ export class HeadlessHttpServer {
     if (method === "POST" && stopMatch) {
       const sessionId = decodeURIComponent(stopMatch[1]);
       const payload = await this.readJsonBody(req);
-      const adminToken = this.resolveAdminToken(req, payload);
+      const adminToken = this.resolveAdminToken(req, payload, url);
       if (!adminToken) {
         this.respondJson(res, 401, { error: "Missing admin token." });
         return true;
@@ -300,7 +303,7 @@ export class HeadlessHttpServer {
     if (method === "PATCH" && paceMatch) {
       const sessionId = decodeURIComponent(paceMatch[1]);
       const payload = await this.readJsonBody(req);
-      const adminToken = this.resolveAdminToken(req, payload);
+      const adminToken = this.resolveAdminToken(req, payload, url);
       if (!adminToken) {
         this.respondJson(res, 401, { error: "Missing admin token." });
         return true;
@@ -337,7 +340,7 @@ export class HeadlessHttpServer {
     if (method === "POST" && commandsMatch) {
       const sessionId = decodeURIComponent(commandsMatch[1]);
       const payload = await this.readJsonBody(req);
-      const accessToken = this.resolveRoleToken(req, payload);
+      const accessToken = this.resolveRoleToken(req, payload, url);
       if (!accessToken) {
         this.respondJson(res, 401, { error: "Missing role access token." });
         return true;
@@ -355,7 +358,7 @@ export class HeadlessHttpServer {
     const frameMatch = /^\/sessions\/([^/]+)\/frame$/.exec(url.pathname);
     if (method === "GET" && frameMatch) {
       const sessionId = decodeURIComponent(frameMatch[1]);
-      if (!this.hasSessionAccess(req, sessionId)) {
+      if (!this.hasSessionAccess(req, url, sessionId)) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
@@ -369,7 +372,7 @@ export class HeadlessHttpServer {
     const stateMatch = /^\/sessions\/([^/]+)\/state$/.exec(url.pathname);
     if (method === "GET" && stateMatch) {
       const sessionId = decodeURIComponent(stateMatch[1]);
-      if (!this.hasSessionAccess(req, sessionId)) {
+      if (!this.hasSessionAccess(req, url, sessionId)) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
@@ -383,7 +386,7 @@ export class HeadlessHttpServer {
     const toolsMatch = /^\/sessions\/([^/]+)\/tools$/.exec(url.pathname);
     if (method === "GET" && toolsMatch) {
       const sessionId = decodeURIComponent(toolsMatch[1]);
-      if (!this.hasSessionAccess(req, sessionId)) {
+      if (!this.hasSessionAccess(req, url, sessionId)) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
@@ -397,7 +400,7 @@ export class HeadlessHttpServer {
     const streamMatch = /^\/sessions\/([^/]+)\/stream$/.exec(url.pathname);
     if (method === "GET" && streamMatch) {
       const sessionId = decodeURIComponent(streamMatch[1]);
-      if (!this.hasSessionAccess(req, sessionId)) {
+      if (!this.hasSessionAccess(req, url, sessionId)) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
@@ -497,25 +500,33 @@ export class HeadlessHttpServer {
     return out;
   }
 
-  private hasSessionAccess(req: any, sessionId: string): boolean {
+  private hasSessionAccess(req: any, url: URL, sessionId: string): boolean {
     if (!this.sessionManager) {
       return false;
     }
-    const adminToken = this.resolveAdminToken(req, null);
+    const adminToken = this.resolveAdminToken(req, null, url);
     if (adminToken && this.sessionManager.validateAdminToken(sessionId, adminToken)) {
       return true;
     }
-    const roleToken = this.resolveRoleToken(req, null);
+    const roleToken = this.resolveRoleToken(req, null, url);
     if (!roleToken) {
       return false;
     }
     return this.sessionManager.validateRoleToken(sessionId, roleToken) !== null;
   }
 
-  private resolveAdminToken(req: any, payload: Record<string, any> | null): string | null {
+  private resolveAdminToken(
+    req: any,
+    payload: Record<string, any> | null,
+    url: URL,
+  ): string | null {
     const headerToken = this.readHeader(req, "x-admin-token");
     if (headerToken) {
       return headerToken;
+    }
+    const queryToken = this.readQueryString(url, "admin_token");
+    if (queryToken) {
+      return queryToken;
     }
     if (payload && typeof payload.admin_token === "string" && payload.admin_token) {
       return payload.admin_token;
@@ -523,10 +534,18 @@ export class HeadlessHttpServer {
     return null;
   }
 
-  private resolveRoleToken(req: any, payload: Record<string, any> | null): string | null {
+  private resolveRoleToken(
+    req: any,
+    payload: Record<string, any> | null,
+    url: URL,
+  ): string | null {
     const headerToken = this.readHeader(req, "x-role-token");
     if (headerToken) {
       return headerToken;
+    }
+    const queryToken = this.readQueryString(url, "access_token");
+    if (queryToken) {
+      return queryToken;
     }
     const authToken = this.readBearer(req);
     if (authToken) {
@@ -534,6 +553,14 @@ export class HeadlessHttpServer {
     }
     if (payload && typeof payload.access_token === "string" && payload.access_token) {
       return payload.access_token;
+    }
+    return null;
+  }
+
+  private readQueryString(url: URL, key: string): string | null {
+    const value = url.searchParams.get(key);
+    if (typeof value === "string" && value) {
+      return value;
     }
     return null;
   }
@@ -569,6 +596,82 @@ export class HeadlessHttpServer {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   }
 
+  private applyCorsHeaders(res: any): void {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Accept, Authorization, x-role-token, x-admin-token",
+    );
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PATCH, OPTIONS",
+    );
+  }
+
+  private resolveSessionLoopMode(host: HeadlessHost): "real_time" | "turn_based" | "hybrid" {
+    const spec = host.getInterpreter().getSpec() as Record<string, any>;
+    const fromSpec =
+      spec &&
+      spec.multiplayer &&
+      typeof spec.multiplayer.default_loop === "string"
+        ? spec.multiplayer.default_loop
+        : null;
+    if (fromSpec === "real_time" || fromSpec === "turn_based" || fromSpec === "hybrid") {
+      return fromSpec;
+    }
+    const fromScene = host.getState()?.scene?.loopMode;
+    if (fromScene === "real_time" || fromScene === "turn_based" || fromScene === "hybrid") {
+      return fromScene;
+    }
+    return "real_time";
+  }
+
+  private resolveSessionRoles(
+    host: HeadlessHost,
+  ): Array<{ id: string; kind?: string; required?: boolean }> {
+    const spec = host.getInterpreter().getSpec() as Record<string, any>;
+    if (!spec || !Array.isArray(spec.roles)) {
+      return [];
+    }
+    const out: Array<{ id: string; kind?: string; required?: boolean }> = [];
+    for (const item of spec.roles) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const id = typeof item.id === "string" ? item.id : "";
+      if (!id) {
+        continue;
+      }
+      out.push({
+        id,
+        kind: typeof item.kind === "string" ? item.kind : undefined,
+        required: typeof item.required === "boolean" ? item.required : undefined,
+      });
+    }
+    return out;
+  }
+
+  private parseRoleConfigsFromPayload(
+    payload: Record<string, any>,
+  ): Array<{ id: string; kind?: string; required?: boolean }> | undefined {
+    if (!payload || !Array.isArray(payload.roles)) {
+      return undefined;
+    }
+    return payload.roles
+      .filter((entry) => entry && typeof entry === "object")
+      .map((entry) => ({
+        id: String(entry.id || ""),
+        kind:
+          typeof entry.kind === "string"
+            ? entry.kind
+            : typeof entry.type === "string"
+              ? entry.type
+              : undefined,
+        required:
+          typeof entry.required === "boolean" ? entry.required : undefined,
+      }));
+  }
+
   private createHostForSession(): HeadlessHost {
     if (this.hostFactory) {
       return this.hostFactory();
@@ -583,10 +686,26 @@ export class HeadlessHttpServer {
   }
 
   private generateSessionId(): string {
+    if (crypto && typeof crypto.randomUUID === "function") {
+      return String(crypto.randomUUID());
+    }
     if (!crypto || typeof crypto.randomBytes !== "function") {
       return `session_${Date.now()}`;
     }
-    return `session_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
+    return `${crypto.randomBytes(16).toString("hex")}`;
+  }
+
+  private generateUniqueSessionId(): string {
+    if (!this.sessionManager) {
+      return this.generateSessionId();
+    }
+    for (let attempt = 0; attempt < 1024; attempt += 1) {
+      const candidate = this.generateSessionId();
+      if (!this.sessionManager.getSession(candidate)) {
+        return candidate;
+      }
+    }
+    throw new Error("Failed to allocate a unique session id.");
   }
 
   private parseRequestUrl(rawUrl: unknown): URL {

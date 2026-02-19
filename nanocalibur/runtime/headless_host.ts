@@ -33,7 +33,7 @@ export class HeadlessHost {
     return this.symbolicRenderer.render(this.core.getState(), this.core.getMap());
   }
 
-  listTools(): Array<{ name: string; tool_docstring: string; action: string }> {
+  listTools(): Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> {
     return this.core.getInterpreter().getTools();
   }
 

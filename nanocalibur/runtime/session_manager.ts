@@ -2,6 +2,7 @@ import { InterpreterState } from "./interpreter";
 import { SymbolicFrame } from "./canvas/types";
 import {
   SessionCommand,
+  SessionLoopMode,
   SessionPaceConfig,
   SessionRuntime,
   SessionRuntimeOptions,
@@ -17,12 +18,14 @@ export type SessionStatus = "created" | "running" | "stopped";
 
 export interface SessionRoleConfig {
   id: string;
+  kind?: string;
   type?: string;
   required?: boolean;
 }
 
 export interface SessionRoleView {
   role_id: string;
+  role_kind: string;
   role_type: string;
   required: boolean;
   connected: boolean;
@@ -31,7 +34,7 @@ export interface SessionRoleView {
 
 interface SessionRoleRecord {
   id: string;
-  type: string;
+  kind: string;
   required: boolean;
   connected: boolean;
   inviteToken: string;
@@ -188,7 +191,8 @@ export class SessionManager {
     const session = this.requireAdminSession(sessionId, adminToken);
     return Array.from(session.roles.values()).map((role) => ({
       role_id: role.id,
-      role_type: role.type,
+      role_kind: role.kind,
+      role_type: role.kind,
       required: role.required,
       connected: role.connected,
       open: role.accessToken === null,
@@ -213,6 +217,44 @@ export class SessionManager {
           ...role,
         });
       }
+    }
+    return out;
+  }
+
+  listSessionRoles(sessionId: string): SessionRoleView[] {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    return Array.from(session.roles.values()).map((role) => ({
+      role_id: role.id,
+      role_kind: role.kind,
+      role_type: role.kind,
+      required: role.required,
+      connected: role.connected,
+      open: role.accessToken === null,
+    }));
+  }
+
+  listSessionsSummary(): Array<{
+    session_id: string;
+    status: SessionStatus;
+    loop_mode: SessionLoopMode;
+    roles: SessionRoleView[];
+  }> {
+    const out: Array<{
+      session_id: string;
+      status: SessionStatus;
+      loop_mode: SessionLoopMode;
+      roles: SessionRoleView[];
+    }> = [];
+    for (const session of this.sessions.values()) {
+      out.push({
+        session_id: session.id,
+        status: session.status,
+        loop_mode: session.runtime.getLoopMode(),
+        roles: this.listSessionRoles(session.id),
+      });
     }
     return out;
   }
@@ -357,7 +399,7 @@ export class SessionManager {
     return session.runtime.getHost().getSymbolicFrame();
   }
 
-  getSessionTools(sessionId: string): Array<{ name: string; tool_docstring: string; action: string }> {
+  getSessionTools(sessionId: string): Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown session '${sessionId}'.`);
@@ -404,7 +446,8 @@ export class SessionManager {
       .filter((role) => role.accessToken === null)
       .map((role) => ({
         role_id: role.id,
-        role_type: role.type,
+        role_kind: role.kind,
+        role_type: role.kind,
         required: role.required,
         connected: role.connected,
         open: role.accessToken === null,
@@ -418,7 +461,7 @@ export class SessionManager {
         : [
             {
               id: "default",
-              type: "player",
+              kind: "hybrid",
               required: true,
             },
           ];
@@ -433,7 +476,7 @@ export class SessionManager {
       }
       const record: SessionRoleRecord = {
         id: item.id,
-        type: typeof item.type === "string" && item.type ? item.type : "player",
+        kind: this.normalizeRoleKind(item),
         required: item.required !== false,
         connected: false,
         inviteToken: this.generateToken(),
@@ -444,6 +487,22 @@ export class SessionManager {
     }
 
     return byId;
+  }
+
+  private normalizeRoleKind(item: SessionRoleConfig): string {
+    const source =
+      typeof item.kind === "string" && item.kind
+        ? item.kind
+        : typeof item.type === "string" && item.type
+          ? item.type
+          : "hybrid";
+    const normalized = source.trim().toLowerCase();
+    if (normalized === "human" || normalized === "ai" || normalized === "hybrid") {
+      return normalized;
+    }
+    throw new Error(
+      `Unsupported role kind '${source}'. Expected one of: human, ai, hybrid.`,
+    );
   }
 
   private reserveUniqueSeed(
