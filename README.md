@@ -70,6 +70,10 @@ Static forms like `Actor.play(player, ...)` and `Actor.destroy(player)` are not 
 - `List[Actor]`
 - `List[Player]`
 - `Scene`
+- `Role["role_id"]`
+- `RoleType["role_id"]` (for role schema subclasses)
+
+Role bindings are id-scoped only (no index selectors).
 
 ### Conditions
 
@@ -107,6 +111,7 @@ Examples:
 - `Scene` manages actors, rules, map, camera, gravity toggle, spawn actions, and turn progression via `scene.next_turn()`.
 - Keyboard matching is normalized in the runtime (`d`/`D`/`KeyD`, `ArrowUp`/`up`, etc.).
 - You can add game-specific key aliases at scene level with `keyboard_aliases`.
+- Role-scoped UI placeholders can use `{{self.field_name}}` in session mode.
 
 ```python
 game = Game()
@@ -117,6 +122,21 @@ scene = Scene(
     },
 )
 game.set_scene(scene)
+```
+
+### Role Schemas
+
+Role schemas are declared like actors, but inherit from `Role` and only support primitive/List fields.
+
+```python
+class HumanRole(Role):
+    score: int
+    inventory: List[str]
+
+game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=0))
+
+def add_point(self_role: HumanRole["human_1"]):
+    self_role.score = self_role.score + 1
 ```
 
 ### Multiplayer Loop Configuration

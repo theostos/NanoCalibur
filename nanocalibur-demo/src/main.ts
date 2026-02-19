@@ -200,6 +200,12 @@ class SessionSnapshotRenderer {
       state.globals && typeof state.globals === 'object'
         ? { ...(state.globals as Record<string, any>) }
         : {};
+    const stateRecord = state as Record<string, any>;
+    const selfState = stateRecord.self;
+    globals.self =
+      selfState && typeof selfState === 'object'
+        ? { ...(selfState as Record<string, any>) }
+        : {};
     globals.__actors_count = Array.isArray(state.actors) ? state.actors.length : 0;
     globals.__scene_elapsed =
       state.scene && typeof state.scene.elapsed === 'number'

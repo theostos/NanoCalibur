@@ -212,6 +212,10 @@ export class CanvasHost {
       state.globals && typeof state.globals === "object"
         ? { ...(state.globals as Record<string, any>) }
         : {};
+    globals.self =
+      state.self && typeof state.self === "object"
+        ? { ...(state.self as Record<string, any>) }
+        : {};
     globals.__actors_count = Array.isArray(state.actors) ? state.actors.length : 0;
     globals.__scene_elapsed =
       state.scene && typeof state.scene.elapsed === "number"
