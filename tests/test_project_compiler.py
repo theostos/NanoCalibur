@@ -9,8 +9,10 @@ from nanocalibur.game_model import (
     CollisionMode,
     InputPhase,
     KeyboardConditionSpec,
+    MultiplayerLoopMode,
     MouseConditionSpec,
     ToolConditionSpec,
+    VisibilityMode,
 )
 from nanocalibur.ir import Attr
 from nanocalibur.project_compiler import ProjectCompiler
@@ -78,6 +80,102 @@ def test_compile_project_with_conditions_map_and_camera():
     assert [predicate.name for predicate in project.predicates] == ["is_dead"]
     assert isinstance(project.rules[0].condition, KeyboardConditionSpec)
     assert project.rules[0].condition.phase == InputPhase.ON
+
+
+def test_project_parses_multiplayer_configuration():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        def noop(player: Player["hero"]):
+            player.x = player.x + 0
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("A"), noop)
+        game.set_multiplayer(
+            Multiplayer(
+                default_loop="real_time",
+                allowed_loops=["turn_based", "hybrid", "real_time"],
+                default_visibility="role_filtered",
+                tick_rate=30,
+                turn_timeout_ms=12000,
+                hybrid_window_ms=700,
+                game_time_scale=0.5,
+                max_catchup_steps=2,
+            )
+        )
+        """
+    )
+
+    assert project.multiplayer is not None
+    assert project.multiplayer.default_loop == MultiplayerLoopMode.REAL_TIME
+    assert project.multiplayer.allowed_loops == [
+        MultiplayerLoopMode.TURN_BASED,
+        MultiplayerLoopMode.HYBRID,
+        MultiplayerLoopMode.REAL_TIME,
+    ]
+    assert project.multiplayer.default_visibility == VisibilityMode.ROLE_FILTERED
+    assert project.multiplayer.tick_rate == 30
+    assert project.multiplayer.turn_timeout_ms == 12000
+    assert project.multiplayer.hybrid_window_ms == 700
+    assert project.multiplayer.game_time_scale == 0.5
+    assert project.multiplayer.max_catchup_steps == 2
+
+
+def test_turn_based_multiplayer_requires_next_turn_call():
+    with pytest.raises(DSLValidationError, match="scene.next_turn"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            def noop(player: Player["hero"]):
+                player.x = player.x + 1
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_rule(KeyboardCondition.on_press("A"), noop)
+            game.set_multiplayer(
+                Multiplayer(
+                    default_loop="turn_based",
+                    allowed_loops=["turn_based"],
+                )
+            )
+            """
+        )
+
+
+def test_turn_based_multiplayer_accepts_next_turn_call():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        def advance(scene: Scene, player: Player["hero"]):
+            player.x = player.x + 1
+            scene.next_turn()
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("A"), advance)
+        game.set_multiplayer(
+            Multiplayer(
+                default_loop="turn_based",
+                allowed_loops=["turn_based"],
+            )
+        )
+        """
+    )
+
+    assert project.contains_next_turn_call is True
 
 
 def test_logical_predicate_accepts_multiple_binding_types():

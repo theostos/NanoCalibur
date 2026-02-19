@@ -64,6 +64,7 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
     assert any(tool["name"] == "boost_heal" for tool in spec["tools"])
     assert spec["predicates"][0]["name"] == "is_dead"
     assert spec["predicates"][0]["params"][0]["kind"] == "actor"
+    assert spec["contains_next_turn_call"] is False
 
     ir_data = json.loads(ir_path.read_text(encoding="utf-8"))
     assert ir_data["actions"][0]["name"] == "heal"
@@ -247,3 +248,48 @@ def test_export_project_serializes_sprite_bindings_resources_and_callables(tmp_p
     assert spec["sprites"]["by_name"]["hero"]["description"] == "hero sprite"
     assert spec["sprites"]["by_name"]["hero"]["clips"]["run"]["frames"] == [2, 3]
     assert spec["callables"] == ["next_speed"]
+
+
+def test_export_project_serializes_multiplayer_and_next_turn_metadata(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            pass
+
+        def advance(scene: Scene, player: Player["hero"]):
+            player.x = player.x + 1
+            scene.next_turn()
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("A"), advance)
+        game.set_multiplayer(
+            Multiplayer(
+                default_loop="hybrid",
+                allowed_loops=["turn_based", "hybrid"],
+                default_visibility="role_filtered",
+                tick_rate=15,
+                turn_timeout_ms=25000,
+                hybrid_window_ms=1200,
+                game_time_scale=0.75,
+                max_catchup_steps=3,
+            )
+        )
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    assert spec["contains_next_turn_call"] is True
+    assert spec["multiplayer"] is not None
+    assert spec["multiplayer"]["default_loop"] == "hybrid"
+    assert spec["multiplayer"]["allowed_loops"] == ["turn_based", "hybrid"]
+    assert spec["multiplayer"]["default_visibility"] == "role_filtered"
+    assert spec["multiplayer"]["tick_rate"] == 15
+    assert spec["multiplayer"]["turn_timeout_ms"] == 25000
+    assert spec["multiplayer"]["hybrid_window_ms"] == 1200
+    assert spec["multiplayer"]["game_time_scale"] == 0.75
+    assert spec["multiplayer"]["max_catchup_steps"] == 3
