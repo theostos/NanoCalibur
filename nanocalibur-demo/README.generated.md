@@ -54,7 +54,7 @@ Notes:
 - `npm run headless:server`
   Compiles generated TypeScript to `.nanocalibur_headless/` and starts a session-aware HTTP server on `http://127.0.0.1:7070` by default.
 - `npm run dummy:random`
-  Starts a random-input dummy client. Requires `NC_INVITE_TOKEN`.
+  Starts a random dummy client that joins a role and sends `llm_dummy_*` tool commands. Requires `NC_INVITE_TOKEN`.
 
 Typical flow:
 
