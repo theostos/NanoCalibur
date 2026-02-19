@@ -152,12 +152,37 @@ class CameraMode(Enum):
     FOLLOW = "follow"
 
 
+class MultiplayerLoopMode(Enum):
+    REAL_TIME = "real_time"
+    TURN_BASED = "turn_based"
+    HYBRID = "hybrid"
+
+
+class VisibilityMode(Enum):
+    SHARED = "shared"
+    ROLE_FILTERED = "role_filtered"
+
+
 @dataclass(frozen=True)
 class CameraSpec:
     mode: CameraMode
     x: Optional[int] = None
     y: Optional[int] = None
     target_uid: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class MultiplayerSpec:
+    default_loop: MultiplayerLoopMode = MultiplayerLoopMode.REAL_TIME
+    allowed_loops: List[MultiplayerLoopMode] = field(
+        default_factory=lambda: [MultiplayerLoopMode.REAL_TIME]
+    )
+    default_visibility: VisibilityMode = VisibilityMode.SHARED
+    tick_rate: int = 20
+    turn_timeout_ms: int = 15_000
+    hybrid_window_ms: int = 500
+    game_time_scale: float = 1.0
+    max_catchup_steps: int = 1
 
 
 @dataclass(frozen=True)
@@ -213,3 +238,5 @@ class ProjectSpec:
     sprites: List[SpriteSpec]
     scene: Optional[SceneSpec]
     interface_html: Optional[str] = None
+    multiplayer: Optional[MultiplayerSpec] = None
+    contains_next_turn_call: bool = False
