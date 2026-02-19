@@ -404,11 +404,6 @@ class Tile:
         return None
 
 
-def CollisionRelated(_left, _right):
-    """Legacy alias for overlap checks between two selectors."""
-    return None
-
-
 def OnOverlap(_left, _right):
     """Condition helper for overlap checks between two selectors."""
     return None
@@ -419,12 +414,12 @@ def OnContact(_left, _right):
     return None
 
 
-def LogicalRelated(_predicate, _selector):
+def OnLogicalCondition(_predicate, _selector):
     """Condition helper applying a predicate to selected actors."""
     return None
 
 
-def ToolCalling(_name: str, _tool_docstring: str):
+def OnToolCall(_name: str, _tool_docstring: str):
     """Condition helper exposing an action as an external LLM-callable tool."""
     return None
 
@@ -452,3 +447,8 @@ def condition(_condition_expr) -> Callable[[F], F]:
         return fn
 
     return _decorate
+
+
+def callable(fn: F) -> F:
+    """Mark a helper function callable from actions/predicates expressions."""
+    return fn

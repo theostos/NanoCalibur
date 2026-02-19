@@ -7,20 +7,25 @@ from nanocalibur.ir import (
     Attr,
     Binary,
     BindingKind,
+    CallableIR,
     CallExpr,
     CallStmt,
     Continue,
     Const,
     For,
     If,
+    ListExpr,
     ObjectExpr,
     PredicateIR,
     Range,
+    SubscriptExpr,
     Unary,
     Var,
     While,
     Yield,
 )
+
+CALLABLE_EXPR_PREFIX = "__nc_callable__:"
 
 
 class TSGenerator:
@@ -28,9 +33,13 @@ class TSGenerator:
         self,
         actions,
         predicates=None,
+        callables=None,
     ):
         predicates = predicates or []
+        callables = callables or []
         out = [self._emit_prelude_ts()]
+        for helper in callables:
+            out.append(self._emit_callable(helper, typed=True, exported=True))
         for action in actions:
             out.append(self._emit_action(action, typed=True, exported=True))
         for predicate in predicates:
@@ -104,92 +113,114 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
 }
 """
 
-    def _emit_action(self, action: ActionIR, typed: bool, exported: bool):
-        is_generator = self._action_uses_yield(action)
+    def _emit_callable(self, helper: CallableIR, typed: bool, exported: bool):
+        prefix = "export " if exported else ""
         if typed:
-            prefix = "export " if exported else ""
-            if is_generator:
-                lines = [
-                    f"{prefix}function* {action.name}(ctx: GameContext): Generator<number, void, unknown> {{"
-                ]
-            else:
-                lines = [f"{prefix}function {action.name}(ctx: GameContext): void {{"]
+            params = ", ".join(f"{name}: any" for name in helper.params)
+            lines = [f"{prefix}function {helper.name}({params}): any {{"]
         else:
-            prefix = "export " if exported else ""
-            fn_keyword = "function*" if is_generator else "function"
-            lines = [f"{prefix}{fn_keyword} {action.name}(ctx) {{"]
+            params = ", ".join(helper.params)
+            lines = [f"{prefix}function {helper.name}({params}) {{"]
 
-        global_bindings = []
-        post_yield_refresh_calls: list[str] = []
-        for param in action.params:
-            if param.kind == BindingKind.SCENE:
-                lines.append(f"  let {param.name} = ctx.scene;")
-                continue
+        for stmt in helper.body:
+            lines.extend(self._emit_stmt(stmt, indent=1))
+        lines.append(f"  return {self._emit_expr(helper.return_expr)};")
+        lines.append("}")
+        return "\n".join(lines)
 
-            if param.kind == BindingKind.TICK:
-                lines.append(f"  let {param.name} = ctx.tick;")
-                continue
-
-            if param.kind == BindingKind.GLOBAL:
-                lines.append(
-                    f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
-                )
-                global_bindings.append((param.name, param.global_name))
-                continue
-
-            if param.kind == BindingKind.ACTOR_LIST:
-                if param.actor_list_type is None:
-                    lines.append(f"  let {param.name} = ctx.actors;")
+    def _emit_action(self, action: ActionIR, typed: bool, exported: bool):
+        previous_tick_vars = getattr(self, "_tick_vars", set())
+        self._tick_vars = {
+            param.name for param in action.params if param.kind == BindingKind.TICK
+        }
+        is_generator = self._action_uses_yield(action)
+        try:
+            if typed:
+                prefix = "export " if exported else ""
+                if is_generator:
+                    lines = [
+                        f"{prefix}function* {action.name}(ctx: GameContext): Generator<number, void, unknown> {{"
+                    ]
                 else:
-                    actor_type = json.dumps(param.actor_list_type)
+                    lines = [f"{prefix}function {action.name}(ctx: GameContext): void {{"]
+            else:
+                prefix = "export " if exported else ""
+                fn_keyword = "function*" if is_generator else "function"
+                lines = [f"{prefix}{fn_keyword} {action.name}(ctx) {{"]
+
+            global_bindings = []
+            post_yield_refresh_calls: list[str] = []
+            for param in action.params:
+                if param.kind == BindingKind.SCENE:
+                    lines.append(f"  let {param.name} = ctx.scene;")
+                    continue
+
+                if param.kind == BindingKind.TICK:
+                    lines.append(f"  let {param.name} = ctx.tick;")
+                    continue
+
+                if param.kind == BindingKind.GLOBAL:
                     lines.append(
-                        f"  let {param.name} = "
-                        f"ctx.actors.filter((a{': any' if typed else ''}) => a?.type === {actor_type});"
+                        f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
                     )
-                continue
+                    global_bindings.append((param.name, param.global_name))
+                    continue
 
-            selector = param.actor_selector
-            if selector is None:
-                raise DSLValidationError(f"Actor binding missing selector for '{param.name}'.")
-            if is_generator:
-                if typed:
-                    lines.append(f"  let {param.name}: any;")
-                else:
-                    lines.append(f"  let {param.name};")
-                refresh_fn = f"__nc_refresh_binding_{param.name}"
-                lines.append(f"  const {refresh_fn} = () => {{")
+                if param.kind == BindingKind.ACTOR_LIST:
+                    if param.actor_list_type is None:
+                        lines.append(f"  let {param.name} = ctx.actors;")
+                    else:
+                        actor_type = json.dumps(param.actor_list_type)
+                        lines.append(
+                            f"  let {param.name} = "
+                            f"ctx.actors.filter((a{': any' if typed else ''}) => a?.type === {actor_type});"
+                        )
+                    continue
+
+                selector = param.actor_selector
+                if selector is None:
+                    raise DSLValidationError(f"Actor binding missing selector for '{param.name}'.")
+                if is_generator:
+                    if typed:
+                        lines.append(f"  let {param.name}: any;")
+                    else:
+                        lines.append(f"  let {param.name};")
+                    refresh_fn = f"__nc_refresh_binding_{param.name}"
+                    lines.append(f"  const {refresh_fn} = () => {{")
+                    for binding_line in self._emit_actor_binding_lines(
+                        param,
+                        typed,
+                        declare_with_let=False,
+                    ):
+                        lines.append(f"    {binding_line}")
+                    lines.append("  };")
+                    lines.append(f"  {refresh_fn}();")
+                    post_yield_refresh_calls.append(refresh_fn)
+                    continue
+
                 for binding_line in self._emit_actor_binding_lines(
                     param,
                     typed,
-                    declare_with_let=False,
+                    declare_with_let=True,
                 ):
-                    lines.append(f"    {binding_line}")
-                lines.append("  };")
-                lines.append(f"  {refresh_fn}();")
-                post_yield_refresh_calls.append(refresh_fn)
-                continue
+                    lines.append(f"  {binding_line}")
 
-            for binding_line in self._emit_actor_binding_lines(
-                param,
-                typed,
-                declare_with_let=True,
-            ):
-                lines.append(f"  {binding_line}")
-
-        for stmt in action.body:
-            lines.extend(
-                self._emit_stmt(
-                    stmt,
-                    indent=1,
-                    post_yield_refresh_calls=post_yield_refresh_calls,
+            for stmt in action.body:
+                lines.extend(
+                    self._emit_stmt(
+                        stmt,
+                        indent=1,
+                        post_yield_refresh_calls=post_yield_refresh_calls,
+                    )
                 )
-            )
 
-        for param_name, global_name in global_bindings:
-            lines.append(f'  ctx.globals[{json.dumps(global_name)}] = {param_name};')
+            for param_name, global_name in global_bindings:
+                lines.append(f'  ctx.globals[{json.dumps(global_name)}] = {param_name};')
 
-        lines.append("}")
-        return "\n".join(lines)
+            lines.append("}")
+            return "\n".join(lines)
+        finally:
+            self._tick_vars = previous_tick_vars
 
     def _emit_actor_binding_lines(
         self,
@@ -243,49 +274,56 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
         raise DSLValidationError(f"Unsupported actor selector for '{param.name}'.")
 
     def _emit_predicate(self, predicate: PredicateIR, typed: bool, exported: bool):
-        if typed:
-            prefix = "export " if exported else ""
-            lines = [f"{prefix}function {predicate.name}(ctx: GameContext): boolean {{"]
-        else:
-            prefix = "export " if exported else ""
-            lines = [f"{prefix}function {predicate.name}(ctx) {{"]
+        previous_tick_vars = getattr(self, "_tick_vars", set())
+        self._tick_vars = {
+            param.name for param in predicate.params if param.kind == BindingKind.TICK
+        }
+        try:
+            if typed:
+                prefix = "export " if exported else ""
+                lines = [f"{prefix}function {predicate.name}(ctx: GameContext): boolean {{"]
+            else:
+                prefix = "export " if exported else ""
+                lines = [f"{prefix}function {predicate.name}(ctx) {{"]
 
-        for param in predicate.params:
-            if param.kind == BindingKind.SCENE:
-                lines.append(f"  let {param.name} = ctx.scene;")
-                continue
+            for param in predicate.params:
+                if param.kind == BindingKind.SCENE:
+                    lines.append(f"  let {param.name} = ctx.scene;")
+                    continue
 
-            if param.kind == BindingKind.TICK:
-                lines.append(f"  let {param.name} = ctx.tick;")
-                continue
+                if param.kind == BindingKind.TICK:
+                    lines.append(f"  let {param.name} = ctx.tick;")
+                    continue
 
-            if param.kind == BindingKind.GLOBAL:
-                lines.append(
-                    f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
-                )
-                continue
-
-            if param.kind == BindingKind.ACTOR_LIST:
-                if param.actor_list_type is None:
-                    lines.append(f"  let {param.name} = ctx.actors;")
-                else:
-                    actor_type = json.dumps(param.actor_list_type)
+                if param.kind == BindingKind.GLOBAL:
                     lines.append(
-                        f"  let {param.name} = "
-                        f"ctx.actors.filter((a{': any' if typed else ''}) => a?.type === {actor_type});"
+                        f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
                     )
-                continue
+                    continue
 
-            for binding_line in self._emit_actor_binding_lines(
-                param,
-                typed,
-                declare_with_let=True,
-            ):
-                lines.append(f"  {binding_line}")
+                if param.kind == BindingKind.ACTOR_LIST:
+                    if param.actor_list_type is None:
+                        lines.append(f"  let {param.name} = ctx.actors;")
+                    else:
+                        actor_type = json.dumps(param.actor_list_type)
+                        lines.append(
+                            f"  let {param.name} = "
+                            f"ctx.actors.filter((a{': any' if typed else ''}) => a?.type === {actor_type});"
+                        )
+                    continue
 
-        lines.append(f"  return {self._emit_expr(predicate.body)};")
-        lines.append("}")
-        return "\n".join(lines)
+                for binding_line in self._emit_actor_binding_lines(
+                    param,
+                    typed,
+                    declare_with_let=True,
+                ):
+                    lines.append(f"  {binding_line}")
+
+            lines.append(f"  return {self._emit_expr(predicate.body)};")
+            lines.append("}")
+            return "\n".join(lines)
+        finally:
+            self._tick_vars = previous_tick_vars
 
     def _emit_stmt(self, stmt, indent, post_yield_refresh_calls=None):
         pad = "  " * indent
@@ -486,6 +524,9 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             return expr.name
 
         if isinstance(expr, Attr):
+            tick_vars = getattr(self, "_tick_vars", set())
+            if expr.obj in tick_vars and expr.field == "elapsed":
+                return "(ctx.elapsed ?? ctx.tick)"
             return f"{expr.obj}.{expr.field}"
 
         if isinstance(expr, Binary):
@@ -506,6 +547,25 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             ]
             return "{ " + ", ".join(field_chunks) + " }"
 
+        if isinstance(expr, ListExpr):
+            return "[" + ", ".join(self._emit_expr(item) for item in expr.items) + "]"
+
+        if isinstance(expr, SubscriptExpr):
+            value_expr = self._emit_expr(expr.value)
+            if isinstance(expr.index, Const) and isinstance(expr.index.value, int):
+                if expr.index.value < 0:
+                    return f"{value_expr}[{value_expr}.length + ({expr.index.value})]"
+            if (
+                isinstance(expr.index, Unary)
+                and expr.index.op == "-"
+                and isinstance(expr.index.value, Const)
+                and isinstance(expr.index.value.value, int)
+                and not isinstance(expr.index.value.value, bool)
+            ):
+                neg_index = -int(expr.index.value.value)
+                return f"{value_expr}[{value_expr}.length + ({neg_index})]"
+            return f"{value_expr}[{self._emit_expr(expr.index)}]"
+
         if isinstance(expr, CallExpr):
             args = [self._emit_expr(arg) for arg in expr.args]
             if expr.name == "random_int":
@@ -521,6 +581,9 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                 return f"__nc_random_float_uniform({args[0]}, {args[1]})"
             if expr.name == "random_float_normal":
                 return f"__nc_random_float_normal({args[0]}, {args[1]})"
+            if expr.name.startswith(CALLABLE_EXPR_PREFIX):
+                helper_name = expr.name[len(CALLABLE_EXPR_PREFIX) :]
+                return f"{helper_name}({', '.join(args)})"
             raise DSLValidationError(f"Unsupported builtin expression call: {expr.name}")
 
         raise DSLValidationError(f"Unsupported expression IR node: {type(expr).__name__}")

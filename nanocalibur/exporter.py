@@ -80,6 +80,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
             }
             for predicate in project.predicates
         ],
+        "callables": [callable_fn.name for callable_fn in project.callables],
     }
 
 
@@ -104,7 +105,8 @@ def export_project(source: str, output_dir: str, source_path: str | None = None)
 
     generator = TSGenerator()
     ts_path.write_text(
-        generator.generate(project.actions, project.predicates), encoding="utf-8"
+        generator.generate(project.actions, project.predicates, project.callables),
+        encoding="utf-8",
     )
 
     return project
@@ -115,6 +117,7 @@ def project_to_ir_dict(project: ProjectSpec) -> Dict[str, Any]:
     return {
         "actions": [_serialize_ir(action) for action in project.actions],
         "predicates": [_serialize_ir(predicate) for predicate in project.predicates],
+        "callables": [_serialize_ir(callable_fn) for callable_fn in project.callables],
     }
 
 

@@ -84,6 +84,17 @@ class ObjectExpr(Expr):
     fields: Dict[str, Expr]
 
 
+@dataclass(frozen=True)
+class ListExpr(Expr):
+    items: List[Expr]
+
+
+@dataclass(frozen=True)
+class SubscriptExpr(Expr):
+    value: Expr
+    index: Expr
+
+
 # Statements
 
 class Stmt:
@@ -146,3 +157,11 @@ class PredicateIR:
     body: Expr
     param_name: Optional[str] = None
     actor_type: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CallableIR:
+    name: str
+    params: List[str]
+    body: List[Stmt]
+    return_expr: Expr

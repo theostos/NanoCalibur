@@ -15,8 +15,10 @@ from nanocalibur.ir import (
     Const,
     For,
     If,
+    ListExpr,
     ObjectExpr,
     Range,
+    SubscriptExpr,
     Unary,
     While,
     Yield,
@@ -724,3 +726,49 @@ def test_accept_scene_spawn_with_constructor_expression_fields():
     spawn_call = spawn.body[-1]
     assert isinstance(spawn_call, CallStmt)
     assert spawn_call.name == "scene_spawn_actor"
+
+
+def test_accept_list_literals_and_subscript_expressions():
+    actions = compile_source(
+        """
+        def mutate(values: Global["values"]):
+            last = values[-1]
+            values = [last, 1, 2]
+        """
+    )
+
+    mutate = actions[0]
+    first_assign = mutate.body[0]
+    second_assign = mutate.body[1]
+    assert isinstance(first_assign, Assign)
+    assert isinstance(first_assign.value, SubscriptExpr)
+    assert isinstance(second_assign, Assign)
+    assert isinstance(second_assign.value, ListExpr)
+
+
+def test_accept_tick_elapsed_read_access():
+    actions = compile_source(
+        """
+        class Coin(Actor):
+            pass
+
+        def spawn(scene: Scene, tick: Tick, last_coin: Coin[-1]):
+            if tick.elapsed >= 0 and last_coin is not None:
+                scene.spawn(Coin(x=last_coin.x + 1, y=0, active=True))
+        """
+    )
+
+    spawn = actions[0]
+    if_stmt = spawn.body[0]
+    assert isinstance(if_stmt, If)
+    assert isinstance(if_stmt.condition, Binary)
+
+
+def test_reject_tick_elapsed_write_access():
+    with pytest.raises(DSLValidationError, match="tick.elapsed is read-only"):
+        compile_source(
+            """
+            def bad(tick: Tick):
+                tick.elapsed = 1
+            """
+        )

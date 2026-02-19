@@ -213,7 +213,7 @@ export class RuntimeCore {
     const overlapFrameEvents: CollisionFrameInput[] = [
       ...actorOverlaps.map((pair) => ({ aUid: pair.aUid, bUid: pair.bUid })),
       ...tileOverlaps
-        .map((item) => {
+        .map((item): CollisionFrameInput | null => {
           const actor = actorsByUid.get(item.actorUid);
           if (!actor) {
             return null;

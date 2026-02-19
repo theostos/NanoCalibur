@@ -80,16 +80,17 @@ Static forms like `Actor.play(player, ...)` and `Actor.destroy(player)` are not 
 - `MouseCondition.begin_click("left")`
 - `MouseCondition.on_click("left")`
 - `MouseCondition.end_click("left")`
-- `OnOverlap(selector_a, selector_b)` (legacy alias: `CollisionRelated(...)`)
+- `OnOverlap(selector_a, selector_b)`
 - `OnContact(selector_a, selector_b)`
-- `LogicalRelated(predicate_fn, selector)`
-- `ToolCalling("tool_name", "tool docstring")`
+- `OnLogicalCondition(predicate_fn, selector)`
+- `OnToolCall("tool_name", "tool docstring")`
 - `OnButton("button_name")`
 
 Rule declaration styles:
 - `scene.add_rule(condition_expr, action_fn)` (preferred)
 - `game.add_rule(condition_expr, action_fn)` (legacy-compatible)
 - `@condition(condition_expr)` decorator on action functions
+- `@callable` decorator on helper functions that can be called inside action/predicate expressions
 
 Examples:
 - `OnOverlap(Player["hero"], Coin)` for actor-vs-actor overlap
@@ -121,6 +122,21 @@ Use `OnButton("spawn_bonus")` conditions only when your interface includes a mat
 Built-in dynamic placeholders available in interface HTML:
 - `{{__actors_count}}`
 - `{{__scene_elapsed}}`
+
+### Callable Helpers
+
+Use `@callable` for reusable expression helpers:
+
+```python
+@callable
+def next_x(x: float, offset: int) -> float:
+    return x + offset
+```
+
+Notes:
+- Callable helpers are usable in action and predicate expressions.
+- Selector annotations inside callable params are ignored and emitted as compiler warnings.
+- Undecorated or unreferenced functions are ignored with line-aware warnings.
 
 ## Compile and Export (Python)
 

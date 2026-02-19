@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple, cast
 from nanocalibur.compiler import (
     BASE_ACTOR_DEFAULT_OVERRIDES,
     BASE_ACTOR_NO_DEFAULT_FIELDS,
+    CALLABLE_EXPR_PREFIX,
     DSLCompiler,
 )
 from nanocalibur.errors import (
@@ -47,9 +48,27 @@ from nanocalibur.game_model import (
 from nanocalibur.ir import (
     ActionIR,
     ActorSelector,
+    Attr,
+    Assign,
     BindingKind,
+    Binary,
+    CallableIR,
+    CallExpr,
+    CallStmt,
+    Const,
+    Continue,
+    For,
+    If,
+    ListExpr,
+    ObjectExpr,
     ParamBinding,
     PredicateIR,
+    Range,
+    SubscriptExpr,
+    Unary,
+    Var,
+    While,
+    Yield,
 )
 from nanocalibur.typesys import FieldType, ListType, Prim, PrimType
 
@@ -88,7 +107,7 @@ class ProjectCompiler:
             }
             compiler.global_actor_types = global_actor_types
 
-            actions, predicates = self._compile_functions(module, compiler)
+            actions, predicates, callables = self._compile_functions(module, compiler)
             (
                 conditions,
                 actors,
@@ -105,7 +124,79 @@ class ProjectCompiler:
                 compiler=compiler,
                 actions=actions,
                 predicates=predicates,
+                callables=callables,
             )
+
+            function_nodes = {
+                node.name: node
+                for node in module.body
+                if isinstance(node, ast.FunctionDef)
+            }
+
+            used_action_names = {rule.action_name for rule in rules}
+            ignored_action_names = sorted(
+                name for name in actions.keys() if name not in used_action_names
+            )
+            for action_name in ignored_action_names:
+                node = function_nodes.get(action_name)
+                warnings.warn(
+                    format_dsl_diagnostic(
+                        f"Function '{action_name}' is ignored because no rule references it.",
+                        node=node,
+                    ),
+                    stacklevel=2,
+                )
+            actions = {
+                name: action
+                for name, action in actions.items()
+                if name in used_action_names
+            }
+
+            used_predicate_names = {
+                rule.condition.predicate_name
+                for rule in rules
+                if isinstance(rule.condition, LogicalConditionSpec)
+            }
+            ignored_predicate_names = sorted(
+                name for name in predicates.keys() if name not in used_predicate_names
+            )
+            for predicate_name in ignored_predicate_names:
+                node = function_nodes.get(predicate_name)
+                warnings.warn(
+                    format_dsl_diagnostic(
+                        f"Function '{predicate_name}' is ignored because no OnLogicalCondition(...) references it.",
+                        node=node,
+                    ),
+                    stacklevel=2,
+                )
+            predicates = {
+                name: predicate
+                for name, predicate in predicates.items()
+                if name in used_predicate_names
+            }
+
+            used_callable_names = _collect_used_callable_names(
+                actions=list(actions.values()),
+                predicates=list(predicates.values()),
+                callables=callables,
+            )
+            ignored_callable_names = sorted(
+                name for name in callables.keys() if name not in used_callable_names
+            )
+            for callable_name in ignored_callable_names:
+                node = function_nodes.get(callable_name)
+                warnings.warn(
+                    format_dsl_diagnostic(
+                        f"Callable '{callable_name}' is ignored because it is never called by any compiled action/predicate/callable.",
+                        node=node,
+                    ),
+                    stacklevel=2,
+                )
+            callables = {
+                name: callable_ir
+                for name, callable_ir in callables.items()
+                if name in used_callable_names
+            }
 
             actor_schemas = {
                 actor_type: {
@@ -124,6 +215,7 @@ class ProjectCompiler:
                 camera=camera,
                 actions=list(actions.values()),
                 predicates=list(predicates.values()),
+                callables=list(callables.values()),
                 resources=resources,
                 sprites=sprites,
                 scene=scene,
@@ -313,26 +405,48 @@ class ProjectCompiler:
 
     def _compile_functions(
         self, module: ast.Module, compiler: DSLCompiler
-    ) -> Tuple[Dict[str, ActionIR], Dict[str, PredicateIR]]:
+    ) -> Tuple[Dict[str, ActionIR], Dict[str, PredicateIR], Dict[str, CallableIR]]:
         actions: Dict[str, ActionIR] = {}
         predicates: Dict[str, PredicateIR] = {}
+        callables: Dict[str, CallableIR] = {}
+
+        callable_signatures: Dict[str, int] = {}
+        normalized_callables: Dict[str, ast.FunctionDef] = {}
+        for node in module.body:
+            with dsl_node_context(node):
+                if not isinstance(node, ast.FunctionDef):
+                    continue
+                if self._has_plain_decorator(node, "callable"):
+                    if self._has_condition_decorator(node):
+                        raise DSLValidationError(
+                            f"Function '{node.name}' cannot use both @callable and @condition decorators."
+                        )
+                    normalized = self._normalize_callable_function(node, compiler)
+                    callable_signatures[node.name] = len(normalized.args.args)
+                    normalized_callables[node.name] = normalized
+
+        compiler.set_callable_signatures(callable_signatures)
 
         for node in module.body:
             with dsl_node_context(node):
                 if not isinstance(node, ast.FunctionDef):
                     continue
 
+                if node.name in normalized_callables:
+                    callables[node.name] = compiler._compile_callable(
+                        normalized_callables[node.name]
+                    )
+                    continue
+
                 if _looks_like_predicate(node, compiler):
                     predicates[node.name] = compiler._compile_predicate(node)
-                elif _looks_like_action(node):
+                elif _looks_like_action(node, compiler):
                     normalized_fn = self._strip_condition_decorators(node)
                     actions[node.name] = compiler._compile_action(normalized_fn)
                 else:
-                    raise DSLValidationError(
-                        f"Unsupported function signature for '{node.name}'."
-                    )
+                    continue
 
-        return actions, predicates
+        return actions, predicates, callables
 
     def _collect_game_setup(
         self,
@@ -341,6 +455,7 @@ class ProjectCompiler:
         compiler: DSLCompiler,
         actions: Dict[str, ActionIR],
         predicates: Dict[str, PredicateIR],
+        callables: Dict[str, CallableIR],
     ) -> Tuple[
         Dict[str, ConditionSpec],
         List[ActorInstanceSpec],
@@ -422,7 +537,7 @@ class ProjectCompiler:
                 predicate_name = condition.predicate_name
                 if predicate_name not in predicates:
                     raise DSLValidationError(
-                        f"Unknown predicate '{predicate_name}' in LogicalRelated(...)."
+                        f"Unknown predicate '{predicate_name}' in OnLogicalCondition(...)."
                     )
                 predicates[predicate_name] = self._bind_logical_predicate_params(
                     predicate_name=predicate_name,
@@ -437,7 +552,7 @@ class ProjectCompiler:
                 existing = tool_action_by_name.get(condition.name)
                 if existing is not None and existing != action_name:
                     raise DSLValidationError(
-                        f"ToolCalling('{condition.name}', ...) is already bound to "
+                        f"OnToolCall('{condition.name}', ...) is already bound to "
                         f"action '{existing}' and cannot be rebound to '{action_name}'."
                     )
                 tool_action_by_name[condition.name] = action_name
@@ -477,6 +592,16 @@ class ProjectCompiler:
 
         for node in module.body:
             with dsl_node_context(node):
+                if not isinstance(node, (ast.FunctionDef, ast.Assign, ast.Expr, ast.ClassDef)):
+                    warnings.warn(
+                        format_dsl_diagnostic(
+                            f"Top-level {type(node).__name__} is ignored during setup compilation.",
+                            node=node,
+                        ),
+                        stacklevel=2,
+                    )
+                    continue
+
                 if isinstance(node, ast.FunctionDef):
                     if node.name in actions:
                         for decorated_condition in self._parse_decorator_conditions(
@@ -488,9 +613,19 @@ class ProjectCompiler:
                             callable_aliases=callable_aliases,
                         ):
                             register_rule(decorated_condition, node.name, node)
+                    elif node.name in callables:
+                        pass
                     elif node.decorator_list:
                         raise DSLValidationError(
-                            f"Decorators are not allowed on predicate function '{node.name}'."
+                            f"Unsupported decorators on function '{node.name}'. Use @condition(...) for actions or @callable for helper functions."
+                        )
+                    elif node.name not in predicates:
+                        warnings.warn(
+                            format_dsl_diagnostic(
+                                f"Function '{node.name}' is ignored because it has no DSL decorator and is not referenced by rules.",
+                                node=node,
+                            ),
+                            stacklevel=2,
                         )
                     continue
 
@@ -1221,16 +1356,64 @@ class ProjectCompiler:
     def _is_condition_expr(self, node: ast.Call) -> bool:
         if isinstance(node.func, ast.Name):
             return node.func.id in {
-                "CollisionRelated",
                 "OnOverlap",
                 "OnContact",
-                "LogicalRelated",
-                "ToolCalling",
+                "OnLogicalCondition",
+                "OnToolCall",
                 "OnButton",
             }
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
             return node.func.value.id in {"KeyboardCondition", "MouseCondition"}
         return False
+
+    def _has_plain_decorator(self, fn: ast.FunctionDef, name: str) -> bool:
+        return any(
+            isinstance(decorator, ast.Name) and decorator.id == name
+            for decorator in fn.decorator_list
+        )
+
+    def _has_condition_decorator(self, fn: ast.FunctionDef) -> bool:
+        for decorator in fn.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            if isinstance(decorator.func, ast.Name) and decorator.func.id == "condition":
+                return True
+        return False
+
+    def _normalize_callable_function(
+        self,
+        fn: ast.FunctionDef,
+        compiler: DSLCompiler,
+    ) -> ast.FunctionDef:
+        cloned = copy.deepcopy(fn)
+        cloned.decorator_list = [
+            decorator
+            for decorator in cloned.decorator_list
+            if not (isinstance(decorator, ast.Name) and decorator.id == "callable")
+        ]
+
+        for arg in cloned.args.args:
+            ann = arg.annotation
+            if not (
+                isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name)
+            ):
+                continue
+            head = ann.value.id
+            if head in {"List", "list"}:
+                continue
+            if head in {"Scene", "Tick", "Actor", "Global"} or head in compiler.schemas.actor_fields:
+                warnings.warn(
+                    format_dsl_diagnostic(
+                        f"Selector annotation on callable parameter '{arg.arg}' is ignored; callable parameters are fully determined by the caller.",
+                        node=ann,
+                    ),
+                    stacklevel=2,
+                )
+                arg.annotation = ast.copy_location(
+                    ast.Name(id=head, ctx=ast.Load()),
+                    ann,
+                )
+        return cloned
 
     def _strip_condition_decorators(self, fn: ast.FunctionDef) -> ast.FunctionDef:
         if not fn.decorator_list:
@@ -1239,6 +1422,9 @@ class ProjectCompiler:
         stripped = []
         removed = False
         for decorator in fn.decorator_list:
+            if isinstance(decorator, ast.Name) and decorator.id == "callable":
+                stripped.append(decorator)
+                continue
             if not isinstance(decorator, ast.Call):
                 stripped.append(decorator)
                 continue
@@ -1357,7 +1543,7 @@ class ProjectCompiler:
 
         if (
             isinstance(node.func, ast.Name)
-            and node.func.id in {"CollisionRelated", "OnOverlap", "OnContact"}
+            and node.func.id in {"OnOverlap", "OnContact"}
         ):
             if len(node.args) != 2 or node.keywords:
                 raise DSLValidationError(
@@ -1371,10 +1557,10 @@ class ProjectCompiler:
                 mode = CollisionMode.OVERLAP
             return CollisionConditionSpec(left=left, right=right, mode=mode)
 
-        if isinstance(node.func, ast.Name) and node.func.id == "LogicalRelated":
+        if isinstance(node.func, ast.Name) and node.func.id == "OnLogicalCondition":
             if len(node.args) != 2 or node.keywords:
                 raise DSLValidationError(
-                    "LogicalRelated(...) expects predicate and selector."
+                    "OnLogicalCondition(...) expects predicate and selector."
                 )
             predicate_name = _expect_name(node.args[0], "logical predicate function")
             if predicate_name not in predicates:
@@ -1388,15 +1574,15 @@ class ProjectCompiler:
                 and selector.actor_type != predicate.actor_type
             ):
                 raise DSLValidationError(
-                    f"LogicalRelated selector type '{selector.actor_type}' does not "
+                    f"OnLogicalCondition selector type '{selector.actor_type}' does not "
                     f"match predicate actor type '{predicate.actor_type}'."
                 )
             return LogicalConditionSpec(predicate_name=predicate_name, target=selector)
 
-        if isinstance(node.func, ast.Name) and node.func.id == "ToolCalling":
+        if isinstance(node.func, ast.Name) and node.func.id == "OnToolCall":
             if len(node.args) != 2 or node.keywords:
                 raise DSLValidationError(
-                    "ToolCalling(...) expects tool name and tool docstring."
+                    "OnToolCall(...) expects tool name and tool docstring."
                 )
             return ToolConditionSpec(
                 name=_expect_string(node.args[0], "tool name"),
@@ -2147,7 +2333,7 @@ class ProjectCompiler:
         ):
             warnings.warn(
                 format_dsl_diagnostic(
-                    f"CollisionRelated imposes actor bindings for the first two parameters "
+                    f"OnOverlap/OnContact imposes actor bindings for the first two parameters "
                     f"of action '{action_name}'. Explicit selector annotations on those "
                     "parameters are ignored.",
                     node=source_node,
@@ -2234,7 +2420,7 @@ class ProjectCompiler:
         if predicate_name not in warned_predicates and has_explicit_selector:
             warnings.warn(
                 format_dsl_diagnostic(
-                    f"LogicalRelated imposes actor binding for predicate '{predicate_name}' "
+                    f"OnLogicalCondition imposes actor binding for predicate '{predicate_name}' "
                     f"parameter '{actor_param.name}'. Explicit selector annotation on that "
                     "parameter is ignored.",
                     node=source_node,
@@ -2249,7 +2435,7 @@ class ProjectCompiler:
             and actor_param.actor_type != condition.target.actor_type
         ):
             raise DSLValidationError(
-                f"LogicalRelated selector type '{condition.target.actor_type}' does not "
+                f"OnLogicalCondition selector type '{condition.target.actor_type}' does not "
                 f"match predicate actor parameter type '{actor_param.actor_type}'."
             )
 
@@ -2433,18 +2619,34 @@ def _track_top_level_assignment_alias(
         callable_aliases[target] = resolved_callable
 
 
-def _looks_like_action(fn: ast.FunctionDef) -> bool:
+def _looks_like_action(fn: ast.FunctionDef, compiler: DSLCompiler) -> bool:
     if fn.returns is not None:
         return False
     for arg in fn.args.args:
         if arg.annotation is None:
             return False
-        if isinstance(arg.annotation, ast.Subscript):
-            continue
-        if isinstance(arg.annotation, ast.Name):
+        if _is_supported_action_binding_annotation(arg.annotation, compiler):
             continue
         return False
     return True
+
+
+def _is_supported_action_binding_annotation(
+    annotation: ast.AST,
+    compiler: DSLCompiler,
+) -> bool:
+    if isinstance(annotation, ast.Name):
+        if annotation.id in {"Scene", "Tick", "Actor"}:
+            return True
+        return annotation.id in compiler.schemas.actor_fields
+
+    if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name):
+        head = annotation.value.id
+        if head in {"Scene", "Tick", "Actor", "Global", "List", "list"}:
+            return True
+        return head in compiler.schemas.actor_fields
+
+    return False
 
 
 def _looks_like_predicate(fn: ast.FunctionDef, compiler: DSLCompiler) -> bool:
@@ -2740,3 +2942,109 @@ def _extract_declared_actor_ctor_uid(ctor: ast.Call) -> Optional[str]:
                 return keyword.value.value
             return None
     return None
+
+
+def _collect_used_callable_names(
+    *,
+    actions: List[ActionIR],
+    predicates: List[PredicateIR],
+    callables: Dict[str, CallableIR],
+) -> set[str]:
+    discovered: set[str] = set()
+    for action in actions:
+        for stmt in action.body:
+            discovered.update(_callable_names_in_stmt(stmt))
+    for predicate in predicates:
+        discovered.update(_callable_names_in_expr(predicate.body))
+
+    used: set[str] = set()
+    pending = list(discovered)
+    while pending:
+        callable_name = pending.pop()
+        if callable_name in used:
+            continue
+        used.add(callable_name)
+        helper = callables.get(callable_name)
+        if helper is None:
+            continue
+        nested: set[str] = set()
+        for stmt in helper.body:
+            nested.update(_callable_names_in_stmt(stmt))
+        nested.update(_callable_names_in_expr(helper.return_expr))
+        for nested_name in nested:
+            if nested_name not in used:
+                pending.append(nested_name)
+
+    return used
+
+
+def _callable_names_in_stmt(stmt) -> set[str]:
+    if isinstance(stmt, Assign):
+        names = _callable_names_in_expr(stmt.value)
+        names.update(_callable_names_in_expr(stmt.target))
+        return names
+    if isinstance(stmt, CallStmt):
+        names: set[str] = set()
+        for arg in stmt.args:
+            names.update(_callable_names_in_expr(arg))
+        return names
+    if isinstance(stmt, If):
+        names = _callable_names_in_expr(stmt.condition)
+        for child in stmt.body:
+            names.update(_callable_names_in_stmt(child))
+        for child in stmt.orelse:
+            names.update(_callable_names_in_stmt(child))
+        return names
+    if isinstance(stmt, While):
+        names = _callable_names_in_expr(stmt.condition)
+        for child in stmt.body:
+            names.update(_callable_names_in_stmt(child))
+        return names
+    if isinstance(stmt, For):
+        names = _callable_names_in_expr(stmt.iterable)
+        for child in stmt.body:
+            names.update(_callable_names_in_stmt(child))
+        return names
+    if isinstance(stmt, Yield):
+        return _callable_names_in_expr(stmt.value)
+    if isinstance(stmt, Continue):
+        return set()
+    return set()
+
+
+def _callable_names_in_expr(expr) -> set[str]:
+    if isinstance(expr, (Const, Var, Attr)):
+        return set()
+    if isinstance(expr, Unary):
+        return _callable_names_in_expr(expr.value)
+    if isinstance(expr, Binary):
+        names = _callable_names_in_expr(expr.left)
+        names.update(_callable_names_in_expr(expr.right))
+        return names
+    if isinstance(expr, Range):
+        names: set[str] = set()
+        for arg in expr.args:
+            names.update(_callable_names_in_expr(arg))
+        return names
+    if isinstance(expr, ObjectExpr):
+        names: set[str] = set()
+        for value in expr.fields.values():
+            names.update(_callable_names_in_expr(value))
+        return names
+    if isinstance(expr, ListExpr):
+        names: set[str] = set()
+        for item in expr.items:
+            names.update(_callable_names_in_expr(item))
+        return names
+    if isinstance(expr, SubscriptExpr):
+        names = _callable_names_in_expr(expr.value)
+        names.update(_callable_names_in_expr(expr.index))
+        return names
+    if isinstance(expr, CallExpr):
+        names: set[str] = set()
+        if expr.name.startswith(CALLABLE_EXPR_PREFIX):
+            names.add(expr.name[len(CALLABLE_EXPR_PREFIX) :])
+        for arg in expr.args:
+            names.update(_callable_names_in_expr(arg))
+        return names
+    return set()

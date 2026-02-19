@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Union
 
-from nanocalibur.ir import ActionIR, PredicateIR
+from nanocalibur.ir import ActionIR, CallableIR, PredicateIR
 
 PrimitiveValue = Union[int, float, str, bool, None]
 ListValue = List[PrimitiveValue]
@@ -208,6 +208,7 @@ class ProjectSpec:
     camera: Optional[CameraSpec]
     actions: List[ActionIR]
     predicates: List[PredicateIR]
+    callables: List[CallableIR]
     resources: List[ResourceSpec]
     sprites: List[SpriteSpec]
     scene: Optional[SceneSpec]

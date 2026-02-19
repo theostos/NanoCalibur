@@ -10,7 +10,7 @@ the base logic of my tiny game engine is the following:
 
 - Actors: Anything ON the map, additionnally List of ..., integers, floats, and strings can be attached to actor.
 
-- Condition: Rules that can triggers action KeyboardRelated, MouseRelated, ButtonRelated, CollisionRelated, InstantiationRelated (spawn/disappear), LogicalRelated (e.g. if `life of ...` < 0 trigger `Destroy`).
+- Condition: Rules that can triggers action KeyboardRelated, MouseRelated, ButtonRelated, OnOverlap, InstantiationRelated (spawn/disappear), OnLogicalCondition (e.g. if `life of ...` < 0 trigger `Destroy`).
 
 - Action: action that can modify the state of the game: this are written as python function.
 

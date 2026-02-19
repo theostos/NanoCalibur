@@ -26,7 +26,7 @@ Primary goal: keep the engine minimal, explicit, and easy for LLMs to both gener
 The project must make LLM interaction first-class, not an afterthought.
 
 ### Tool-driven actions
-- DSL supports `ToolCalling(name, tool_docstring)` conditions.
+- DSL supports `OnToolCall(name, tool_docstring)` conditions.
 - Exported spec includes tool metadata.
 - Headless runtime exposes tool calls via `HeadlessHost.callTool(...)`.
 - HTTP runtime exposes tool calls for remote clients (`POST /tools/call`).
@@ -52,7 +52,9 @@ The project must make LLM interaction first-class, not an afterthought.
 - Equal actor masks mutually block and separate.
 - Actor animation/lifecycle actions use instance methods (`actor.play("clip")`, `actor.destroy()`), not static `Actor.play(...)`/`Actor.destroy(...)`.
 - UI overlay is opt-in via `game.set_interface(html)`; no default hardcoded interface should be assumed.
-- Collision conditions are split by intent: `OnOverlap(...)` (legacy alias `CollisionRelated(...)`) and `OnContact(...)`.
+- Collision conditions are split by intent: `OnOverlap(...)` and `OnContact(...)`.
+- Logical and tool conditions use `OnLogicalCondition(...)` and `OnToolCall(...)`.
+- Reusable helper functions use the `@callable` decorator.
 - Keep condition/action semantics deterministic and statically checkable where possible.
 
 ## Dev Rules

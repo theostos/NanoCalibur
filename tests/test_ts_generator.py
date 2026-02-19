@@ -13,7 +13,7 @@ def compile_to_ts(source: str) -> str:
 
 def compile_project_to_ts(source: str) -> str:
     project = ProjectCompiler().compile(textwrap.dedent(source))
-    return TSGenerator().generate(project.actions, project.predicates)
+    return TSGenerator().generate(project.actions, project.predicates, project.callables)
 
 
 def test_ts_preserves_string_constant_case():
@@ -292,7 +292,7 @@ def test_ts_emits_predicate_with_context_bindings():
         game.add_global("is_dead", False)
         game.add_global("score", 1)
         scene.add_actor(Player(uid="hero", life=1))
-        scene.add_rule(LogicalRelated(should_mark, Player), mark_dead)
+        scene.add_rule(OnLogicalCondition(should_mark, Player), mark_dead)
         """
     )
 
@@ -301,3 +301,59 @@ def test_ts_emits_predicate_with_context_bindings():
     assert 'let score = ctx.globals["score"];' in ts
     assert "let wait_tick = ctx.tick;" in ts
     assert "__nanocalibur_logical_target__" in ts
+
+
+def test_ts_emits_tick_elapsed_expression():
+    ts = compile_to_ts(
+        """
+        class Coin(Actor):
+            pass
+
+        def spawn(scene: Scene, tick: Tick, last_coin: Coin[-1]):
+            if last_coin is not None:
+                should_spawn = tick.elapsed > 10
+                scene.spawn(Coin(x=last_coin.x + 1, y=0, active=should_spawn))
+        """
+    )
+
+    assert "should_spawn = ((ctx.elapsed ?? ctx.tick) > 10);" in ts
+
+
+def test_ts_emits_list_literals_and_subscript_access():
+    ts = compile_to_ts(
+        """
+        def mutate(values: Global["values"]):
+            last = values[-1]
+            values = [last, 1, 2]
+        """
+    )
+
+    assert "last = values[values.length + (-1)];" in ts
+    assert "values = [last, 1, 2];" in ts
+
+
+def test_ts_emits_callable_helpers_and_invocations():
+    ts = compile_project_to_ts(
+        """
+        class Coin(Actor):
+            pass
+
+        @callable
+        def next_x(x: float, offset: int) -> float:
+            return x + offset
+
+        @condition(KeyboardCondition.begin_press("e"))
+        def spawn(scene: Scene, last_coin: Coin[-1]):
+            if last_coin is not None:
+                x = next_x(last_coin.x, 32)
+                scene.spawn(Coin(x=x, y=0, active=True))
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Coin(uid="coin_1", x=0, y=0, active=True))
+        """
+    )
+
+    assert "export function next_x(x: any, offset: any): any {" in ts
+    assert "x = next_x(last_coin.x, 32);" in ts

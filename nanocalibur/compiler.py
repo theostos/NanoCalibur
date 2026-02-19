@@ -10,6 +10,7 @@ from nanocalibur.ir import (
     Attr,
     Binary,
     BindingKind,
+    CallableIR,
     CallExpr,
     CallStmt,
     Continue,
@@ -17,10 +18,12 @@ from nanocalibur.ir import (
     Expr,
     For,
     If,
+    ListExpr,
     ObjectExpr,
     ParamBinding,
     PredicateIR,
     Range,
+    SubscriptExpr,
     Unary,
     Var,
     While,
@@ -88,6 +91,8 @@ BASE_ACTOR_DEFAULT_OVERRIDES = {
     "y": 0.0,
 }
 
+CALLABLE_EXPR_PREFIX = "__nc_callable__:"
+
 
 @dataclass
 class ActionScope:
@@ -104,6 +109,11 @@ class DSLCompiler:
         """Create a DSL compiler for action/predicate source snippets."""
         self.schemas = SchemaRegistry()
         self.global_actor_types: Dict[str, Optional[str]] = dict(global_actor_types or {})
+        self.callable_signatures: Dict[str, int] = {}
+
+    def set_callable_signatures(self, signatures: Dict[str, int]) -> None:
+        """Register callable helper signatures available in expressions."""
+        self.callable_signatures = dict(signatures)
 
     def compile(
         self,
@@ -341,6 +351,98 @@ class DSLCompiler:
                 actor_type=anchor_param.actor_type,
             )
 
+    def _compile_callable(self, fn: ast.FunctionDef) -> CallableIR:
+        with dsl_node_context(fn):
+            if fn.decorator_list:
+                raise DSLValidationError("Decorators are not allowed on callable functions.")
+            if fn.args.vararg is not None or fn.args.kwarg is not None:
+                raise DSLValidationError("Variadic callable parameters are not allowed.")
+            if fn.args.posonlyargs or fn.args.kwonlyargs or fn.args.kw_defaults:
+                raise DSLValidationError("Callable must use regular positional parameters.")
+
+            params: List[str] = []
+            actor_var_types: Dict[str, str] = {}
+            actor_list_var_types: Dict[str, Optional[str]] = {}
+            scene_vars: Set[str] = set()
+            tick_vars: Set[str] = set()
+
+            for arg in fn.args.args:
+                with dsl_node_context(arg):
+                    if arg.annotation is None:
+                        raise DSLValidationError(
+                            "All callable parameters must have type annotations."
+                        )
+                    params.append(arg.arg)
+                    ann = arg.annotation
+                    if isinstance(ann, ast.Name):
+                        if ann.id == "Scene":
+                            scene_vars.add(arg.arg)
+                        elif ann.id == "Tick":
+                            tick_vars.add(arg.arg)
+                        elif ann.id in self.schemas.actor_fields:
+                            actor_var_types[arg.arg] = ann.id
+                        continue
+
+                    if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
+                        head = ann.value.id
+                        if head == "Scene":
+                            scene_vars.add(arg.arg)
+                        elif head == "Tick":
+                            tick_vars.add(arg.arg)
+                        elif head in self.schemas.actor_fields:
+                            actor_var_types[arg.arg] = head
+                        elif head in {"List", "list"} and isinstance(ann.slice, ast.Name):
+                            if ann.slice.id == "Actor":
+                                actor_list_var_types[arg.arg] = None
+                            elif ann.slice.id in self.schemas.actor_fields:
+                                actor_list_var_types[arg.arg] = ann.slice.id
+                        continue
+
+                    raise DSLValidationError(
+                        "Callable parameter annotations must use a name or T[...] form."
+                    )
+
+            if not fn.body:
+                raise DSLValidationError("Callable body cannot be empty.")
+            if not isinstance(fn.body[-1], ast.Return):
+                raise DSLValidationError(
+                    "Callable must end with an explicit return statement."
+                )
+
+            scope = ActionScope(
+                defined_names=set(params),
+                actor_var_types=actor_var_types,
+                actor_list_var_types=actor_list_var_types,
+                scene_vars=scene_vars,
+                tick_vars=tick_vars,
+                spawn_actor_templates={},
+            )
+            body = []
+            for stmt in fn.body[:-1]:
+                with dsl_node_context(stmt):
+                    if isinstance(stmt, ast.Return):
+                        raise DSLValidationError(
+                            "Return statements are only allowed as the last callable statement."
+                        )
+                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
+                        raise DSLValidationError("yield is not allowed inside callable functions.")
+                compiled = self._compile_stmt(stmt, scope, loop_depth=0)
+                if compiled is not None:
+                    body.append(compiled)
+
+            return_stmt = fn.body[-1]
+            if return_stmt.value is None:
+                raise DSLValidationError("Callable return statement must return a value.")
+            return_expr = self._compile_expr(
+                return_stmt.value, scope, allow_range_call=False
+            )
+            return CallableIR(
+                name=fn.name,
+                params=params,
+                body=body,
+                return_expr=return_expr,
+            )
+
     def _parse_binding(self, arg: ast.arg) -> ParamBinding:
         with dsl_node_context(arg):
             ann = arg.annotation
@@ -481,6 +583,16 @@ class DSLCompiler:
                         fields_payload_json,
                     )
                     return None
+                value = self._compile_expr(stmt.value, scope, allow_range_call=False)
+                if isinstance(target, Var):
+                    scope.defined_names.add(target.name)
+                    self._sync_var_types_on_assign(target.name, value, scope)
+                return Assign(target=target, value=value)
+
+            if isinstance(stmt, ast.AnnAssign):
+                if stmt.value is None:
+                    raise DSLValidationError("Annotated assignment must assign a value.")
+                target = self._compile_assign_target(stmt.target, scope)
                 value = self._compile_expr(stmt.value, scope, allow_range_call=False)
                 if isinstance(target, Var):
                     scope.defined_names.add(target.name)
@@ -908,6 +1020,12 @@ class DSLCompiler:
                 and compiled.field == "elapsed"
             ):
                 raise DSLValidationError("scene.elapsed is read-only.")
+            if (
+                isinstance(compiled, Attr)
+                and compiled.obj in scope.tick_vars
+                and compiled.field == "elapsed"
+            ):
+                raise DSLValidationError("tick.elapsed is read-only.")
             return compiled
         raise DSLValidationError("Assignment target must be a variable or actor field.")
 
@@ -926,6 +1044,14 @@ class DSLCompiler:
                     "Only int, float, str, bool, and None constants are allowed."
                 )
 
+            if isinstance(expr, ast.List):
+                return ListExpr(
+                    items=[
+                        self._compile_expr(item, scope, allow_range_call=False)
+                        for item in expr.elts
+                    ]
+                )
+
             if isinstance(expr, ast.Name):
                 if expr.id not in scope.defined_names:
                     raise DSLValidationError(f"Unknown variable '{expr.id}'.")
@@ -933,6 +1059,14 @@ class DSLCompiler:
 
             if isinstance(expr, ast.Attribute):
                 return self._compile_attr(expr, scope)
+
+            if isinstance(expr, ast.Subscript):
+                if isinstance(expr.slice, ast.Slice):
+                    raise DSLValidationError("Slice expressions are not supported.")
+                return SubscriptExpr(
+                    value=self._compile_expr(expr.value, scope, allow_range_call=False),
+                    index=self._compile_expr(expr.slice, scope, allow_range_call=False),
+                )
 
             if isinstance(expr, ast.BinOp):
                 op = _ALLOWED_BIN.get(type(expr.op))
@@ -1071,6 +1205,24 @@ class DSLCompiler:
 
             raise DSLValidationError(f"Unsupported Random method '{method}'.")
 
+        if isinstance(expr.func, ast.Name) and expr.func.id in self.callable_signatures:
+            if expr.keywords:
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) does not accept keyword arguments."
+                )
+            expected_arity = self.callable_signatures[expr.func.id]
+            if len(expr.args) != expected_arity:
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) expects exactly {expected_arity} positional arguments."
+                )
+            return CallExpr(
+                name=f"{CALLABLE_EXPR_PREFIX}{expr.func.id}",
+                args=[
+                    self._compile_expr(arg, scope, allow_range_call=False)
+                    for arg in expr.args
+                ],
+            )
+
         raise DSLValidationError("Function calls are not allowed.")
 
     def _compile_range_call(self, expr: ast.Call, scope: ActionScope) -> Range:
@@ -1101,6 +1253,13 @@ class DSLCompiler:
             if expr.attr != "elapsed":
                 raise DSLValidationError(
                     "Scene bindings only expose read-only 'elapsed'."
+                )
+            return Attr(obj=obj_name, field="elapsed")
+
+        if obj_name in scope.tick_vars:
+            if expr.attr != "elapsed":
+                raise DSLValidationError(
+                    "Tick bindings only expose read-only 'elapsed'."
                 )
             return Attr(obj=obj_name, field="elapsed")
 

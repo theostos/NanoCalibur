@@ -11,7 +11,7 @@ from nanocalibur.dsl_markers import (
     Sprite,
     Tile,
     TileMap,
-    ToolCalling,
+    OnToolCall,
     condition,
 )
 
@@ -70,7 +70,7 @@ def disable_gravity(scene: Scene):
     scene.disable_gravity()
 
 @condition(KeyboardCondition.begin_press("e"))
-@condition(ToolCalling("spawn_bonus", "Spawn one bonus coin near the hero"))
+@condition(OnToolCall("spawn_bonus", "Spawn one bonus coin near the hero"))
 def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
     for _ in range(20):
         yield tick

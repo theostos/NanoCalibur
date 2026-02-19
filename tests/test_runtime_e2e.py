@@ -34,8 +34,8 @@ def test_end_to_end_python_to_ts_runtime(tmp_path):
         game.add_actor(Player, "enemy_1", life=2, x=0, y=0)
 
         game.add_rule(KeyboardCondition.begin_press("A"), heal)
-        game.add_rule(CollisionRelated(Player["main_character"], Player), on_collision)
-        game.add_rule(LogicalRelated(is_dead, Player), mark_dead)
+        game.add_rule(OnOverlap(Player["main_character"], Player), on_collision)
+        game.add_rule(OnLogicalCondition(is_dead, Player), mark_dead)
 
         game.set_camera(Camera.follow("main_character"))
         game.set_map(
@@ -180,7 +180,7 @@ def test_logical_predicate_with_multi_bindings_and_elapsed(tmp_path):
         game.add_global("is_dead", False)
         game.add_global("threshold", 1)
         scene.add_actor(Player(uid="hero", life=1))
-        scene.add_rule(LogicalRelated(is_dead, Player), mark_dead)
+        scene.add_rule(OnLogicalCondition(is_dead, Player), mark_dead)
         """
     )
 

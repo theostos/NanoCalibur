@@ -18,7 +18,7 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
         def is_dead(player: Player) -> bool:
             return player.life <= 0
 
-        @condition(ToolCalling("boost_heal", "Increase heal amount by one"))
+        @condition(OnToolCall("boost_heal", "Increase heal amount by one"))
         def boost_heal(amount: Global["heal"]):
             amount = amount + 1
 
@@ -26,7 +26,7 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
         game.add_global("heal", 2)
         game.add_actor(Player, "main_character", life=1, x=5, y=6)
         game.add_rule(KeyboardCondition.on_press("A"), heal)
-        game.add_rule(LogicalRelated(is_dead, Player), heal)
+        game.add_rule(OnLogicalCondition(is_dead, Player), heal)
         game.set_map(
             TileMap(
                 tile_size=16,

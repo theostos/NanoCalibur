@@ -50,8 +50,8 @@ def test_compile_project_with_conditions_map_and_camera():
         game.add_actor(Enemy, "enemy_1", life=5)
 
         cond_key = KeyboardCondition.on_press("A")
-        cond_collision = CollisionRelated(Player["main_character"], Enemy)
-        cond_logic = LogicalRelated(is_dead, Player)
+        cond_collision = OnOverlap(Player["main_character"], Enemy)
+        cond_logic = OnLogicalCondition(is_dead, Player)
 
         game.add_rule(cond_key, heal)
         game.add_rule(cond_collision, on_hit)
@@ -104,7 +104,7 @@ def test_logical_predicate_accepts_multiple_binding_types():
         game.add_global("is_dead", False)
         game.add_global("score", 1)
         scene.add_actor(Player(uid="hero", life=1))
-        scene.add_rule(LogicalRelated(should_mark, Player), mark_dead)
+        scene.add_rule(OnLogicalCondition(should_mark, Player), mark_dead)
         """
     )
 
@@ -142,7 +142,7 @@ def test_logical_predicate_requires_actor_binding_parameter():
             game.add_global("is_dead", False)
             game.add_global("score", 1)
             scene.add_actor(Player(uid="hero", life=1))
-            scene.add_rule(LogicalRelated(invalid, Player), mark_dead)
+            scene.add_rule(OnLogicalCondition(invalid, Player), mark_dead)
             """
         )
 
@@ -705,7 +705,7 @@ def test_condition_decorator_adds_rule_without_add_rule_call():
 def test_condition_decorator_supports_tool_calling():
     project = compile_project(
         """
-        @condition(ToolCalling("spawn_bonus", "Spawn one bonus coin"))
+        @condition(OnToolCall("spawn_bonus", "Spawn one bonus coin"))
         def spawn(scene: Scene):
             scene.enable_gravity()
 
@@ -725,11 +725,11 @@ def test_tool_calling_name_cannot_bind_multiple_actions():
     with pytest.raises(DSLValidationError, match="already bound to action"):
         compile_project(
             """
-            @condition(ToolCalling("toggle", "Enable gravity"))
+            @condition(OnToolCall("toggle", "Enable gravity"))
             def enable(scene: Scene):
                 scene.enable_gravity()
 
-            @condition(ToolCalling("toggle", "Disable gravity"))
+            @condition(OnToolCall("toggle", "Disable gravity"))
             def disable(scene: Scene):
                 scene.disable_gravity()
 
@@ -798,17 +798,17 @@ def test_collision_rule_rebinds_first_two_action_parameters_and_warns():
             game.add_global("score", 0)
             game.add_actor(Player, "hero", life=1)
             game.add_actor(Coin, "coin_1", active=True)
-            game.add_rule(CollisionRelated(Player["hero"], Coin), collect)
+            game.add_rule(OnOverlap(Player["hero"], Coin), collect)
             """
         )
 
     messages = [str(w.message) for w in caught]
     imposes_messages = [
-        msg for msg in messages if "CollisionRelated imposes actor bindings" in msg
+        msg for msg in messages if "OnOverlap/OnContact imposes actor bindings" in msg
     ]
     assert imposes_messages
     assert "Location: line" in imposes_messages[0]
-    assert "game.add_rule(CollisionRelated(Player[\"hero\"], Coin), collect)" in imposes_messages[0]
+    assert "game.add_rule(OnOverlap(Player[\"hero\"], Coin), collect)" in imposes_messages[0]
 
     action = next(action for action in project.actions if action.name == "collect")
     assert action.params[0].actor_selector is not None
@@ -836,7 +836,7 @@ def test_collision_rule_plain_typed_actor_params_do_not_warn():
             game.add_global("score", 0)
             game.add_actor(Player, "hero", life=1)
             game.add_actor(Coin, "coin_1", active=True)
-            game.add_rule(CollisionRelated(Player["hero"], Coin), collect)
+            game.add_rule(OnOverlap(Player["hero"], Coin), collect)
             """
         )
     assert not caught
@@ -855,7 +855,7 @@ def test_collision_rule_requires_first_two_action_parameters_to_be_actors():
             game = Game()
             game.add_global("score", 0)
             game.add_actor(Player, "hero", life=1)
-            game.add_rule(CollisionRelated(Player["hero"], Player), bad)
+            game.add_rule(OnOverlap(Player["hero"], Player), bad)
             """
         )
 
@@ -1015,3 +1015,94 @@ def test_set_interface_accepts_literal_and_alias_variable():
     assert project.interface_html is not None
     assert "Score: {{score}}" in project.interface_html
     assert 'data-button="spawn_bonus"' in project.interface_html
+
+
+def test_legacy_condition_helpers_are_rejected():
+    with pytest.raises(DSLValidationError, match="Unsupported condition expression"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            def noop(player: Player):
+                pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_rule(CollisionRelated(Player["hero"], Player), noop)
+            """
+        )
+
+
+def test_callable_helper_can_be_used_from_action_and_is_exported():
+    project = compile_project(
+        """
+        class Coin(Actor):
+            pass
+
+        @callable
+        def next_x(x: float, offset: int) -> float:
+            return x + offset
+
+        @condition(KeyboardCondition.begin_press("e"))
+        def spawn(scene: Scene, last_coin: Coin[-1]):
+            if last_coin is not None:
+                x = next_x(last_coin.x, 32)
+                scene.spawn(Coin(x=x, y=0, active=True))
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Coin(uid="coin_1", x=0, y=0, active=True))
+        """
+    )
+
+    assert len(project.callables) == 1
+    assert project.callables[0].name == "next_x"
+    assert len(project.actions) == 1
+    assert project.actions[0].name == "spawn"
+
+
+def test_callable_selector_annotations_warn_and_are_ignored():
+    with pytest.warns(UserWarning, match="Selector annotation on callable parameter"):
+        project = compile_project(
+            """
+            class Player(Actor):
+                speed: int
+
+            @callable
+            def get_speed(hero: Player["hero"]) -> int:
+                return hero.speed
+
+            @condition(KeyboardCondition.on_press("d"))
+            def move(hero: Player["hero"]):
+                hero.x = hero.x + get_speed(hero)
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0, speed=1))
+            """
+        )
+
+    assert project.callables[0].name == "get_speed"
+
+
+def test_unreferenced_functions_emit_ignore_warnings():
+    with pytest.warns(UserWarning, match="ignored"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            def helper(flag: bool):
+                flag = not flag
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            """
+        )
