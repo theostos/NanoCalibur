@@ -367,6 +367,9 @@ function mapBrowserKeyDownToCommand(event: KeyboardEvent): Record<string, any> |
     return { kind: 'input', keyboard: { on: [movement] } };
   }
   const key = event.key.toLowerCase();
+  if (key === 'g' || key === 'h') {
+    return { kind: 'input', keyboard: { begin: [key] } };
+  }
   if (key === 'e') return { kind: 'tool', name: 'spawn_bonus' };
   if (key === 'n') return { kind: 'tool', name: 'llm_dummy_next_turn' };
   return null;

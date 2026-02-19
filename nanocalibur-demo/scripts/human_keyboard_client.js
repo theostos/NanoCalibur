@@ -57,7 +57,7 @@ function formatFrame(snapshot) {
     lines.push(legend);
   }
   lines.push('');
-  lines.push('Controls: zqsd / wasd / arrows | e=spawn_bonus | n=llm_dummy_next_turn | Ctrl+C quit');
+  lines.push('Controls: zqsd / wasd / arrows | g=gravity_on | h=gravity_off | e=spawn_bonus | n=llm_dummy_next_turn | Ctrl+C quit');
   return lines.join('\n');
 }
 
@@ -78,6 +78,8 @@ function mapKeyToCommand(key) {
   if (seq === 'q' || seq === 'a') return { kind: 'input', keyboard: { on: ['q'] } };
   if (seq === 's') return { kind: 'input', keyboard: { on: ['s'] } };
   if (seq === 'd') return { kind: 'input', keyboard: { on: ['d'] } };
+  if (seq === 'g') return { kind: 'input', keyboard: { begin: ['g'] } };
+  if (seq === 'h') return { kind: 'input', keyboard: { begin: ['h'] } };
 
   if (seq === 'e') return { kind: 'tool', name: 'spawn_bonus' };
   if (seq === 'n') return { kind: 'tool', name: 'llm_dummy_next_turn' };
