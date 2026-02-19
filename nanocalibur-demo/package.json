@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "webpack-dev-server --open",
+    "start:polling": "WATCHPACK_POLLING=true webpack-dev-server --open",
     "build": "webpack",
     "build:prod": "webpack --mode production",
     "build:dev": "webpack --mode development",

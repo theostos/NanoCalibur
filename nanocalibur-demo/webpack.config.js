@@ -16,9 +16,7 @@ module.exports = {
         static: [
             {
                 directory: path.resolve(__dirname, 'dist'),
-                watch: {
-                    ignored: ['**/node_modules/**', '**/.git/**']
-                }
+                watch: false
             },
             {
                 directory: path.resolve(__dirname, 'img'),
