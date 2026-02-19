@@ -800,6 +800,67 @@ def test_accept_list_literals_and_subscript_expressions():
     assert isinstance(second_assign.value, ListExpr)
 
 
+def test_accept_dict_field_types_and_collection_methods():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            inventory: Dict[str, int]
+
+        def mutate(
+            player: Player["hero"],
+            values: Global["values", List[int]],
+            inventory: Global["inventory", Dict[str, int]],
+        ):
+            values.append(3)
+            last = values.pop()
+            values = values.concat([last])
+            inventory["coins"] = last
+            current = inventory.get("coins", 0)
+            labels = inventory.keys()
+            amounts = inventory.values()
+            pairs = inventory.items()
+            merged = inventory.concat({"bonus": 1})
+        """
+    )
+
+    mutate = actions[0]
+    assert isinstance(mutate.body[0], CallStmt)
+    assert mutate.body[0].name == "list_append"
+    assert isinstance(mutate.body[1], Assign)
+    assert isinstance(mutate.body[1].value, CallExpr)
+    assert mutate.body[1].value.name == "collection_pop"
+    assert isinstance(mutate.body[2], Assign)
+    assert isinstance(mutate.body[2].value, CallExpr)
+    assert mutate.body[2].value.name == "collection_concat"
+    assert isinstance(mutate.body[3], Assign)
+    assert isinstance(mutate.body[3].target, SubscriptExpr)
+    assert isinstance(mutate.body[4], Assign)
+    assert isinstance(mutate.body[4].value, CallExpr)
+    assert mutate.body[4].value.name == "dict_get"
+    assert isinstance(mutate.body[5], Assign)
+    assert isinstance(mutate.body[5].value, CallExpr)
+    assert mutate.body[5].value.name == "dict_keys"
+    assert isinstance(mutate.body[6], Assign)
+    assert isinstance(mutate.body[6].value, CallExpr)
+    assert mutate.body[6].value.name == "dict_values"
+    assert isinstance(mutate.body[7], Assign)
+    assert isinstance(mutate.body[7].value, CallExpr)
+    assert mutate.body[7].value.name == "dict_items"
+    assert isinstance(mutate.body[8], Assign)
+    assert isinstance(mutate.body[8].value, CallExpr)
+    assert mutate.body[8].value.name == "collection_concat"
+
+
+def test_reject_unsupported_collection_method_calls():
+    with pytest.raises(DSLValidationError, match="Unsupported call statement 'values.extend"):
+        compile_source(
+            """
+            def bad(values: Global["values", List[int]]):
+                values.extend([1, 2, 3])
+            """
+        )
+
+
 def test_accept_tick_elapsed_read_access():
     actions = compile_source(
         """

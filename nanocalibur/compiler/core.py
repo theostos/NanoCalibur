@@ -31,7 +31,7 @@ from nanocalibur.ir import (
     Yield,
 )
 from nanocalibur.schema_registry import SchemaRegistry
-from nanocalibur.typesys import FieldType, ListType, Prim, PrimType
+from nanocalibur.typesys import DictType, FieldType, ListType, Prim, PrimType
 
 from .constants import (
     CALLABLE_EXPR_PREFIX,
@@ -209,33 +209,31 @@ class DSLCompiler:
             raise DSLValidationError("Only Actor, ActorModel, or Role subclasses are allowed.")
 
     def _parse_field_type(self, annotation: ast.AST) -> FieldType:
-        if isinstance(annotation, ast.Name) and annotation.id in _PRIM_NAMES:
-            return PrimType(_PRIM_NAMES[annotation.id])
+        return self._parse_container_field_type(annotation)
 
-        if isinstance(annotation, ast.Subscript):
-            if not isinstance(annotation.value, ast.Name) or annotation.value.id not in {
-                "List",
-                "list",
-            }:
-                raise DSLValidationError("Only List[...] container types are allowed.")
-
-            return ListType(self._parse_list_field_elem_type(annotation.slice))
-
-        raise DSLValidationError(
-            "Field type must be int, float, str, bool, or List[...]"
-        )
-
-    def _parse_list_field_elem_type(self, node: ast.AST) -> FieldType:
+    def _parse_container_field_type(self, node: ast.AST) -> FieldType:
         if isinstance(node, ast.Name) and node.id in _PRIM_NAMES:
             return PrimType(_PRIM_NAMES[node.id])
-        if (
-            isinstance(node, ast.Subscript)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in {"List", "list"}
-        ):
-            return ListType(self._parse_list_field_elem_type(node.slice))
+
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            container_name = node.value.id
+            if container_name in {"List", "list"}:
+                return ListType(self._parse_container_field_type(node.slice))
+            if container_name in {"Dict", "dict"}:
+                if not isinstance(node.slice, ast.Tuple) or len(node.slice.elts) != 2:
+                    raise DSLValidationError(
+                        "Dict[...] field types must be declared as Dict[str, value_type]."
+                    )
+                key_type = self._parse_container_field_type(node.slice.elts[0])
+                if not isinstance(key_type, PrimType) or key_type.prim != Prim.STR:
+                    raise DSLValidationError(
+                        "Dict[...] keys must be str in field type declarations."
+                    )
+                value_type = self._parse_container_field_type(node.slice.elts[1])
+                return DictType(key=key_type, value=value_type)
+
         raise DSLValidationError(
-            "List element type must be a primitive or nested List[...] of primitives."
+            "Field type must be int, float, str, bool, List[...], or Dict[str, ...]."
         )
 
     def _compile_action(self, fn: ast.FunctionDef) -> ActionIR:
@@ -763,6 +761,9 @@ class DSLCompiler:
         if owner == "Scene":
             return self._compile_static_scene_call(expr, scope)
 
+        if owner in scope.defined_names:
+            return self._compile_collection_call_stmt(expr, scope, owner)
+
         raise DSLValidationError("Unsupported call statement in action body.")
 
     def _compile_actor_instance_attach_call(
@@ -823,6 +824,66 @@ class DSLCompiler:
                 f"{owner}.destroy(...) does not accept arguments."
             )
         return CallStmt(name="destroy_actor", args=[Var(owner)])
+
+    def _compile_collection_call_stmt(
+        self, expr: ast.Call, scope: ActionScope, owner: str
+    ) -> CallStmt:
+        method = expr.func.attr
+        if expr.keywords:
+            raise DSLValidationError(
+                f"{owner}.{method}(...) does not accept keyword arguments."
+            )
+
+        if method == "append":
+            if len(expr.args) != 1:
+                raise DSLValidationError(
+                    f"{owner}.append(...) expects exactly one argument."
+                )
+            return CallStmt(
+                name="list_append",
+                args=[
+                    Var(owner),
+                    self._compile_expr(expr.args[0], scope, allow_range_call=False),
+                ],
+            )
+
+        if method == "update":
+            if len(expr.args) != 1:
+                raise DSLValidationError(
+                    f"{owner}.update(...) expects exactly one argument."
+                )
+            return CallStmt(
+                name="dict_update",
+                args=[
+                    Var(owner),
+                    self._compile_expr(expr.args[0], scope, allow_range_call=False),
+                ],
+            )
+
+        if method == "pop":
+            if len(expr.args) > 1:
+                raise DSLValidationError(
+                    f"{owner}.pop(...) expects zero or one positional argument."
+                )
+            index_expr = (
+                self._compile_expr(expr.args[0], scope, allow_range_call=False)
+                if expr.args
+                else Const(None)
+            )
+            return CallStmt(
+                name="collection_pop_discard",
+                args=[Var(owner), index_expr],
+            )
+
+        if method == "concat":
+            raise DSLValidationError(
+                f"{owner}.concat(...) returns a value. Assign the result to a variable."
+            )
+
+        raise DSLValidationError(
+            f"Unsupported call statement '{owner}.{method}(...)'. "
+            "Supported mutating methods: append, pop, update."
+        )
 
     def _compile_scene_instance_call(
         self, expr: ast.Call, scope: ActionScope, owner: str
@@ -1130,6 +1191,13 @@ class DSLCompiler:
             ):
                 raise DSLValidationError("tick.elapsed is read-only.")
             return compiled
+        if isinstance(target, ast.Subscript):
+            if isinstance(target.slice, ast.Slice):
+                raise DSLValidationError("Slice assignment is not supported.")
+            return SubscriptExpr(
+                value=self._compile_expr(target.value, scope, allow_range_call=False),
+                index=self._compile_expr(target.slice, scope, allow_range_call=False),
+            )
         raise DSLValidationError("Assignment target must be a variable or actor/role field.")
 
     # ---------------- Expressions ----------------
@@ -1154,6 +1222,21 @@ class DSLCompiler:
                         for item in expr.elts
                     ]
                 )
+
+            if isinstance(expr, ast.Dict):
+                fields: Dict[str, Expr] = {}
+                for key_node, value_node in zip(expr.keys, expr.values):
+                    if key_node is None:
+                        raise DSLValidationError("Dict unpacking is not supported.")
+                    key_expr = self._compile_expr(key_node, scope, allow_range_call=False)
+                    if not isinstance(key_expr, Const) or not isinstance(key_expr.value, str):
+                        raise DSLValidationError(
+                            "Dict literal keys must be constant strings."
+                        )
+                    fields[key_expr.value] = self._compile_expr(
+                        value_node, scope, allow_range_call=False
+                    )
+                return ObjectExpr(fields=fields)
 
             if isinstance(expr, ast.Name):
                 if expr.id not in scope.defined_names:
@@ -1308,6 +1391,9 @@ class DSLCompiler:
 
             raise DSLValidationError(f"Unsupported Random method '{method}'.")
 
+        if isinstance(expr.func, ast.Attribute):
+            return self._compile_collection_expr_call(expr, scope)
+
         if isinstance(expr.func, ast.Name) and expr.func.id in self.callable_signatures:
             if expr.keywords:
                 raise DSLValidationError(
@@ -1327,6 +1413,73 @@ class DSLCompiler:
             )
 
         raise DSLValidationError("Function calls are not allowed.")
+
+    def _compile_collection_expr_call(self, expr: ast.Call, scope: ActionScope) -> CallExpr:
+        if not (
+            isinstance(expr.func, ast.Attribute)
+            and isinstance(expr.func.value, ast.Name)
+        ):
+            raise DSLValidationError("Unsupported method call expression.")
+        owner_name = expr.func.value.id
+        if owner_name not in scope.defined_names:
+            raise DSLValidationError(
+                "Method call expression receiver must be a declared variable."
+            )
+        if expr.keywords:
+            raise DSLValidationError(
+                f"{owner_name}.{expr.func.attr}(...) does not accept keyword arguments."
+            )
+
+        owner_expr: Expr = Var(owner_name)
+        args = [self._compile_expr(arg, scope, allow_range_call=False) for arg in expr.args]
+        method = expr.func.attr
+
+        if method == "pop":
+            if len(args) > 1:
+                raise DSLValidationError(
+                    f"{owner_name}.pop(...) expects zero or one positional argument."
+                )
+            index_expr = args[0] if args else Const(None)
+            return CallExpr(name="collection_pop", args=[owner_expr, index_expr])
+
+        if method == "concat":
+            if len(args) != 1:
+                raise DSLValidationError(
+                    f"{owner_name}.concat(...) expects exactly one argument."
+                )
+            return CallExpr(name="collection_concat", args=[owner_expr, args[0]])
+
+        if method == "get":
+            if len(args) not in {1, 2}:
+                raise DSLValidationError(
+                    f"{owner_name}.get(...) expects key or key/default arguments."
+                )
+            default_expr = args[1] if len(args) == 2 else Const(None)
+            return CallExpr(name="dict_get", args=[owner_expr, args[0], default_expr])
+
+        if method == "keys":
+            if args:
+                raise DSLValidationError(f"{owner_name}.keys(...) does not accept arguments.")
+            return CallExpr(name="dict_keys", args=[owner_expr])
+
+        if method == "values":
+            if args:
+                raise DSLValidationError(
+                    f"{owner_name}.values(...) does not accept arguments."
+                )
+            return CallExpr(name="dict_values", args=[owner_expr])
+
+        if method == "items":
+            if args:
+                raise DSLValidationError(
+                    f"{owner_name}.items(...) does not accept arguments."
+                )
+            return CallExpr(name="dict_items", args=[owner_expr])
+
+        raise DSLValidationError(
+            f"Unsupported method call expression '{owner_name}.{method}(...)'. "
+            "Supported expression methods: pop, concat, get, keys, values, items."
+        )
 
     def _compile_range_call(self, expr: ast.Call, scope: ActionScope) -> Range:
         if not isinstance(expr.func, ast.Name) or expr.func.id != "range":
