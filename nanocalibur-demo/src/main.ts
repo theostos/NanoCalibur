@@ -1,7 +1,15 @@
 import {
   attachNanoCalibur,
+  createNanoCaliburInterpreter,
   type CanvasHostOptions,
 } from './nanocalibur_generated';
+import { mergeSpecOptions } from './nanocalibur_generated/runtime_core';
+import type { InterpreterState } from './nanocalibur_generated/interpreter';
+import { AssetStore } from './nanocalibur_generated/canvas/assets';
+import { AnimationSystem } from './nanocalibur_generated/canvas/animation';
+import { CanvasRenderer } from './nanocalibur_generated/canvas/renderer';
+import { InterfaceOverlay } from './nanocalibur_generated/canvas/interface_overlay';
+import type { ActorState, MapSpec } from './nanocalibur_generated/canvas/types';
 
 type SymbolicLegendEntry = { symbol: string; description: string };
 type SymbolicFrame = { rows: string[]; legend: SymbolicLegendEntry[] };
@@ -27,6 +35,69 @@ interface SessionBrowserConfig {
 interface SessionSummary {
   session_id?: string;
   status?: string;
+}
+
+class SessionSnapshotRenderer {
+  private readonly animation: AnimationSystem;
+  private readonly assets: AssetStore;
+  private readonly renderer: CanvasRenderer;
+  private readonly interfaceOverlay: InterfaceOverlay | null;
+  private ready = false;
+  private pendingSnapshot: SessionSnapshot | null = null;
+
+  constructor(
+    canvas: HTMLCanvasElement,
+    options: CanvasHostOptions,
+    interfaceHtml: string,
+  ) {
+    this.assets = new AssetStore(options);
+    this.animation = new AnimationSystem(options, () => undefined);
+    this.renderer = new CanvasRenderer(canvas, options, this.assets, this.animation);
+    this.interfaceOverlay =
+      interfaceHtml.trim().length > 0
+        ? new InterfaceOverlay(canvas, interfaceHtml)
+        : null;
+  }
+
+  async start(): Promise<void> {
+    await this.assets.preload();
+    this.ready = true;
+    if (this.pendingSnapshot) {
+      this.render(this.pendingSnapshot);
+    }
+  }
+
+  render(snapshot: SessionSnapshot): void {
+    this.pendingSnapshot = snapshot;
+    if (!this.ready) {
+      return;
+    }
+    const state = (snapshot.state || {}) as InterpreterState;
+    const actors = Array.isArray(state.actors)
+      ? (state.actors as ActorState[])
+      : [];
+    this.animation.update(actors);
+    this.renderer.render(
+      state,
+      (state.map || null) as MapSpec | null,
+    );
+    if (this.interfaceOverlay) {
+      this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals(state));
+    }
+  }
+
+  private buildInterfaceGlobals(state: InterpreterState): Record<string, any> {
+    const globals =
+      state.globals && typeof state.globals === 'object'
+        ? { ...(state.globals as Record<string, any>) }
+        : {};
+    globals.__actors_count = Array.isArray(state.actors) ? state.actors.length : 0;
+    globals.__scene_elapsed =
+      state.scene && typeof state.scene.elapsed === 'number'
+        ? state.scene.elapsed
+        : 0;
+    return globals;
+  }
 }
 
 const DEFAULT_CANVAS_OPTIONS: CanvasHostOptions = {
@@ -240,6 +311,19 @@ async function startSessionBrowserClient(
 
   const sessionId = joined.session_id;
   const accessToken = joined.access_token;
+  const sessionSpec = createNanoCaliburInterpreter().getSpec();
+  const rendererOptions = mergeSpecOptions(
+    DEFAULT_CANVAS_OPTIONS,
+    sessionSpec as Record<string, any>,
+  );
+  const sessionRenderer = new SessionSnapshotRenderer(
+    canvas,
+    rendererOptions,
+    typeof sessionSpec.interface_html === 'string' ? sessionSpec.interface_html : '',
+  );
+  void sessionRenderer.start().catch((error) => {
+    console.error('Failed to preload session renderer assets.', error);
+  });
 
   let latestSnapshot: SessionSnapshot | null = null;
   let sessionWarning: string | null = null;
@@ -256,7 +340,7 @@ async function startSessionBrowserClient(
     }
     const warningPrefix = sessionWarning ? `WARNING: ${sessionWarning}\n\n` : '';
     symbolicPanel.textContent = `${warningPrefix}${formatSessionSnapshot(latestSnapshot)}`;
-    drawSymbolicFrameOnCanvas(canvas, latestSnapshot.frame);
+    sessionRenderer.render(latestSnapshot);
   };
 
   const renderSnapshot = (snapshot: SessionSnapshot): void => {
