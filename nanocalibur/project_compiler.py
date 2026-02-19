@@ -38,6 +38,8 @@ from nanocalibur.game_model import (
     MultiplayerSpec,
     MouseConditionSpec,
     ProjectSpec,
+    RoleKind,
+    RoleSpec,
     ResourceSpec,
     RuleSpec,
     SceneSpec,
@@ -122,6 +124,7 @@ class ProjectCompiler:
                 scene,
                 interface_html,
                 multiplayer,
+                roles,
             ) = self._collect_game_setup(
                 module=module,
                 game_var=game_var,
@@ -212,6 +215,7 @@ class ProjectCompiler:
             contains_next_turn_call = any(
                 _action_contains_next_turn(action) for action in actions.values()
             )
+            self._validate_condition_role_ids(rules, roles)
             if (
                 multiplayer is not None
                 and multiplayer.default_loop
@@ -240,6 +244,7 @@ class ProjectCompiler:
                 scene=scene,
                 interface_html=interface_html,
                 multiplayer=multiplayer,
+                roles=roles,
                 contains_next_turn_call=contains_next_turn_call,
             )
 
@@ -488,6 +493,7 @@ class ProjectCompiler:
         Optional[SceneSpec],
         Optional[str],
         Optional[MultiplayerSpec],
+        List[RoleSpec],
     ]:
         condition_vars: Dict[str, ConditionSpec] = {}
         actors: List[ActorInstanceSpec] = []
@@ -499,8 +505,10 @@ class ProjectCompiler:
         scene: Optional[SceneSpec] = None
         interface_html: Optional[str] = None
         multiplayer: Optional[MultiplayerSpec] = None
+        roles_by_id: Dict[str, RoleSpec] = {}
         declared_scene_vars: Dict[str, SceneSpec] = {}
         declared_multiplayer_vars: Dict[str, ast.Call] = {}
+        declared_role_vars: Dict[str, ast.Call] = {}
         declared_interface_vars: Dict[str, str] = {}
         active_scene_vars: set[str] = set()
         declared_actor_vars: Dict[str, ast.Call] = {}
@@ -526,6 +534,7 @@ class ProjectCompiler:
             declared_tile_vars.pop(name, None)
             declared_scene_vars.pop(name, None)
             declared_multiplayer_vars.pop(name, None)
+            declared_role_vars.pop(name, None)
             active_scene_vars.discard(name)
 
         def register_rule(
@@ -605,6 +614,11 @@ class ProjectCompiler:
                                 and resolved_call.func.id == "Multiplayer"
                             ):
                                 declared_multiplayer_vars[target.id] = resolved_call
+                            if (
+                                isinstance(resolved_call.func, ast.Name)
+                                and resolved_call.func.id == "Role"
+                            ):
+                                declared_role_vars[target.id] = resolved_call
                             if self._is_condition_expr(resolved_call):
                                 condition_vars[target.id] = self._parse_condition(
                                     resolved_call, compiler, predicates
@@ -776,6 +790,20 @@ class ProjectCompiler:
                                 declared_tile_vars.pop(target.id, None)
                                 declared_scene_vars.pop(target.id, None)
                                 active_scene_vars.discard(target.id)
+                            elif (
+                                isinstance(resolved_call.func, ast.Name)
+                                and resolved_call.func.id == "Role"
+                            ):
+                                declared_role_vars[target.id] = resolved_call
+                                declared_actor_vars.pop(target.id, None)
+                                declared_tile_map_vars.pop(target.id, None)
+                                declared_camera_vars.pop(target.id, None)
+                                declared_sprite_vars.pop(target.id, None)
+                                declared_color_vars.pop(target.id, None)
+                                declared_tile_vars.pop(target.id, None)
+                                declared_scene_vars.pop(target.id, None)
+                                declared_multiplayer_vars.pop(target.id, None)
+                                active_scene_vars.discard(target.id)
                             else:
                                 clear_declared_value(target.id)
                         else:
@@ -910,6 +938,22 @@ class ProjectCompiler:
                         )
                         continue
 
+                    if method_name == "add_role":
+                        if kwargs:
+                            raise DSLValidationError("add_role(...) does not accept keyword args.")
+                        if len(args) != 1:
+                            raise DSLValidationError("add_role(...) expects one argument.")
+                        role = self._parse_role(
+                            self._resolve_role_arg(args[0], declared_role_vars)
+                        )
+                        existing = roles_by_id.get(role.id)
+                        if existing is not None and existing != role:
+                            raise DSLValidationError(
+                                f"Role '{role.id}' is already declared with different settings."
+                            )
+                        roles_by_id[role.id] = role
+                        continue
+
                     if method_name == "add_global":
                         continue
 
@@ -1013,6 +1057,7 @@ class ProjectCompiler:
             scene,
             interface_html,
             multiplayer,
+            list(roles_by_id.values()),
         )
 
     def _apply_declared_actor_method_call(
@@ -1298,6 +1343,76 @@ class ProjectCompiler:
             game_time_scale=game_time_scale,
             max_catchup_steps=max_catchup_steps,
         )
+
+    def _resolve_role_arg(
+        self,
+        node: ast.AST,
+        declared_role_vars: Dict[str, ast.Call],
+    ) -> ast.AST:
+        if isinstance(node, ast.Name):
+            if node.id not in declared_role_vars:
+                raise DSLValidationError(
+                    f"Unknown Role variable '{node.id}' in add_role(...)."
+                )
+            return declared_role_vars[node.id]
+        return node
+
+    def _parse_role(self, node: ast.AST) -> RoleSpec:
+        if not isinstance(node, ast.Call):
+            raise DSLValidationError("add_role(...) expects Role(...).")
+        if not isinstance(node.func, ast.Name) or node.func.id != "Role":
+            raise DSLValidationError("add_role(...) expects Role(...).")
+        if node.args:
+            raise DSLValidationError("Role(...) only supports keyword arguments.")
+
+        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+        allowed = {"id", "required", "kind"}
+        unexpected = sorted(set(kwargs.keys()) - allowed)
+        if unexpected:
+            raise DSLValidationError(
+                f"Role(...) received unsupported arguments: {unexpected}"
+            )
+        if "id" not in kwargs:
+            raise DSLValidationError("Role(...) missing required argument: ['id']")
+
+        role_id = _expect_string(kwargs["id"], "role id")
+        if not role_id:
+            raise DSLValidationError("Role id must be a non-empty string.")
+
+        required = _expect_bool_or_default(kwargs.get("required"), "role required", True)
+        kind = _parse_role_kind(kwargs.get("kind"))
+        return RoleSpec(id=role_id, required=required, kind=kind)
+
+    def _validate_condition_role_ids(
+        self,
+        rules: List[RuleSpec],
+        roles: List[RoleSpec],
+    ) -> None:
+        declared = {role.id for role in roles}
+        for rule in rules:
+            condition = rule.condition
+            role_id: Optional[str] = None
+            if isinstance(condition, KeyboardConditionSpec):
+                role_id = condition.role_id
+            elif isinstance(condition, MouseConditionSpec):
+                role_id = condition.role_id
+            elif isinstance(condition, ToolConditionSpec):
+                role_id = condition.role_id
+
+            if role_id is None:
+                continue
+            if role_id in declared:
+                continue
+            if not declared:
+                raise DSLValidationError(
+                    f"Condition for action '{rule.action_name}' references role id '{role_id}', "
+                    "but no roles were declared via game.add_role(...)."
+                )
+            declared_list = ", ".join(sorted(declared))
+            raise DSLValidationError(
+                f"Condition for action '{rule.action_name}' references unknown role id '{role_id}'. "
+                f"Declared roles: {declared_list}."
+            )
 
     def _parse_global_value(
         self, node: ast.AST, compiler: DSLCompiler
@@ -1695,32 +1810,57 @@ class ProjectCompiler:
                 phase = _parse_keyboard_phase(method)
                 if phase is None:
                     raise DSLValidationError("Unsupported keyboard condition method.")
-                if len(node.args) != 1 or node.keywords:
+                kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+                unexpected = sorted(set(kwargs.keys()) - {"id"})
+                if unexpected:
                     raise DSLValidationError(
-                        "KeyboardCondition.<phase>(...) expects one argument."
+                        "KeyboardCondition.<phase>(...) only accepts optional keyword 'id'."
                     )
+                if len(node.args) not in {1, 2}:
+                    raise DSLValidationError(
+                        "KeyboardCondition.<phase>(...) expects key and optional role id."
+                    )
+                role_id = _expect_string(node.args[1], "condition role id") if len(node.args) == 2 else None
+                if len(node.args) == 2 and "id" in kwargs:
+                    raise DSLValidationError(
+                        "KeyboardCondition.<phase>(...) role id must be provided once."
+                    )
+                if role_id is None and "id" in kwargs:
+                    role_id = _expect_string(kwargs["id"], "condition role id")
                 return KeyboardConditionSpec(
                     key=_expect_string_or_string_list(node.args[0], "keyboard key"),
                     phase=phase,
+                    role_id=role_id,
                 )
 
             if owner == "MouseCondition":
                 phase = _parse_mouse_phase(method)
                 if phase is None:
                     raise DSLValidationError("Unsupported mouse condition method.")
-                if node.keywords:
+                kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+                unexpected = sorted(set(kwargs.keys()) - {"id"})
+                if unexpected:
                     raise DSLValidationError(
-                        "MouseCondition.<phase>(...) does not accept keyword args."
+                        "MouseCondition.<phase>(...) only accepts optional keyword 'id'."
                     )
-                if len(node.args) == 0:
-                    return MouseConditionSpec(button="left", phase=phase)
-                if len(node.args) == 1:
-                    return MouseConditionSpec(
-                        button=_expect_string(node.args[0], "mouse button"),
-                        phase=phase,
+                if len(node.args) > 2:
+                    raise DSLValidationError(
+                        "MouseCondition.<phase>(...) accepts button and optional role id."
                     )
-                raise DSLValidationError(
-                    "MouseCondition.<phase>(...) accepts zero or one argument."
+                button = "left"
+                if len(node.args) >= 1:
+                    button = _expect_string(node.args[0], "mouse button")
+                role_id = _expect_string(node.args[1], "condition role id") if len(node.args) == 2 else None
+                if len(node.args) == 2 and "id" in kwargs:
+                    raise DSLValidationError(
+                        "MouseCondition.<phase>(...) role id must be provided once."
+                    )
+                if role_id is None and "id" in kwargs:
+                    role_id = _expect_string(kwargs["id"], "condition role id")
+                return MouseConditionSpec(
+                    button=button,
+                    phase=phase,
+                    role_id=role_id,
                 )
 
         if (
@@ -1762,13 +1902,25 @@ class ProjectCompiler:
             return LogicalConditionSpec(predicate_name=predicate_name, target=selector)
 
         if isinstance(node.func, ast.Name) and node.func.id == "OnToolCall":
-            if len(node.args) != 2 or node.keywords:
+            kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+            unexpected = sorted(set(kwargs.keys()) - {"id"})
+            if unexpected:
                 raise DSLValidationError(
-                    "OnToolCall(...) expects tool name and tool docstring."
+                    "OnToolCall(...) only accepts optional keyword 'id'."
                 )
+            if len(node.args) not in {2, 3}:
+                raise DSLValidationError(
+                    "OnToolCall(...) expects tool name, docstring, and optional role id."
+                )
+            role_id = _expect_string(node.args[2], "condition role id") if len(node.args) == 3 else None
+            if len(node.args) == 3 and "id" in kwargs:
+                raise DSLValidationError("OnToolCall(...) role id must be provided once.")
+            if role_id is None and "id" in kwargs:
+                role_id = _expect_string(kwargs["id"], "condition role id")
             return ToolConditionSpec(
                 name=_expect_string(node.args[0], "tool name"),
                 tool_docstring=_expect_string(node.args[1], "tool docstring"),
+                role_id=role_id,
             )
 
         if isinstance(node.func, ast.Name) and node.func.id == "OnButton":
@@ -2962,6 +3114,35 @@ def _parse_visibility_mode(value: str) -> VisibilityMode:
             return mode
     allowed = ", ".join(mode.value for mode in VisibilityMode)
     raise DSLValidationError(f"Unsupported multiplayer visibility '{value}'. Expected one of: {allowed}.")
+
+
+def _parse_role_kind(node: Optional[ast.AST]) -> RoleKind:
+    if node is None:
+        return RoleKind.HYBRID
+
+    if isinstance(node, ast.Attribute):
+        if isinstance(node.value, ast.Name) and node.value.id == "RoleKind":
+            attr = node.attr.upper()
+            for kind in RoleKind:
+                if kind.name == attr:
+                    return kind
+            allowed = ", ".join(kind.name for kind in RoleKind)
+            raise DSLValidationError(
+                f"Unsupported RoleKind member '{node.attr}'. Expected one of: {allowed}."
+            )
+
+    kind_label = _expect_string(node, "role kind")
+    normalized = kind_label.strip().lower()
+    if normalized == "ai":
+        return RoleKind.AI
+    if normalized == "human":
+        return RoleKind.HUMAN
+    if normalized == "hybrid":
+        return RoleKind.HYBRID
+    allowed = ", ".join(kind.value for kind in RoleKind)
+    raise DSLValidationError(
+        f"Unsupported role kind '{kind_label}'. Expected one of: {allowed}."
+    )
 
 
 def _expect_string_or_string_list(node: ast.AST, label: str) -> str | List[str]:

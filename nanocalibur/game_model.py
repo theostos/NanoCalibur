@@ -7,6 +7,12 @@ from nanocalibur.ir import ActionIR, CallableIR, PredicateIR
 PrimitiveValue = Union[int, float, str, bool, None]
 ListValue = List[PrimitiveValue]
 
+try:
+    from enum import StrEnum  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - Python < 3.11 fallback
+    class StrEnum(str, Enum):
+        pass
+
 
 class SelectorKind(Enum):
     ANY = "any"
@@ -44,12 +50,14 @@ class InputPhase(Enum):
 class KeyboardConditionSpec:
     key: Union[str, List[str]]
     phase: InputPhase = InputPhase.ON
+    role_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class MouseConditionSpec:
     button: str
     phase: InputPhase = InputPhase.ON
+    role_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +82,7 @@ class LogicalConditionSpec:
 class ToolConditionSpec:
     name: str
     tool_docstring: str
+    role_id: Optional[str] = None
 
 
 ConditionSpec = Union[
@@ -163,6 +172,12 @@ class VisibilityMode(Enum):
     ROLE_FILTERED = "role_filtered"
 
 
+class RoleKind(StrEnum):
+    HUMAN = "human"
+    AI = "ai"
+    HYBRID = "hybrid"
+
+
 @dataclass(frozen=True)
 class CameraSpec:
     mode: CameraMode
@@ -183,6 +198,13 @@ class MultiplayerSpec:
     hybrid_window_ms: int = 500
     game_time_scale: float = 1.0
     max_catchup_steps: int = 1
+
+
+@dataclass(frozen=True)
+class RoleSpec:
+    id: str
+    required: bool = True
+    kind: RoleKind = RoleKind.HYBRID
 
 
 @dataclass(frozen=True)
@@ -239,4 +261,5 @@ class ProjectSpec:
     scene: Optional[SceneSpec]
     interface_html: Optional[str] = None
     multiplayer: Optional[MultiplayerSpec] = None
+    roles: List[RoleSpec] = field(default_factory=list)
     contains_next_turn_call: bool = False

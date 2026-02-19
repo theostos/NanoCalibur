@@ -18,6 +18,7 @@ from nanocalibur.game_model import (
     MouseConditionSpec,
     MultiplayerSpec,
     ProjectSpec,
+    RoleSpec,
     ResourceSpec,
     RuleSpec,
     SceneSpec,
@@ -54,6 +55,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
         "camera": _camera_to_dict(project.camera),
         "scene": _scene_to_dict(project.scene),
         "multiplayer": _multiplayer_to_dict(project.multiplayer),
+        "roles": [_role_to_dict(role) for role in project.roles],
         "interface_html": project.interface_html,
         "resources": [_resource_to_dict(resource) for resource in project.resources],
         "sprites": {
@@ -138,12 +140,14 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "kind": "keyboard",
             "phase": condition.phase.value,
             "key": condition.key,
+            "role_id": condition.role_id,
         }
     if isinstance(condition, MouseConditionSpec):
         return {
             "kind": "mouse",
             "phase": condition.phase.value,
             "button": condition.button,
+            "role_id": condition.role_id,
         }
     if isinstance(condition, ButtonConditionSpec):
         return {
@@ -168,6 +172,7 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "kind": "tool",
             "name": condition.name,
             "tool_docstring": condition.tool_docstring,
+            "role_id": condition.role_id,
         }
     raise TypeError(f"Unsupported condition: {condition!r}")
 
@@ -243,6 +248,14 @@ def _resource_to_dict(resource: ResourceSpec) -> Dict[str, Any]:
     return {
         "name": resource.name,
         "path": resource.path,
+    }
+
+
+def _role_to_dict(role: RoleSpec) -> Dict[str, Any]:
+    return {
+        "id": role.id,
+        "required": role.required,
+        "kind": role.kind.value,
     }
 
 
@@ -326,6 +339,7 @@ def _tools_to_dict(rules: list[RuleSpec]) -> list[Dict[str, Any]]:
             {
                 "name": condition.name,
                 "tool_docstring": condition.tool_docstring,
+                "role_id": condition.role_id,
                 "action": rule.action_name,
             }
         )

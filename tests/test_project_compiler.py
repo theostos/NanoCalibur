@@ -11,6 +11,7 @@ from nanocalibur.game_model import (
     KeyboardConditionSpec,
     MultiplayerLoopMode,
     MouseConditionSpec,
+    RoleKind,
     ToolConditionSpec,
     VisibilityMode,
 )
@@ -176,6 +177,61 @@ def test_turn_based_multiplayer_accepts_next_turn_call():
     )
 
     assert project.contains_next_turn_call is True
+
+
+def test_project_parses_roles_and_role_scoped_conditions():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        def move_right(player: Player["hero"]):
+            player.x = player.x + 1
+
+        def call_tool(player: Player["hero"]):
+            player.x = player.x + 2
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        game.add_role(Role(id="ai_1", required=False, kind="AI"))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move_right)
+        scene.add_rule(OnToolCall("bot_move", "bot move", id="ai_1"), call_tool)
+        """
+    )
+
+    assert [role.id for role in project.roles] == ["human_1", "ai_1"]
+    assert project.roles[0].kind == RoleKind.HUMAN
+    assert project.roles[1].kind == RoleKind.AI
+
+    keyboard_rule = project.rules[0]
+    assert isinstance(keyboard_rule.condition, KeyboardConditionSpec)
+    assert keyboard_rule.condition.role_id == "human_1"
+
+    tool_rule = project.rules[1]
+    assert isinstance(tool_rule.condition, ToolConditionSpec)
+    assert tool_rule.condition.role_id == "ai_1"
+
+
+def test_role_scoped_condition_requires_declared_role_id():
+    with pytest.raises(DSLValidationError, match="references role id 'missing_role'"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            def move_right(player: Player["hero"]):
+                player.x = player.x + 1
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_rule(KeyboardCondition.on_press("d", id="missing_role"), move_right)
+            """
+        )
 
 
 def test_logical_predicate_accepts_multiple_binding_types():

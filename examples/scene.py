@@ -7,6 +7,8 @@ from nanocalibur.dsl_markers import (
     Global,
     KeyboardCondition,
     Multiplayer,
+    Role,
+    RoleKind,
     OnOverlap,
     Scene,
     Sprite,
@@ -25,62 +27,62 @@ class Coin(Actor):
     pass
 
 
-@condition(KeyboardCondition.on_press("d"))
+@condition(KeyboardCondition.on_press("d", id="human_1"))
 def move_right(player: Player["hero"]):
     player.x = player.x + player.speed
     player.play("run")
 
-@condition(KeyboardCondition.on_press("q"))
+@condition(KeyboardCondition.on_press("q", id="human_1"))
 def move_left(player: Player["hero"]):
     player.x = player.x - player.speed
     player.play("run")
 
-@condition(KeyboardCondition.on_press("z"))
+@condition(KeyboardCondition.on_press("z", id="human_1"))
 def move_up(player: Player["hero"]):
     player.y = player.y - player.speed
     player.play("run")
 
-@condition(KeyboardCondition.on_press("s"))
+@condition(KeyboardCondition.on_press("s", id="human_1"))
 def move_down(player: Player["hero"]):
     player.y = player.y + player.speed
     player.play("run")
 
 
-@condition(KeyboardCondition.end_press(["z", "q", "s", "d"]))
+@condition(KeyboardCondition.end_press(["z", "q", "s", "d"], id="human_1"))
 def idle(player: Player["hero"]):
     player.play("idle")
 
 
-@condition(OnToolCall("llm_dummy_move_right", "Move llm_dummy right"))
+@condition(OnToolCall("llm_dummy_move_right", "Move llm_dummy right", id="dummy_1"))
 def llm_dummy_move_right(bot: Player["llm_dummy"]):
     bot.x = bot.x + bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_move_left", "Move llm_dummy left"))
+@condition(OnToolCall("llm_dummy_move_left", "Move llm_dummy left", id="dummy_1"))
 def llm_dummy_move_left(bot: Player["llm_dummy"]):
     bot.x = bot.x - bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_move_up", "Move llm_dummy up"))
+@condition(OnToolCall("llm_dummy_move_up", "Move llm_dummy up", id="dummy_1"))
 def llm_dummy_move_up(bot: Player["llm_dummy"]):
     bot.y = bot.y - bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_move_down", "Move llm_dummy down"))
+@condition(OnToolCall("llm_dummy_move_down", "Move llm_dummy down", id="dummy_1"))
 def llm_dummy_move_down(bot: Player["llm_dummy"]):
     bot.y = bot.y + bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_idle", "Set llm_dummy to idle animation"))
+@condition(OnToolCall("llm_dummy_idle", "Set llm_dummy to idle animation", id="dummy_1"))
 def llm_dummy_idle(bot: Player["llm_dummy"]):
     bot.play("idle")
 
 
-@condition(OnToolCall("llm_dummy_next_turn", "Advance scene turn"))
+@condition(OnToolCall("llm_dummy_next_turn", "Advance scene turn", id="dummy_1"))
 def llm_dummy_next_turn(scene: Scene):
     scene.next_turn()
 
@@ -95,17 +97,17 @@ def collect_coin(
         score = score + 1
 
 
-@condition(KeyboardCondition.begin_press("g"))
+@condition(KeyboardCondition.begin_press("g", id="human_1"))
 def enable_gravity(scene: Scene):
     scene.enable_gravity()
 
 
-@condition(KeyboardCondition.begin_press("h"))
+@condition(KeyboardCondition.begin_press("h", id="human_1"))
 def disable_gravity(scene: Scene):
     scene.disable_gravity()
 
-@condition(KeyboardCondition.begin_press("e"))
-@condition(OnToolCall("spawn_bonus", "Spawn one bonus coin near the hero"))
+@condition(KeyboardCondition.begin_press("e", id="human_1"))
+@condition(OnToolCall("spawn_bonus", "Spawn one bonus coin near the hero", id="human_1"))
 def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
     for _ in range(20):
         yield tick
@@ -123,6 +125,8 @@ def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
 game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
+game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+game.add_role(Role(id="dummy_1", required=True, kind=RoleKind.AI))
 game.set_multiplayer(
     Multiplayer(
         default_loop="hybrid",

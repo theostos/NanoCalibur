@@ -3,7 +3,14 @@
 These symbols are parsed from source with ``ast`` and are never executed at runtime.
 """
 
+from enum import Enum
 from typing import Any, Callable, TypeVar
+
+try:
+    from enum import StrEnum  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - Python < 3.11 fallback
+    class StrEnum(str, Enum):
+        pass
 
 
 class Global:
@@ -237,6 +244,27 @@ class Multiplayer:
         return None
 
 
+class RoleKind(StrEnum):
+    """Role kind for multiplayer slot assignment."""
+
+    HUMAN = "human"
+    AI = "ai"
+    HYBRID = "hybrid"
+
+
+class Role:
+    """Role declaration for multiplayer sessions."""
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        required: bool = True,
+        kind: RoleKind | str = RoleKind.HYBRID,
+    ):
+        return None
+
+
 class Game:
     """Top-level DSL game container."""
 
@@ -277,6 +305,10 @@ class Game:
         """Configure multiplayer loop and pacing defaults."""
         return None
 
+    def add_role(self, _role: Role):
+        """Declare a multiplayer role that can join sessions."""
+        return None
+
     def add_resource(self, _name: str, _path: str):
         """Declare an image resource by name and path."""
         return None
@@ -290,17 +322,17 @@ class KeyboardCondition:
     """Keyboard input condition helpers."""
 
     @staticmethod
-    def begin_press(_key: str | list[str]):
+    def begin_press(_key: str | list[str], id: str | None = None):
         """Trigger when a key is pressed this frame."""
         return None
 
     @staticmethod
-    def on_press(_key: str | list[str]):
+    def on_press(_key: str | list[str], id: str | None = None):
         """Trigger while a key is held."""
         return None
 
     @staticmethod
-    def end_press(_key: str | list[str]):
+    def end_press(_key: str | list[str], id: str | None = None):
         """Trigger when a key is released this frame."""
         return None
 
@@ -344,17 +376,17 @@ class MouseCondition:
     """Mouse input condition helpers."""
 
     @staticmethod
-    def begin_click(_button: str = "left"):
+    def begin_click(_button: str = "left", id: str | None = None):
         """Trigger when a mouse button is pressed this frame."""
         return None
 
     @staticmethod
-    def on_click(_button: str = "left"):
+    def on_click(_button: str = "left", id: str | None = None):
         """Trigger while a mouse button is held."""
         return None
 
     @staticmethod
-    def end_click(_button: str = "left"):
+    def end_click(_button: str = "left", id: str | None = None):
         """Trigger when a mouse button is released this frame."""
         return None
 
@@ -445,7 +477,7 @@ def OnLogicalCondition(_predicate, _selector):
     return None
 
 
-def OnToolCall(_name: str, _tool_docstring: str):
+def OnToolCall(_name: str, _tool_docstring: str, id: str | None = None):
     """Condition helper exposing an action as an external LLM-callable tool."""
     return None
 

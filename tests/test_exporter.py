@@ -293,3 +293,35 @@ def test_export_project_serializes_multiplayer_and_next_turn_metadata(tmp_path):
     assert spec["multiplayer"]["hybrid_window_ms"] == 1200
     assert spec["multiplayer"]["game_time_scale"] == 0.75
     assert spec["multiplayer"]["max_catchup_steps"] == 3
+
+
+def test_export_project_serializes_roles_and_role_scoped_conditions(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            pass
+
+        def move(player: Player["hero"]):
+            player.x = player.x + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", kind=RoleKind.HUMAN))
+        game.add_role(Role(id="ai_1", kind=RoleKind.AI, required=False))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move)
+        scene.add_rule(OnToolCall("bot_move", "move bot", id="ai_1"), move)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    assert spec["roles"] == [
+        {"id": "human_1", "kind": "human", "required": True},
+        {"id": "ai_1", "kind": "ai", "required": False},
+    ]
+    assert spec["rules"][0]["condition"]["role_id"] == "human_1"
+    assert spec["rules"][1]["condition"]["role_id"] == "ai_1"
+    assert spec["tools"][0]["role_id"] == "ai_1"
