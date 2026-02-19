@@ -13,11 +13,40 @@ import { SessionSeedStore } from "./replay_store_sqlite";
 declare const require: any;
 const crypto = require("crypto");
 
+export type SessionStatus = "created" | "running" | "stopped";
+
+export interface SessionRoleConfig {
+  id: string;
+  type?: string;
+  required?: boolean;
+}
+
+export interface SessionRoleView {
+  role_id: string;
+  role_type: string;
+  required: boolean;
+  connected: boolean;
+  open: boolean;
+}
+
+interface SessionRoleRecord {
+  id: string;
+  type: string;
+  required: boolean;
+  connected: boolean;
+  inviteToken: string;
+  accessToken: string | null;
+  joinedAt: number | null;
+}
+
 export interface SessionRecord {
   id: string;
   seed: string;
   runtime: SessionRuntime;
   createdAt: number;
+  status: SessionStatus;
+  adminToken: string;
+  roles: Map<string, SessionRoleRecord>;
 }
 
 export interface SessionManagerOptions {
@@ -27,12 +56,15 @@ export interface SessionManagerOptions {
 export interface SessionCreateOptions extends SessionRuntimeOptions {
   seed?: string;
   metadata?: Record<string, any>;
+  roles?: SessionRoleConfig[];
 }
 
 export class SessionManager {
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly reservedSeeds = new Set<string>();
   private readonly replayStore: SessionSeedStore | null;
+  private readonly inviteTokenIndex = new Map<string, { sessionId: string; roleId: string }>();
+  private readonly accessTokenIndex = new Map<string, { sessionId: string; roleId: string }>();
 
   constructor(options: SessionManagerOptions = {}) {
     this.replayStore = options.replayStore || null;
@@ -51,23 +83,43 @@ export class SessionManager {
     }
 
     const seed = this.reserveUniqueSeed(sessionId, options.seed, options.metadata || {});
+    const roleRecords = this.buildRoleRecords(options.roles);
+    const runtimeRoleOrder =
+      Array.isArray(options.roleOrder) && options.roleOrder.length > 0
+        ? options.roleOrder
+        : Array.from(roleRecords.keys());
     const runtime = new SessionRuntime(host, {
       loopMode: options.loopMode,
-      roleOrder: options.roleOrder,
+      roleOrder: runtimeRoleOrder,
       defaultStepSeconds: options.defaultStepSeconds,
       pace: options.pace,
     });
+
+    const adminToken = this.generateToken();
+    for (const role of roleRecords.values()) {
+      this.inviteTokenIndex.set(role.inviteToken, {
+        sessionId,
+        roleId: role.id,
+      });
+    }
+
     const record: SessionRecord = {
       id: sessionId,
       seed,
       runtime,
       createdAt: Date.now(),
+      status: "created",
+      adminToken,
+      roles: roleRecords,
     };
+
     this.sessions.set(sessionId, record);
+
     if (this.replayStore) {
       this.replayStore.appendEvent(sessionId, "session_created", {
         seed,
         loopMode: runtime.getLoopMode(),
+        roleCount: record.roles.size,
       });
     }
     return record;
@@ -82,7 +134,155 @@ export class SessionManager {
   }
 
   removeSession(sessionId: string): boolean {
-    return this.sessions.delete(sessionId);
+    const record = this.sessions.get(sessionId);
+    if (!record) {
+      return false;
+    }
+    this.sessions.delete(sessionId);
+    for (const role of record.roles.values()) {
+      this.inviteTokenIndex.delete(role.inviteToken);
+      if (role.accessToken) {
+        this.accessTokenIndex.delete(role.accessToken);
+      }
+    }
+    return true;
+  }
+
+  startSession(sessionId: string, adminToken: string): SessionStatus {
+    const session = this.requireAdminSession(sessionId, adminToken);
+    for (const role of session.roles.values()) {
+      if (role.required && !role.connected) {
+        throw new Error(
+          `Session '${sessionId}' cannot start: required role '${role.id}' is not connected.`,
+        );
+      }
+    }
+    session.status = "running";
+    if (this.replayStore) {
+      this.replayStore.appendEvent(sessionId, "session_started", {});
+    }
+    return session.status;
+  }
+
+  stopSession(sessionId: string, adminToken: string): SessionStatus {
+    const session = this.requireAdminSession(sessionId, adminToken);
+    session.status = "stopped";
+    if (this.replayStore) {
+      this.replayStore.appendEvent(sessionId, "session_stopped", {});
+    }
+    return session.status;
+  }
+
+  getSessionStatus(sessionId: string): SessionStatus {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    return session.status;
+  }
+
+  listSessionInvites(
+    sessionId: string,
+    adminToken: string,
+  ): Array<SessionRoleView & { invite_token: string }> {
+    const session = this.requireAdminSession(sessionId, adminToken);
+    return Array.from(session.roles.values()).map((role) => ({
+      role_id: role.id,
+      role_type: role.type,
+      required: role.required,
+      connected: role.connected,
+      open: role.accessToken === null,
+      invite_token: role.inviteToken,
+    }));
+  }
+
+  listOpenRoles(sessionId: string): SessionRoleView[] {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    return this.buildOpenRoleViews(session);
+  }
+
+  listAllOpenRoles(): Array<{ session_id: string } & SessionRoleView> {
+    const out: Array<{ session_id: string } & SessionRoleView> = [];
+    for (const [sessionId, session] of this.sessions.entries()) {
+      for (const role of this.buildOpenRoleViews(session)) {
+        out.push({
+          session_id: sessionId,
+          ...role,
+        });
+      }
+    }
+    return out;
+  }
+
+  joinWithInviteToken(inviteToken: string): {
+    sessionId: string;
+    roleId: string;
+    accessToken: string;
+  } {
+    const binding = this.inviteTokenIndex.get(inviteToken);
+    if (!binding) {
+      throw new Error("Invalid invite token.");
+    }
+    const session = this.sessions.get(binding.sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${binding.sessionId}'.`);
+    }
+    const role = session.roles.get(binding.roleId);
+    if (!role) {
+      throw new Error(`Unknown role '${binding.roleId}'.`);
+    }
+
+    if (role.accessToken) {
+      this.accessTokenIndex.delete(role.accessToken);
+    }
+
+    const accessToken = this.generateToken();
+    role.accessToken = accessToken;
+    role.connected = true;
+    role.joinedAt = Date.now();
+    this.accessTokenIndex.set(accessToken, {
+      sessionId: session.id,
+      roleId: role.id,
+    });
+
+    if (this.replayStore) {
+      this.replayStore.appendEvent(session.id, "role_joined", {
+        roleId: role.id,
+      });
+    }
+
+    return {
+      sessionId: session.id,
+      roleId: role.id,
+      accessToken,
+    };
+  }
+
+  validateAdminToken(sessionId: string, adminToken: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return false;
+    }
+    return session.adminToken === adminToken;
+  }
+
+  validateRoleToken(sessionId: string, accessToken: string): { roleId: string } | null {
+    const binding = this.accessTokenIndex.get(accessToken);
+    if (!binding || binding.sessionId !== sessionId) {
+      return null;
+    }
+    return { roleId: binding.roleId };
+  }
+
+  getAdminToken(sessionId: string): string {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    return session.adminToken;
   }
 
   enqueueCommand(sessionId: string, roleId: string, command: SessionCommand): void {
@@ -90,7 +290,24 @@ export class SessionManager {
     if (!session) {
       throw new Error(`Unknown session '${sessionId}'.`);
     }
+    if (!session.roles.has(roleId)) {
+      throw new Error(`Unknown role '${roleId}' in session '${sessionId}'.`);
+    }
     session.runtime.enqueue(roleId, command);
+  }
+
+  enqueueAuthorizedCommands(
+    sessionId: string,
+    accessToken: string,
+    commands: SessionCommand[],
+  ): void {
+    const role = this.validateRoleToken(sessionId, accessToken);
+    if (!role) {
+      throw new Error("Invalid role access token.");
+    }
+    for (const command of commands) {
+      this.enqueueCommand(sessionId, role.roleId, command);
+    }
   }
 
   tickSession(sessionId: string, dtSeconds?: number): SessionTickResult {
@@ -98,6 +315,13 @@ export class SessionManager {
     if (!session) {
       throw new Error(`Unknown session '${sessionId}'.`);
     }
+    if (session.status !== "running") {
+      return {
+        frame: session.runtime.getHost().getSymbolicFrame(),
+        state: session.runtime.getHost().getState(),
+      };
+    }
+
     const result = session.runtime.tick(dtSeconds);
     if (this.replayStore) {
       this.replayStore.appendEvent(
@@ -133,10 +357,22 @@ export class SessionManager {
     return session.runtime.getHost().getSymbolicFrame();
   }
 
+  getSessionTools(sessionId: string): Array<{ name: string; tool_docstring: string; action: string }> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    return session.runtime.getHost().listTools();
+  }
+
   updateSessionPace(
     sessionId: string,
     pace: SessionPaceConfig,
+    adminToken?: string,
   ): { gameTimeScale: number; maxCatchupSteps: number } {
+    if (adminToken) {
+      this.requireAdminSession(sessionId, adminToken);
+    }
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new Error(`Unknown session '${sessionId}'.`);
@@ -150,6 +386,64 @@ export class SessionManager {
       });
     }
     return resolved;
+  }
+
+  private requireAdminSession(sessionId: string, adminToken: string): SessionRecord {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    if (session.adminToken !== adminToken) {
+      throw new Error("Invalid admin token.");
+    }
+    return session;
+  }
+
+  private buildOpenRoleViews(session: SessionRecord): SessionRoleView[] {
+    return Array.from(session.roles.values())
+      .filter((role) => role.accessToken === null)
+      .map((role) => ({
+        role_id: role.id,
+        role_type: role.type,
+        required: role.required,
+        connected: role.connected,
+        open: role.accessToken === null,
+      }));
+  }
+
+  private buildRoleRecords(roleConfigs: SessionRoleConfig[] | undefined): Map<string, SessionRoleRecord> {
+    const source =
+      Array.isArray(roleConfigs) && roleConfigs.length > 0
+        ? roleConfigs
+        : [
+            {
+              id: "default",
+              type: "player",
+              required: true,
+            },
+          ];
+
+    const byId = new Map<string, SessionRoleRecord>();
+    for (const item of source) {
+      if (!item || typeof item.id !== "string" || !item.id) {
+        throw new Error("Each role requires a non-empty 'id'.");
+      }
+      if (byId.has(item.id)) {
+        throw new Error(`Duplicate role id '${item.id}'.`);
+      }
+      const record: SessionRoleRecord = {
+        id: item.id,
+        type: typeof item.type === "string" && item.type ? item.type : "player",
+        required: item.required !== false,
+        connected: false,
+        inviteToken: this.generateToken(),
+        accessToken: null,
+        joinedAt: null,
+      };
+      byId.set(record.id, record);
+    }
+
+    return byId;
   }
 
   private reserveUniqueSeed(
@@ -168,10 +462,7 @@ export class SessionManager {
     }
 
     for (let attempt = 0; attempt < 1024; attempt += 1) {
-      const generatedSeed =
-        crypto && typeof crypto.randomBytes === "function"
-          ? String(crypto.randomBytes(16).toString("hex"))
-          : "";
+      const generatedSeed = this.generateToken(16);
       if (!generatedSeed) {
         throw new Error("Node crypto.randomBytes(...) is unavailable.");
       }
@@ -216,5 +507,12 @@ export class SessionManager {
       return;
     }
     this.replayStore.reserveSeed(sessionId, seed, metadata);
+  }
+
+  private generateToken(bytes = 24): string {
+    if (!crypto || typeof crypto.randomBytes !== "function") {
+      throw new Error("Node crypto.randomBytes(...) is unavailable.");
+    }
+    return String(crypto.randomBytes(bytes).toString("hex"));
   }
 }
