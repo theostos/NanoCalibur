@@ -34,6 +34,8 @@ from nanocalibur.game_model import (
     InputPhase,
     KeyboardConditionSpec,
     LogicalConditionSpec,
+    MultiplayerLoopMode,
+    MultiplayerSpec,
     MouseConditionSpec,
     ProjectSpec,
     ResourceSpec,
@@ -44,6 +46,7 @@ from nanocalibur.game_model import (
     TileSpec,
     TileMapSpec,
     ToolConditionSpec,
+    VisibilityMode,
 )
 from nanocalibur.ir import (
     ActionIR,
@@ -118,6 +121,7 @@ class ProjectCompiler:
                 sprites,
                 scene,
                 interface_html,
+                multiplayer,
             ) = self._collect_game_setup(
                 module=module,
                 game_var=game_var,
@@ -220,6 +224,7 @@ class ProjectCompiler:
                 sprites=sprites,
                 scene=scene,
                 interface_html=interface_html,
+                multiplayer=multiplayer,
             )
 
     def _discover_game_variable(self, module: ast.Module) -> str:
@@ -466,6 +471,7 @@ class ProjectCompiler:
         List[SpriteSpec],
         Optional[SceneSpec],
         Optional[str],
+        Optional[MultiplayerSpec],
     ]:
         condition_vars: Dict[str, ConditionSpec] = {}
         actors: List[ActorInstanceSpec] = []
@@ -476,7 +482,9 @@ class ProjectCompiler:
         sprites: List[SpriteSpec] = []
         scene: Optional[SceneSpec] = None
         interface_html: Optional[str] = None
+        multiplayer: Optional[MultiplayerSpec] = None
         declared_scene_vars: Dict[str, SceneSpec] = {}
+        declared_multiplayer_vars: Dict[str, ast.Call] = {}
         declared_interface_vars: Dict[str, str] = {}
         active_scene_vars: set[str] = set()
         declared_actor_vars: Dict[str, ast.Call] = {}
@@ -501,6 +509,7 @@ class ProjectCompiler:
             declared_color_vars.pop(name, None)
             declared_tile_vars.pop(name, None)
             declared_scene_vars.pop(name, None)
+            declared_multiplayer_vars.pop(name, None)
             active_scene_vars.discard(name)
 
         def register_rule(
@@ -575,6 +584,11 @@ class ProjectCompiler:
                                 declared_scene_vars[target.id] = self._parse_scene(
                                     resolved_call
                                 )
+                            if (
+                                isinstance(resolved_call.func, ast.Name)
+                                and resolved_call.func.id == "Multiplayer"
+                            ):
+                                declared_multiplayer_vars[target.id] = resolved_call
                             if self._is_condition_expr(resolved_call):
                                 condition_vars[target.id] = self._parse_condition(
                                     resolved_call, compiler, predicates
@@ -733,6 +747,19 @@ class ProjectCompiler:
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
                                 active_scene_vars.discard(target.id)
+                            elif (
+                                isinstance(resolved_call.func, ast.Name)
+                                and resolved_call.func.id == "Multiplayer"
+                            ):
+                                declared_multiplayer_vars[target.id] = resolved_call
+                                declared_actor_vars.pop(target.id, None)
+                                declared_tile_map_vars.pop(target.id, None)
+                                declared_camera_vars.pop(target.id, None)
+                                declared_sprite_vars.pop(target.id, None)
+                                declared_color_vars.pop(target.id, None)
+                                declared_tile_vars.pop(target.id, None)
+                                declared_scene_vars.pop(target.id, None)
+                                active_scene_vars.discard(target.id)
                             else:
                                 clear_declared_value(target.id)
                         else:
@@ -852,6 +879,21 @@ class ProjectCompiler:
                         )
                         continue
 
+                    if method_name == "set_multiplayer":
+                        if kwargs:
+                            raise DSLValidationError(
+                                "set_multiplayer(...) does not accept keyword args."
+                            )
+                        if len(args) != 1:
+                            raise DSLValidationError("set_multiplayer(...) expects one argument.")
+                        multiplayer = self._parse_multiplayer(
+                            self._resolve_multiplayer_arg(
+                                args[0],
+                                declared_multiplayer_vars,
+                            )
+                        )
+                        continue
+
                     if method_name == "add_global":
                         continue
 
@@ -954,6 +996,7 @@ class ProjectCompiler:
             sprites,
             scene,
             interface_html,
+            multiplayer,
         )
 
     def _apply_declared_actor_method_call(
@@ -1115,6 +1158,129 @@ class ProjectCompiler:
             return declared_interface_vars[node.id]
         raise DSLValidationError(
             "set_interface(...) expects an HTML string or a variable bound to a string."
+        )
+
+    def _resolve_multiplayer_arg(
+        self,
+        node: ast.AST,
+        declared_multiplayer_vars: Dict[str, ast.Call],
+    ) -> ast.AST:
+        if isinstance(node, ast.Name):
+            if node.id not in declared_multiplayer_vars:
+                raise DSLValidationError(
+                    f"Unknown Multiplayer variable '{node.id}' in set_multiplayer(...)."
+                )
+            return declared_multiplayer_vars[node.id]
+        return node
+
+    def _parse_multiplayer(self, node: ast.AST) -> MultiplayerSpec:
+        if not isinstance(node, ast.Call):
+            raise DSLValidationError("set_multiplayer(...) expects Multiplayer(...).")
+        if not isinstance(node.func, ast.Name) or node.func.id != "Multiplayer":
+            raise DSLValidationError("set_multiplayer(...) expects Multiplayer(...).")
+        if node.args:
+            raise DSLValidationError("Multiplayer(...) only supports keyword arguments.")
+
+        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+        allowed = {
+            "default_loop",
+            "allowed_loops",
+            "default_visibility",
+            "tick_rate",
+            "turn_timeout_ms",
+            "hybrid_window_ms",
+            "game_time_scale",
+            "max_catchup_steps",
+        }
+        unexpected = sorted(set(kwargs.keys()) - allowed)
+        if unexpected:
+            raise DSLValidationError(
+                f"Multiplayer(...) received unsupported arguments: {unexpected}"
+            )
+
+        default_loop_label = _expect_string_or_default(
+            kwargs.get("default_loop"),
+            "multiplayer default_loop",
+            MultiplayerLoopMode.REAL_TIME.value,
+        )
+        if default_loop_label is None:
+            default_loop_label = MultiplayerLoopMode.REAL_TIME.value
+        default_loop = _parse_multiplayer_loop_mode(default_loop_label)
+
+        allowed_loops_node = kwargs.get("allowed_loops")
+        if allowed_loops_node is None:
+            allowed_loops = [default_loop]
+        else:
+            labels = _expect_string_list(allowed_loops_node, "multiplayer allowed_loops")
+            if not labels:
+                raise DSLValidationError("Multiplayer allowed_loops cannot be empty.")
+            allowed_loops = []
+            for label in labels:
+                mode = _parse_multiplayer_loop_mode(label)
+                if mode not in allowed_loops:
+                    allowed_loops.append(mode)
+
+        if default_loop not in allowed_loops:
+            raise DSLValidationError(
+                "Multiplayer default_loop must be included in allowed_loops."
+            )
+
+        default_visibility_label = _expect_string_or_default(
+            kwargs.get("default_visibility"),
+            "multiplayer default_visibility",
+            VisibilityMode.SHARED.value,
+        )
+        if default_visibility_label is None:
+            default_visibility_label = VisibilityMode.SHARED.value
+        default_visibility = _parse_visibility_mode(default_visibility_label)
+
+        tick_rate = _expect_int_or_default(kwargs.get("tick_rate"), "multiplayer tick_rate", 20)
+        if tick_rate <= 0:
+            raise DSLValidationError("Multiplayer tick_rate must be > 0.")
+
+        turn_timeout_ms = _expect_int_or_default(
+            kwargs.get("turn_timeout_ms"),
+            "multiplayer turn_timeout_ms",
+            15_000,
+        )
+        if turn_timeout_ms <= 0:
+            raise DSLValidationError("Multiplayer turn_timeout_ms must be > 0.")
+
+        hybrid_window_ms = _expect_int_or_default(
+            kwargs.get("hybrid_window_ms"),
+            "multiplayer hybrid_window_ms",
+            500,
+        )
+        if hybrid_window_ms <= 0:
+            raise DSLValidationError("Multiplayer hybrid_window_ms must be > 0.")
+
+        game_time_scale = _expect_float_or_default(
+            kwargs.get("game_time_scale"),
+            "multiplayer game_time_scale",
+            1.0,
+        )
+        if game_time_scale <= 0 or game_time_scale > 1.0:
+            raise DSLValidationError(
+                "Multiplayer game_time_scale must be > 0 and <= 1.0."
+            )
+
+        max_catchup_steps = _expect_int_or_default(
+            kwargs.get("max_catchup_steps"),
+            "multiplayer max_catchup_steps",
+            1,
+        )
+        if max_catchup_steps <= 0:
+            raise DSLValidationError("Multiplayer max_catchup_steps must be > 0.")
+
+        return MultiplayerSpec(
+            default_loop=default_loop,
+            allowed_loops=allowed_loops,
+            default_visibility=default_visibility,
+            tick_rate=tick_rate,
+            turn_timeout_ms=turn_timeout_ms,
+            hybrid_window_ms=hybrid_window_ms,
+            game_time_scale=game_time_scale,
+            max_catchup_steps=max_catchup_steps,
         )
 
     def _parse_global_value(
@@ -2716,6 +2882,15 @@ def _expect_string(node: ast.AST, label: str) -> str:
     raise DSLValidationError(f"Expected {label} string.")
 
 
+def _expect_string_list(node: ast.AST, label: str) -> List[str]:
+    if not isinstance(node, ast.List):
+        raise DSLValidationError(f"Expected {label} list.")
+    out: List[str] = []
+    for item in node.elts:
+        out.append(_expect_string(item, label))
+    return out
+
+
 def _expect_string_or_default(
     node: Optional[ast.AST],
     label: str,
@@ -2737,6 +2912,22 @@ def _expect_single_character_or_default(
     if len(value) != 1:
         raise DSLValidationError(f"Expected {label} to be exactly one character.")
     return value
+
+
+def _parse_multiplayer_loop_mode(value: str) -> MultiplayerLoopMode:
+    for mode in MultiplayerLoopMode:
+        if mode.value == value:
+            return mode
+    allowed = ", ".join(mode.value for mode in MultiplayerLoopMode)
+    raise DSLValidationError(f"Unsupported multiplayer loop mode '{value}'. Expected one of: {allowed}.")
+
+
+def _parse_visibility_mode(value: str) -> VisibilityMode:
+    for mode in VisibilityMode:
+        if mode.value == value:
+            return mode
+    allowed = ", ".join(mode.value for mode in VisibilityMode)
+    raise DSLValidationError(f"Unsupported multiplayer visibility '{value}'. Expected one of: {allowed}.")
 
 
 def _expect_string_or_string_list(node: ast.AST, label: str) -> str | List[str]:
