@@ -20,8 +20,12 @@ from nanocalibur.ir import Attr, BindingKind
 from nanocalibur.project_compiler import ProjectCompiler
 
 
-def compile_project(source: str, source_path: str | None = None):
-    return ProjectCompiler().compile(textwrap.dedent(source), source_path=source_path)
+def compile_project(source: str, source_path: str | None = None, **kwargs):
+    return ProjectCompiler().compile(
+        textwrap.dedent(source),
+        source_path=source_path,
+        **kwargs,
+    )
 
 
 def test_compile_project_with_conditions_map_and_camera():
@@ -1648,3 +1652,140 @@ def test_callable_dependency_chain_is_retained_when_referenced():
 
     callable_names = sorted(callable_fn.name for callable_fn in project.callables)
     assert callable_names == ["add_one", "add_two"]
+
+
+def test_require_code_blocks_ignores_unboxed_statements_and_hints_flag():
+    with pytest.warns(UserWarning, match="--allow-unboxed"):
+        with pytest.raises(DSLValidationError, match="must declare a game object"):
+            compile_project(
+                """
+                import math
+
+                class Player(Actor):
+                    pass
+
+                game = Game()
+                scene = Scene(gravity=False)
+                game.set_scene(scene)
+                scene.add_actor(Player(uid="hero", x=0, y=0))
+                """,
+                require_code_blocks=True,
+            )
+
+
+def test_require_code_blocks_keeps_imports_and_compiles_boxed_statements():
+    project = compile_project(
+        """
+        import math
+
+        CodeBlock.begin("core", descr="main setup")
+
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+
+        CodeBlock.end("core")
+        """,
+        require_code_blocks=True,
+    )
+
+    assert len(project.actors) == 1
+    assert project.actors[0].uid == "hero"
+
+
+def test_abstract_code_block_instantiation_expands_rules_and_selectors():
+    project = compile_project(
+        """
+        AbstractCodeBlock.begin(
+            "player_controls",
+            id=str,
+            hero_name=str,
+            descr="keyboard movement",
+        )
+
+        @condition(KeyboardCondition.on_press("d", id=id))
+        def move_right(player: Player[hero_name]):
+            player.x = player.x + 1
+
+        AbstractCodeBlock.end("player_controls")
+
+        AbstractCodeBlock.instantiate(
+            "player_controls",
+            id="human_1",
+            hero_name="hero_1",
+        )
+        AbstractCodeBlock.instantiate(
+            "player_controls",
+            id="human_2",
+            hero_name="hero_2",
+        )
+
+        CodeBlock.begin("main")
+
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        game.add_role(Role(id="human_2", required=True, kind=RoleKind.HUMAN))
+        scene.add_actor(Player(uid="hero_1", x=0, y=0))
+        scene.add_actor(Player(uid="hero_2", x=1, y=0))
+
+        CodeBlock.end("main")
+        """,
+        require_code_blocks=True,
+    )
+
+    assert len(project.rules) == 2
+    role_ids = sorted(rule.condition.role_id for rule in project.rules)  # type: ignore[attr-defined]
+    assert role_ids == ["human_1", "human_2"]
+    assert len(project.actions) == 2
+    assert project.actions[0].name != project.actions[1].name
+
+
+def test_abstract_code_block_warns_when_not_instantiated():
+    with pytest.warns(UserWarning, match="never instantiated"):
+        compile_project(
+            """
+            AbstractCodeBlock.begin("unused", id=str, descr="unused template")
+
+            @condition(KeyboardCondition.on_press("d", id=id))
+            def move_right(player: Player["hero"]):
+                player.x = player.x + 1
+
+            AbstractCodeBlock.end("unused")
+
+            CodeBlock.begin("main")
+
+            class Player(Actor):
+                pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+
+            CodeBlock.end("main")
+            """,
+            require_code_blocks=True,
+        )
+
+
+def test_code_block_without_end_raises_error():
+    with pytest.raises(DSLValidationError, match="never closed"):
+        compile_project(
+            """
+            CodeBlock.begin("main")
+
+            class Player(Actor):
+                pass
+            """,
+            require_code_blocks=True,
+        )

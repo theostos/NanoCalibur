@@ -337,6 +337,45 @@ class Game:
         return None
 
 
+class CodeBlock:
+    """Top-level structural block marker for DSL authoring."""
+
+    @staticmethod
+    def begin(_id: str, *, descr: str | None = None):
+        """Start a code block identified by ``_id``."""
+        return None
+
+    @staticmethod
+    def end(_id: str | None = None):
+        """Close the current code block."""
+        return None
+
+
+class AbstractCodeBlock(CodeBlock):
+    """Template block marker that requires explicit ``instantiate(...)`` calls."""
+
+    @staticmethod
+    def begin(_id: str, **_params_and_descr):
+        """Start an abstract code block template.
+
+        Supported keywords:
+        - ``descr=...`` for human-readable description
+        - parameter declarations such as ``id=str``, ``hero_name=str``
+        - optional ``params={...}`` dict declaration form
+        """
+        return AbstractCodeBlock()
+
+    @staticmethod
+    def end(_id: str | None = None):
+        """Close the current abstract code block template."""
+        return None
+
+    @staticmethod
+    def instantiate(_id: str, **_values):
+        """Instantiate an abstract block by id with constant values."""
+        return None
+
+
 class KeyboardCondition:
     """Keyboard input condition helpers."""
 

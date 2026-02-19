@@ -31,9 +31,20 @@ from nanocalibur.ts_generator import TSGenerator
 from nanocalibur.ir import ParamBinding
 
 
-def compile_project(source: str, source_path: str | None = None) -> ProjectSpec:
+def compile_project(
+    source: str,
+    source_path: str | None = None,
+    *,
+    require_code_blocks: bool = False,
+    unboxed_disable_flag: str = "--allow-unboxed",
+) -> ProjectSpec:
     """Compile DSL source into a :class:`ProjectSpec`."""
-    return ProjectCompiler().compile(source, source_path=source_path)
+    return ProjectCompiler().compile(
+        source,
+        source_path=source_path,
+        require_code_blocks=require_code_blocks,
+        unboxed_disable_flag=unboxed_disable_flag,
+    )
 
 
 def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
@@ -90,9 +101,21 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
     }
 
 
-def export_project(source: str, output_dir: str, source_path: str | None = None) -> ProjectSpec:
+def export_project(
+    source: str,
+    output_dir: str,
+    source_path: str | None = None,
+    *,
+    require_code_blocks: bool = False,
+    unboxed_disable_flag: str = "--allow-unboxed",
+) -> ProjectSpec:
     """Compile and write spec/IR/TypeScript outputs to ``output_dir``."""
-    project = compile_project(source, source_path=source_path)
+    project = compile_project(
+        source,
+        source_path=source_path,
+        require_code_blocks=require_code_blocks,
+        unboxed_disable_flag=unboxed_disable_flag,
+    )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

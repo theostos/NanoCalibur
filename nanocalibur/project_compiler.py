@@ -11,6 +11,7 @@ from nanocalibur.compiler import (
     CALLABLE_EXPR_PREFIX,
     DSLCompiler,
 )
+from nanocalibur.codeblocks import preprocess_code_blocks
 from nanocalibur.errors import (
     DSLValidationError,
     dsl_node_context,
@@ -87,7 +88,14 @@ class ProjectCompiler:
     def __init__(self) -> None:
         self._source_dir = Path.cwd()
 
-    def compile(self, source: str, source_path: str | Path | None = None) -> ProjectSpec:
+    def compile(
+        self,
+        source: str,
+        source_path: str | Path | None = None,
+        *,
+        require_code_blocks: bool = False,
+        unboxed_disable_flag: str = "--allow-unboxed",
+    ) -> ProjectSpec:
         """Compile a full DSL project source into structured project metadata."""
         if source_path is not None:
             self._source_dir = Path(source_path).resolve().parent
@@ -95,10 +103,16 @@ class ProjectCompiler:
             self._source_dir = Path.cwd()
 
         with dsl_source_context(source):
+            preprocessed_source = preprocess_code_blocks(
+                source,
+                require_code_blocks=require_code_blocks,
+                unboxed_disable_flag=unboxed_disable_flag,
+            )
+        with dsl_source_context(preprocessed_source):
             try:
-                module = ast.parse(source)
+                module = ast.parse(preprocessed_source)
             except SyntaxError as exc:
-                raise DSLValidationError(_format_syntax_error(exc, source)) from exc
+                raise DSLValidationError(_format_syntax_error(exc, preprocessed_source)) from exc
 
             compiler = DSLCompiler()
 
@@ -658,6 +672,9 @@ class ProjectCompiler:
 
         for node in module.body:
             with dsl_node_context(node):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    continue
+
                 if not isinstance(node, (ast.FunctionDef, ast.Assign, ast.Expr, ast.ClassDef)):
                     warnings.warn(
                         format_dsl_diagnostic(
