@@ -52,7 +52,7 @@ def idle(player: Player["hero"]):
     player.play("idle")
 
 
-def llm_dummy_is_active(bot: Player["llm_dummy"]) -> bool:
+def llm_dummy_is_active(bot: Player) -> bool:
     return bot.active
 
 
