@@ -73,10 +73,11 @@ async function main() {
       const result = await requestJson(`/sessions/${encodeURIComponent(sessionId)}/commands`, 'POST', {
         access_token: accessToken,
         commands: [pickToolCommand(llmTools)],
+        tick: false,
       });
       const elapsed = result?.state?.scene?.elapsed;
       const turn = result?.state?.scene?.turn;
-      console.log(`[dummy] tick elapsed=${elapsed} turn=${turn}`);
+      console.log(`[dummy] queued elapsed=${elapsed} turn=${turn}`);
     } catch (error) {
       console.error('[dummy] command error:', error.message || String(error));
     }

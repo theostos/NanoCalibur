@@ -175,6 +175,7 @@ async function main() {
       await requestJson(`/sessions/${encodeURIComponent(sessionId)}/commands`, 'POST', {
         access_token: accessToken,
         commands: [command],
+        tick: false,
       });
     } catch (error) {
       console.error(`\n[human] command error: ${error.message || String(error)}`);

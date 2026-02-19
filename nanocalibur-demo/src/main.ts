@@ -229,6 +229,35 @@ function formatSessionSnapshot(snapshot: SessionSnapshot): string {
   return `${header}${formatSymbolicFrame(snapshot.frame)}`;
 }
 
+function hasSnapshotSceneProgress(
+  previous: SessionSnapshot | null,
+  next: SessionSnapshot,
+): boolean {
+  if (!previous) {
+    return true;
+  }
+  const previousScene = previous.state?.scene || {};
+  const nextScene = next.state?.scene || {};
+  const previousElapsed =
+    typeof previousScene.elapsed === 'number' ? previousScene.elapsed : null;
+  const nextElapsed =
+    typeof nextScene.elapsed === 'number' ? nextScene.elapsed : null;
+  if (previousElapsed !== null && nextElapsed !== null && previousElapsed !== nextElapsed) {
+    return true;
+  }
+  const previousTurn =
+    typeof previousScene.turn === 'number' ? previousScene.turn : null;
+  const nextTurn =
+    typeof nextScene.turn === 'number' ? nextScene.turn : null;
+  if (previousTurn !== null && nextTurn !== null && previousTurn !== nextTurn) {
+    return true;
+  }
+  if (previousElapsed === null || nextElapsed === null) {
+    return true;
+  }
+  return false;
+}
+
 async function requestJson(
   baseUrl: string,
   path: string,
@@ -398,9 +427,12 @@ async function startSessionBrowserClient(
         },
       );
       if (response && typeof response === 'object' && response.state && response.frame) {
-        const currentElapsed = latestSnapshot?.state?.scene?.elapsed;
-        const nextElapsed = (response.state as Record<string, any>)?.scene?.elapsed;
-        if (typeof currentElapsed !== 'number' || nextElapsed !== currentElapsed) {
+        const candidate: SessionSnapshot = {
+          session_id: sessionId,
+          frame: response.frame as SymbolicFrame,
+          state: response.state as Record<string, any>,
+        };
+        if (hasSnapshotSceneProgress(latestSnapshot, candidate)) {
           renderSnapshot({
             session_id: sessionId,
             frame: response.frame as SymbolicFrame,
@@ -483,7 +515,9 @@ async function startSessionBrowserClient(
         }
         try {
           const snapshot = JSON.parse(dataPayload) as SessionSnapshot;
-          renderSnapshot(snapshot);
+          if (hasSnapshotSceneProgress(latestSnapshot, snapshot)) {
+            renderSnapshot(snapshot);
+          }
         } catch (error) {
           console.error('Invalid session snapshot payload', error);
         }
