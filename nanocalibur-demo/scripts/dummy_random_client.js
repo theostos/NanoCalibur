@@ -10,14 +10,13 @@ if (!inviteToken) {
   process.exit(1);
 }
 
-const keys = ['z', 'q', 's', 'd'];
-
-async function requestJson(path, method, payload) {
+async function requestJson(path, method, payload, extraHeaders = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      ...extraHeaders,
     },
     body: payload ? JSON.stringify(payload) : undefined,
   });
@@ -31,13 +30,14 @@ async function requestJson(path, method, payload) {
   return decoded;
 }
 
-function randomMoveCommand() {
-  const key = keys[Math.floor(Math.random() * keys.length)];
+function pickToolCommand(toolNames) {
+  if (!Array.isArray(toolNames) || toolNames.length === 0) {
+    return { kind: 'noop' };
+  }
+  const index = Math.floor(Math.random() * toolNames.length);
   return {
-    kind: 'input',
-    keyboard: {
-      on: [key],
-    },
+    kind: 'tool',
+    name: toolNames[index],
   };
 }
 
@@ -50,13 +50,29 @@ async function main() {
   const accessToken = joined.access_token;
   const roleId = joined.role_id;
 
+  const toolsPayload = await requestJson(
+    `/sessions/${encodeURIComponent(sessionId)}/tools`,
+    'GET',
+    null,
+    { 'x-role-token': accessToken },
+  );
+  const allTools = Array.isArray(toolsPayload?.tools) ? toolsPayload.tools : [];
+  const llmTools = allTools
+    .map((item) => (item && typeof item.name === 'string' ? item.name : ''))
+    .filter((name) => name.startsWith('llm_dummy_'));
+
+  if (llmTools.length === 0) {
+    console.error('[dummy] no llm_dummy_* tools found in session; sending noop commands.');
+  } else {
+    console.log(`[dummy] discovered tools: ${llmTools.join(', ')}`);
+  }
   console.log(`[dummy] joined session=${sessionId} role=${roleId}`);
 
   const timer = setInterval(async () => {
     try {
       const result = await requestJson(`/sessions/${encodeURIComponent(sessionId)}/commands`, 'POST', {
         access_token: accessToken,
-        commands: [randomMoveCommand()],
+        commands: [pickToolCommand(llmTools)],
       });
       const elapsed = result?.state?.scene?.elapsed;
       const turn = result?.state?.scene?.turn;
