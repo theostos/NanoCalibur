@@ -1456,17 +1456,19 @@ def test_scene_set_interface_accepts_literal_and_alias_variable():
     assert 'data-button="spawn_bonus"' in project.interface_html
 
 
-def test_game_set_interface_is_still_supported_for_legacy_projects():
-    project = compile_project(
-        '''
-        game = Game()
-        scene = Scene(gravity=False)
-        game.set_scene(scene)
-        game.set_interface("<div>Legacy</div>")
-        '''
-    )
-
-    assert project.interface_html == "<div>Legacy</div>"
+def test_game_set_interface_is_rejected():
+    with pytest.raises(
+        DSLValidationError,
+        match="game.set_interface\\(\\.\\.\\.\\) is no longer supported; use scene.set_interface\\(\\.\\.\\.\\)",
+    ):
+        compile_project(
+            '''
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.set_interface("<div>Legacy</div>")
+            '''
+        )
 
 
 def test_legacy_condition_helpers_are_rejected():

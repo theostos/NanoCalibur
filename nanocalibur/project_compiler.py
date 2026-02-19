@@ -926,18 +926,6 @@ class ProjectCompiler:
                             active_scene_vars.add(scene_var)
                         continue
 
-                    if method_name == "set_interface":
-                        if kwargs:
-                            raise DSLValidationError(
-                                "set_interface(...) does not accept keyword args."
-                            )
-                        if len(args) != 1:
-                            raise DSLValidationError("set_interface(...) expects one argument.")
-                        interface_html = self._resolve_interface_html_arg(
-                            args[0], declared_interface_vars
-                        )
-                        continue
-
                     if method_name == "set_multiplayer":
                         if kwargs:
                             raise DSLValidationError(
@@ -972,6 +960,11 @@ class ProjectCompiler:
 
                     if method_name == "add_global":
                         continue
+
+                    if method_name == "set_interface":
+                        raise DSLValidationError(
+                            "game.set_interface(...) is no longer supported; use scene.set_interface(...)."
+                        )
 
                     raise DSLValidationError(f"Unsupported game method '{method_name}'.")
 

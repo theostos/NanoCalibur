@@ -320,10 +320,6 @@ class Game:
         """Configure scene runtime settings."""
         return None
 
-    def set_interface(self, _html: str):
-        """Configure an HTML overlay rendered above the canvas (legacy; prefer scene.set_interface)."""
-        return None
-
     def set_multiplayer(self, _multiplayer: Multiplayer):
         """Configure multiplayer loop and pacing defaults."""
         return None

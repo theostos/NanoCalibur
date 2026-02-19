@@ -115,7 +115,7 @@ scene.set_camera(Camera.follow("hero"))
 Note: interface HTML is not injected by default. Add it explicitly only when needed:
 
 ```python
-game.set_interface("<div>Score: {{score}}</div>")
+scene.set_interface("<div>Score: {{score}}</div>")
 ```
 
 ## 3. Generate NanoCalibur Output
