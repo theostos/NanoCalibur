@@ -1,5 +1,7 @@
-const GLOBAL_PLACEHOLDER_RE = /{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}/g;
-const HAS_GLOBAL_PLACEHOLDER_RE = /{{\s*[A-Za-z_][A-Za-z0-9_]*\s*}}/;
+const GLOBAL_PLACEHOLDER_RE =
+  /{{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*}}/g;
+const HAS_GLOBAL_PLACEHOLDER_RE =
+  /{{\s*[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\s*}}/;
 
 interface TextBinding {
   node: Text;
@@ -64,7 +66,7 @@ export class InterfaceOverlay {
     for (const binding of this.textBindings) {
       binding.node.textContent = binding.template.replace(
         GLOBAL_PLACEHOLDER_RE,
-        (_all, name: string) => this.formatGlobalValue(globals[name]),
+        (_all, path: string) => this.formatGlobalValue(this.resolvePath(globals, path)),
       );
     }
   }
@@ -154,5 +156,20 @@ export class InterfaceOverlay {
     } catch {
       return String(value);
     }
+  }
+
+  private resolvePath(root: Record<string, any>, path: string): unknown {
+    if (!root || typeof root !== "object") {
+      return undefined;
+    }
+    const parts = path.split(".");
+    let current: unknown = root;
+    for (const part of parts) {
+      if (!current || typeof current !== "object") {
+        return undefined;
+      }
+      current = (current as Record<string, any>)[part];
+    }
+    return current;
   }
 }

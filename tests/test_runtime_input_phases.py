@@ -177,6 +177,91 @@ def test_runtime_keyboard_normalization_and_scene_aliases(tmp_path):
     assert values["layout"] == 1
 
 
+def test_runtime_role_state_and_context_binding(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [],
+          roles: [
+            {{
+              id: "human_1",
+              kind: "human",
+              type: "HumanRole",
+              required: true,
+              fields: {{ score: 1 }}
+            }},
+            {{
+              id: "human_2",
+              kind: "human",
+              type: "HumanRole",
+              required: true,
+              fields: {{ score: 5 }}
+            }}
+          ],
+          predicates: [],
+          rules: [
+            {{
+              condition: {{ kind: "keyboard", phase: "begin", key: "E", role_id: "human_1" }},
+              action: "inc"
+            }}
+          ]
+        }};
+
+        const actions = {{
+          inc: (ctx) => {{
+            const role = ctx.getRoleById("human_1");
+            role.score = role.score + 1;
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{ keyboard: {{ begin: ["E"] }}, role_id: "human_1" }});
+        const state = i.getState();
+        console.log(JSON.stringify({{
+          human1: state.roles.human_1.score,
+          human2: state.roles.human_2.score
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["human1"] == 2
+    assert values["human2"] == 5
+
+
 def test_runtime_tool_condition_and_tools_metadata(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"

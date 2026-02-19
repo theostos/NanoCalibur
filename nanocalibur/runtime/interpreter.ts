@@ -56,9 +56,11 @@ export interface InterpreterSceneState {
 export interface InterpreterState {
   globals: Record<string, any>;
   actors: Record<string, any>[];
+  roles: Record<string, any>;
   camera: Record<string, any> | null;
   map: Record<string, any> | null;
   scene: InterpreterSceneState;
+  self?: Record<string, any> | null;
 }
 
 export interface RuntimeHooks {
@@ -101,6 +103,7 @@ export class NanoCaliburInterpreter {
   private readonly actorRefGlobals = new Map<string, string>();
   private readonly runningActions: ActionGenerator[] = [];
   private readonly sceneState: InterpreterSceneState;
+  private readonly rolesById: Record<string, any>;
   private readonly keyboardAliasLookup: Map<string, Set<string>>;
   private runtimeHooks: RuntimeHooks;
 
@@ -123,6 +126,7 @@ export class NanoCaliburInterpreter {
     this.predicateMeta = this.buildPredicateMeta(this.spec.predicates || []);
     this.maskedTiles = this.buildMaskedTileSet(this.map);
     this.sceneState = this.initSceneState(this.spec.scene || null);
+    this.rolesById = this.initRoles(this.spec.roles || []);
     this.keyboardAliasLookup = this.buildKeyboardAliasLookup(this.spec.scene || null);
   }
 
@@ -158,6 +162,7 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      roles: this.rolesById,
       camera: this.getCameraState(),
       map: this.map,
       scene: {
@@ -251,6 +256,7 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      roles: this.rolesById,
       tick: 1,
       elapsed: this.sceneState.elapsed,
       getActorByUid: (uid: string) => {
@@ -264,6 +270,7 @@ export class NanoCaliburInterpreter {
         }
         return this.getActorByUid(uid);
       },
+      getRoleById: (id: string) => this.getRoleById(id),
       playAnimation: this.runtimeHooks.playAnimation,
       destroyActor: (actor: Record<string, any>) => this.destroyActor(actor),
       scene: {
@@ -287,6 +294,7 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      roles: this.rolesById,
       tick: 1,
       elapsed: this.sceneState.elapsed,
       getActorByUid: (uid: string) => {
@@ -295,6 +303,7 @@ export class NanoCaliburInterpreter {
         }
         return this.getActorByUid(uid);
       },
+      getRoleById: (id: string) => this.getRoleById(id),
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
@@ -362,6 +371,45 @@ export class NanoCaliburInterpreter {
       }
       return out;
     });
+  }
+
+  private initRoles(roleSpecs: Record<string, any>[]): Record<string, any> {
+    const out: Record<string, any> = {};
+    if (!Array.isArray(roleSpecs)) {
+      return out;
+    }
+    for (const role of roleSpecs) {
+      if (!role || typeof role !== "object") {
+        continue;
+      }
+      const id = typeof role.id === "string" ? role.id : "";
+      if (!id) {
+        continue;
+      }
+      const roleFields =
+        role.fields && typeof role.fields === "object"
+          ? { ...(role.fields as Record<string, any>) }
+          : {};
+      out[id] = {
+        id,
+        type: typeof role.type === "string" ? role.type : "Role",
+        kind: typeof role.kind === "string" ? role.kind : "hybrid",
+        required: typeof role.required === "boolean" ? role.required : true,
+        ...roleFields,
+      };
+    }
+    return out;
+  }
+
+  private getRoleById(id: string): Record<string, any> | null {
+    if (typeof id !== "string" || !id) {
+      return null;
+    }
+    const role = this.rolesById[id];
+    if (!role || typeof role !== "object") {
+      return null;
+    }
+    return role;
   }
 
   private initSceneState(sceneSpec: Record<string, any> | null): InterpreterSceneState {

@@ -11,6 +11,11 @@ export interface HeadlessHttpServerOptions {
   port?: number;
 }
 
+interface SessionViewer {
+  isAdmin: boolean;
+  roleId: string | null;
+}
+
 export class HeadlessHttpServer {
   private readonly host: HeadlessHost;
   private readonly sessionManager: SessionManager | null;
@@ -348,6 +353,11 @@ export class HeadlessHttpServer {
         this.respondJson(res, 401, { error: "Missing role access token." });
         return true;
       }
+      const roleBinding = this.sessionManager.validateRoleToken(sessionId, accessToken);
+      if (!roleBinding) {
+        this.respondJson(res, 401, { error: "Invalid role access token." });
+        return true;
+      }
       const commands = this.normalizeSessionCommands(payload.commands);
       this.sessionManager.enqueueAuthorizedCommands(sessionId, accessToken, commands);
       const shouldTick = payload.tick !== false;
@@ -359,7 +369,10 @@ export class HeadlessHttpServer {
           };
       this.respondJson(res, 200, {
         frame: result.frame,
-        state: result.state,
+        state: this.scopeStateForViewer(result.state, {
+          isAdmin: false,
+          roleId: roleBinding.roleId,
+        }),
       });
       return true;
     }
@@ -367,7 +380,8 @@ export class HeadlessHttpServer {
     const frameMatch = /^\/sessions\/([^/]+)\/frame$/.exec(url.pathname);
     if (method === "GET" && frameMatch) {
       const sessionId = decodeURIComponent(frameMatch[1]);
-      if (!this.hasSessionAccess(req, url, sessionId)) {
+      const viewer = this.resolveSessionViewer(req, url, sessionId, null);
+      if (!viewer) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
@@ -381,13 +395,17 @@ export class HeadlessHttpServer {
     const stateMatch = /^\/sessions\/([^/]+)\/state$/.exec(url.pathname);
     if (method === "GET" && stateMatch) {
       const sessionId = decodeURIComponent(stateMatch[1]);
-      if (!this.hasSessionAccess(req, url, sessionId)) {
+      const viewer = this.resolveSessionViewer(req, url, sessionId, null);
+      if (!viewer) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
       this.respondJson(res, 200, {
         session_id: sessionId,
-        state: this.sessionManager.getSessionState(sessionId),
+        state: this.scopeStateForViewer(
+          this.sessionManager.getSessionState(sessionId),
+          viewer,
+        ),
       });
       return true;
     }
@@ -395,7 +413,8 @@ export class HeadlessHttpServer {
     const toolsMatch = /^\/sessions\/([^/]+)\/tools$/.exec(url.pathname);
     if (method === "GET" && toolsMatch) {
       const sessionId = decodeURIComponent(toolsMatch[1]);
-      if (!this.hasSessionAccess(req, url, sessionId)) {
+      const viewer = this.resolveSessionViewer(req, url, sessionId, null);
+      if (!viewer) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
@@ -409,7 +428,8 @@ export class HeadlessHttpServer {
     const streamMatch = /^\/sessions\/([^/]+)\/stream$/.exec(url.pathname);
     if (method === "GET" && streamMatch) {
       const sessionId = decodeURIComponent(streamMatch[1]);
-      if (!this.hasSessionAccess(req, url, sessionId)) {
+      const viewer = this.resolveSessionViewer(req, url, sessionId, null);
+      if (!viewer) {
         this.respondJson(res, 401, { error: "Unauthorized." });
         return true;
       }
@@ -421,7 +441,10 @@ export class HeadlessHttpServer {
       this.writeSseEvent(res, "snapshot", {
         session_id: sessionId,
         frame: this.sessionManager.getSessionFrame(sessionId),
-        state: this.sessionManager.getSessionState(sessionId),
+        state: this.scopeStateForViewer(
+          this.sessionManager.getSessionState(sessionId),
+          viewer,
+        ),
       });
 
       const session = this.sessionManager.getSession(sessionId);
@@ -436,7 +459,7 @@ export class HeadlessHttpServer {
           this.writeSseEvent(res, "snapshot", {
             session_id: sessionId,
             frame: result.frame,
-            state: result.state,
+            state: this.scopeStateForViewer(result.state, viewer),
           });
         } catch (_error) {
           clearInterval(interval);
@@ -516,19 +539,65 @@ export class HeadlessHttpServer {
     return out;
   }
 
-  private hasSessionAccess(req: any, url: URL, sessionId: string): boolean {
+  private resolveSessionViewer(
+    req: any,
+    url: URL,
+    sessionId: string,
+    payload: Record<string, any> | null,
+  ): SessionViewer | null {
     if (!this.sessionManager) {
-      return false;
+      return null;
     }
-    const adminToken = this.resolveAdminToken(req, null, url);
+    const adminToken = this.resolveAdminToken(req, payload, url);
     if (adminToken && this.sessionManager.validateAdminToken(sessionId, adminToken)) {
-      return true;
+      return { isAdmin: true, roleId: null };
     }
-    const roleToken = this.resolveRoleToken(req, null, url);
+    const roleToken = this.resolveRoleToken(req, payload, url);
     if (!roleToken) {
-      return false;
+      return null;
     }
-    return this.sessionManager.validateRoleToken(sessionId, roleToken) !== null;
+    const role = this.sessionManager.validateRoleToken(sessionId, roleToken);
+    if (!role) {
+      return null;
+    }
+    return {
+      isAdmin: false,
+      roleId: role.roleId,
+    };
+  }
+
+  private scopeStateForViewer(
+    state: Record<string, any>,
+    viewer: SessionViewer,
+  ): Record<string, any> {
+    const roles =
+      state && state.roles && typeof state.roles === "object"
+        ? (state.roles as Record<string, any>)
+        : null;
+    if (!roles) {
+      return state;
+    }
+
+    if (viewer.isAdmin) {
+      return {
+        ...state,
+        self: null,
+      };
+    }
+
+    const roleId = viewer.roleId;
+    const selfRole =
+      roleId &&
+      roleId.length > 0 &&
+      roles[roleId] &&
+      typeof roles[roleId] === "object"
+        ? roles[roleId]
+        : null;
+    return {
+      ...state,
+      roles: selfRole && roleId ? { [roleId]: selfRole } : {},
+      self: selfRole,
+    };
   }
 
   private resolveAdminToken(
