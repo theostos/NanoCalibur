@@ -93,10 +93,8 @@ export class PhysicsSystem {
       body.x = actorCenterX(actor);
       body.y = actorCenterY(actor);
 
-      if (!preserveVelocity) {
-        body.vx = asNumber(actor.vx, body.vx);
-        body.vy = asNumber(actor.vy, body.vy);
-      }
+      body.vx = asNumber(actor.vx, body.vx);
+      body.vy = asNumber(actor.vy, body.vy);
     }
 
     for (const uid of this.bodies.keys()) {
