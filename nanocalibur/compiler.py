@@ -776,6 +776,10 @@ class DSLCompiler:
                 name="scene_set_gravity",
                 args=[Const(method == "enable_gravity")],
             )
+        if method == "next_turn":
+            if expr.args or expr.keywords:
+                raise DSLValidationError(f"{owner}.next_turn(...) does not accept arguments.")
+            return CallStmt(name="scene_next_turn", args=[])
         if method == "spawn":
             return self._compile_scene_spawn_call(
                 args=expr.args,
@@ -798,6 +802,14 @@ class DSLCompiler:
                 name="scene_set_gravity",
                 args=[Const(method == "enable_gravity")],
             )
+        if method == "next_turn":
+            if expr.keywords:
+                raise DSLValidationError("Scene.next_turn(...) does not accept keyword args.")
+            if len(expr.args) != 1:
+                raise DSLValidationError("Scene.next_turn(...) expects a scene argument.")
+            scene_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+            self._require_scene_var(scene_arg, scope, "Scene.next_turn(...)")
+            return CallStmt(name="scene_next_turn", args=[])
         if method == "spawn":
             if not expr.args:
                 raise DSLValidationError(

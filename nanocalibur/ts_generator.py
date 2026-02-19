@@ -53,6 +53,7 @@ export interface RuntimeSceneContext {
   elapsed?: number;
   setGravityEnabled?: (enabled: boolean) => void;
   spawnActor?: (actorType: string, uid: string, fields?: Record<string, any>) => any;
+  nextTurn?: () => void;
 }
 
 export interface GameContext {
@@ -414,6 +415,16 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                     pad + "if (ctx.scene && ctx.scene.spawnActor) {",
                     pad
                     + f"  ctx.scene.spawnActor({actor_type_expr}, {uid_expr}, {fields_expr});",
+                    pad + "}",
+                ]
+            if stmt.name == "scene_next_turn":
+                if stmt.args:
+                    raise DSLValidationError(
+                        "scene_next_turn call must not have arguments."
+                    )
+                return [
+                    pad + "if (ctx.scene && ctx.scene.nextTurn) {",
+                    pad + "  ctx.scene.nextTurn();",
                     pad + "}",
                 ]
             raise DSLValidationError(f"Unsupported call statement: {stmt.name}")
