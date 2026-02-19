@@ -1,4 +1,5 @@
 import { HeadlessHost, HeadlessStepInput } from "./headless_host";
+import { SessionManager } from "./session_manager";
 
 declare const require: any;
 const http = require("http");
@@ -10,11 +11,13 @@ export interface HeadlessHttpServerOptions {
 
 export class HeadlessHttpServer {
   private readonly host: HeadlessHost;
+  private readonly sessionManager: SessionManager | null;
   private server: any | null = null;
   private port: number | null = null;
 
-  constructor(host: HeadlessHost) {
+  constructor(host: HeadlessHost, sessionManager: SessionManager | null = null) {
     this.host = host;
+    this.sessionManager = sessionManager;
   }
 
   async start(options: HeadlessHttpServerOptions = {}): Promise<number> {
@@ -142,6 +145,44 @@ export class HeadlessHttpServer {
           state: this.host.getState(),
         });
         return;
+      }
+
+      if (method === "PATCH") {
+        const match = /^\/sessions\/([^/]+)\/pace$/.exec(url.pathname);
+        if (match) {
+          if (!this.sessionManager) {
+            this.respondJson(res, 400, {
+              error: "Session pacing endpoint requires a SessionManager.",
+            });
+            return;
+          }
+          const sessionId = decodeURIComponent(match[1]);
+          const payload = await this.readJsonBody(req);
+          const rawScale =
+            payload && typeof payload.game_time_scale === "number"
+              ? payload.game_time_scale
+              : payload && typeof payload.gameTimeScale === "number"
+                ? payload.gameTimeScale
+                : undefined;
+          const rawCatchup =
+            payload && typeof payload.max_catchup_steps === "number"
+              ? payload.max_catchup_steps
+              : payload && typeof payload.maxCatchupSteps === "number"
+                ? payload.maxCatchupSteps
+                : undefined;
+          const pace = this.sessionManager.updateSessionPace(sessionId, {
+            gameTimeScale: rawScale,
+            maxCatchupSteps: rawCatchup,
+          });
+          this.respondJson(res, 200, {
+            session_id: sessionId,
+            pace: {
+              game_time_scale: pace.gameTimeScale,
+              max_catchup_steps: pace.maxCatchupSteps,
+            },
+          });
+          return;
+        }
       }
 
       this.respondJson(res, 404, { error: "Not found." });

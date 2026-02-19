@@ -28,11 +28,17 @@ export interface SessionRuntimeOptions {
   loopMode?: SessionLoopMode;
   roleOrder?: string[];
   defaultStepSeconds?: number;
+  pace?: SessionPaceConfig;
 }
 
 export interface SessionTickResult {
   frame: SymbolicFrame;
   state: InterpreterState;
+}
+
+export interface SessionPaceConfig {
+  gameTimeScale?: number;
+  maxCatchupSteps?: number;
 }
 
 export class SessionRuntime {
@@ -41,6 +47,9 @@ export class SessionRuntime {
   private readonly roleOrder: string[];
   private readonly pendingByRole: Map<string, SessionCommand[]>;
   private readonly defaultStepSeconds: number;
+  private gameTimeScale: number;
+  private maxCatchupSteps: number;
+  private lastSteppedAtMs: number;
 
   constructor(host: HeadlessHost, options: SessionRuntimeOptions = {}) {
     this.host = host;
@@ -57,6 +66,10 @@ export class SessionRuntime {
       typeof options.defaultStepSeconds === "number" && Number.isFinite(options.defaultStepSeconds)
         ? options.defaultStepSeconds
         : 1 / 60;
+    this.gameTimeScale = 1.0;
+    this.maxCatchupSteps = 1;
+    this.lastSteppedAtMs = 0;
+    this.setPace(options.pace || {});
   }
 
   getLoopMode(): SessionLoopMode {
@@ -71,6 +84,28 @@ export class SessionRuntime {
     return this.host;
   }
 
+  getPace(): { gameTimeScale: number; maxCatchupSteps: number } {
+    return {
+      gameTimeScale: this.gameTimeScale,
+      maxCatchupSteps: this.maxCatchupSteps,
+    };
+  }
+
+  setPace(pace: SessionPaceConfig): void {
+    if (pace && typeof pace.gameTimeScale === "number") {
+      if (!Number.isFinite(pace.gameTimeScale) || pace.gameTimeScale <= 0 || pace.gameTimeScale > 1) {
+        throw new Error("pace.gameTimeScale must be > 0 and <= 1.");
+      }
+      this.gameTimeScale = pace.gameTimeScale;
+    }
+    if (pace && typeof pace.maxCatchupSteps === "number") {
+      if (!Number.isFinite(pace.maxCatchupSteps) || pace.maxCatchupSteps <= 0) {
+        throw new Error("pace.maxCatchupSteps must be > 0.");
+      }
+      this.maxCatchupSteps = Math.max(1, Math.floor(pace.maxCatchupSteps));
+    }
+  }
+
   enqueue(roleId: string, command: SessionCommand): void {
     if (!this.pendingByRole.has(roleId)) {
       throw new Error(`Unknown role '${roleId}'.`);
@@ -83,13 +118,37 @@ export class SessionRuntime {
   }
 
   tick(dtSeconds: number = this.defaultStepSeconds): SessionTickResult {
-    if (this.loopMode === "turn_based") {
-      this.tickTurnBased(dtSeconds);
-    } else if (this.loopMode === "hybrid") {
-      this.tickHybrid(dtSeconds);
-    } else {
-      this.tickRealTime(dtSeconds);
+    const nowMs = Date.now();
+    const targetStepSeconds =
+      typeof dtSeconds === "number" && Number.isFinite(dtSeconds) && dtSeconds > 0
+        ? dtSeconds
+        : this.defaultStepSeconds;
+    const intervalMs = (targetStepSeconds * 1000) / this.gameTimeScale;
+
+    if (this.lastSteppedAtMs === 0) {
+      this.lastSteppedAtMs = nowMs - intervalMs;
     }
+
+    const elapsedWallMs = nowMs - this.lastSteppedAtMs;
+    if (elapsedWallMs < intervalMs) {
+      return {
+        frame: this.host.getSymbolicFrame(),
+        state: this.host.getState(),
+      };
+    }
+
+    const wantedSteps = Math.max(1, Math.floor(elapsedWallMs / intervalMs));
+    const steps = Math.min(this.maxCatchupSteps, wantedSteps);
+    for (let index = 0; index < steps; index += 1) {
+      if (this.loopMode === "turn_based") {
+        this.tickTurnBased(targetStepSeconds);
+      } else if (this.loopMode === "hybrid") {
+        this.tickHybrid(targetStepSeconds);
+      } else {
+        this.tickRealTime(targetStepSeconds);
+      }
+    }
+    this.lastSteppedAtMs = nowMs;
 
     return {
       frame: this.host.getSymbolicFrame(),

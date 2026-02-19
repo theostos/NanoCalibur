@@ -2,6 +2,7 @@ import { InterpreterState } from "./interpreter";
 import { SymbolicFrame } from "./canvas/types";
 import {
   SessionCommand,
+  SessionPaceConfig,
   SessionRuntime,
   SessionRuntimeOptions,
   SessionTickResult,
@@ -54,6 +55,7 @@ export class SessionManager {
       loopMode: options.loopMode,
       roleOrder: options.roleOrder,
       defaultStepSeconds: options.defaultStepSeconds,
+      pace: options.pace,
     });
     const record: SessionRecord = {
       id: sessionId,
@@ -129,6 +131,25 @@ export class SessionManager {
       throw new Error(`Unknown session '${sessionId}'.`);
     }
     return session.runtime.getHost().getSymbolicFrame();
+  }
+
+  updateSessionPace(
+    sessionId: string,
+    pace: SessionPaceConfig,
+  ): { gameTimeScale: number; maxCatchupSteps: number } {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    session.runtime.setPace(pace);
+    const resolved = session.runtime.getPace();
+    if (this.replayStore) {
+      this.replayStore.appendEvent(sessionId, "pace_updated", {
+        gameTimeScale: resolved.gameTimeScale,
+        maxCatchupSteps: resolved.maxCatchupSteps,
+      });
+    }
+    return resolved;
   }
 
   private reserveUniqueSeed(
