@@ -41,7 +41,7 @@ void host.start();
 Notes:
 - `CanvasHost` handles a fixed-step update loop, keyboard/mouse input phases, and actor collisions.
 - `HeadlessHost` runs the same core logic without a browser canvas and exposes symbolic frames for LLM/RL loops.
-- `HeadlessHttpServer` exposes HTTP endpoints (`/tools`, `/tools/call`, `/frame`, `/state`, `/step`) for remote clients.
+- `HeadlessHttpServer` exposes HTTP endpoints (`/tools`, `/tools/call`, `/frame`, `/state`, `/step`) and multiplayer session endpoints (`GET/POST /sessions`, `/join`, `/sessions/{id}/commands`, `/sessions/{id}/stream`).
 - `NanoCaliburMCPServer` provides a minimal MCP-style `tools/list` and `tools/call` handler on top of `HeadlessHost`.
 - Browser apps should import from `index.ts`; Node-only HTTP helpers are isolated in `node.ts`.
 - Basic physics, sprite animation, and image preloading are configurable through `CanvasHostOptions`.

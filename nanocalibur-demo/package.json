@@ -13,7 +13,8 @@
     "headless:compile": "rm -rf .nanocalibur_headless && npx -p typescript tsc src/nanocalibur_generated/*.ts src/nanocalibur_generated/canvas/*.ts --target ES2020 --module commonjs --moduleResolution node --outDir .nanocalibur_headless && cp src/nanocalibur_generated/game_spec.json .nanocalibur_headless/game_spec.json",
     "headless:server": "npm run headless:compile && node scripts/run_session_server.js",
     "dummy:random": "node scripts/dummy_random_client.js",
-    "human:play": "node scripts/human_keyboard_client.js"
+    "human:cli": "node scripts/human_keyboard_client.js",
+    "human:play": "node scripts/run_human_web.js"
   },
   "author": {
     "name": "Excalibur.js Team",

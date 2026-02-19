@@ -77,13 +77,16 @@ Static forms like `Actor.play(player, ...)` and `Actor.destroy(player)` are not 
 - `KeyboardCondition.on_press("A")`
 - `KeyboardCondition.end_press("A")`
 - `KeyboardCondition.end_press(["z", "q", "s", "d"])` (any key match)
+- `KeyboardCondition.on_press("A", id="human_1")` (optional role-scoped trigger)
 - `MouseCondition.begin_click("left")`
 - `MouseCondition.on_click("left")`
 - `MouseCondition.end_click("left")`
+- `MouseCondition.on_click("left", id="human_1")` (optional role-scoped trigger)
 - `OnOverlap(selector_a, selector_b)`
 - `OnContact(selector_a, selector_b)`
 - `OnLogicalCondition(predicate_fn, selector)`
 - `OnToolCall("tool_name", "tool docstring")`
+- `OnToolCall("tool_name", "tool docstring", id="ai_1")` (optional role-scoped trigger)
 - `OnButton("button_name")`
 
 Rule declaration styles:
@@ -131,6 +134,19 @@ Rules:
 - If `default_loop` is `turn_based` or `hybrid`, at least one action must call `scene.next_turn()`.
 - `game_time_scale` slows game-time progression for remote/LLM compute budgets (`> 0` and `<= 1.0`).
 - Exported specs include `multiplayer` and `contains_next_turn_call`.
+
+### Multiplayer Roles
+
+Declare joinable roles in DSL and reference them from role-scoped conditions:
+
+```python
+game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+game.add_role(Role(id="dummy_1", required=True, kind=RoleKind.AI))
+```
+
+Rules:
+- Condition `id="..."` on `KeyboardCondition`, `MouseCondition`, and `OnToolCall` must match a declared role id.
+- Compiler raises an error if a role-scoped condition references an unknown role id.
 
 ### Interface Overlay (Optional)
 
@@ -250,7 +266,7 @@ The standalone TypeScript runtime supports:
 - headless symbolic rendering (`HeadlessHost`)
 - session runtime scheduling (`SessionRuntime`) with `real_time`/`turn_based`/`hybrid` loop modes
 - session orchestration (`SessionManager`) with role invites/tokens and unique per-session seed allocation
-- HTTP endpoint layer for remote clients (`HeadlessHttpServer`) including session endpoints (`/sessions`, `/join`, `/open-roles`, `/sessions/{id}/commands`, `/sessions/{id}/stream`, `/sessions/{id}/pace`)
+- HTTP endpoint layer for remote clients (`HeadlessHttpServer`) including session endpoints (`GET/POST /sessions`, `/join`, `/open-roles`, `/sessions/{id}/commands`, `/sessions/{id}/stream`, `/sessions/{id}/pace`)
 - minimal MCP-style tool bridge (`NanoCaliburMCPServer`)
 
 Python MCP adapter:

@@ -56,7 +56,9 @@ Notes:
 - `npm run dummy:random`
   Starts a random dummy client that joins a role and sends `llm_dummy_*` tool commands. Requires `NC_INVITE_TOKEN`.
 - `npm run human:play`
-  Starts a human terminal client that joins a role, sends keyboard commands, and renders live session snapshots.
+  Starts the browser-rendered human client (webpack dev server) in session mode. Requires `NC_INVITE_TOKEN`.
+- `npm run human:cli`
+  Starts the terminal human client (symbolic stream mode).
 
 Typical flow (human + dummy in one shared session):
 
@@ -66,12 +68,20 @@ Typical flow (human + dummy in one shared session):
 npm run headless:server
 ```
 
-2. Create a session with two roles (from another terminal):
+2. Create a session (roles/loop mode are derived from game DSL role + multiplayer config):
 
 ```bash
 curl -sS -X POST http://127.0.0.1:7070/sessions \
   -H 'content-type: application/json' \
-  -d '{"session_id":"demo_sess","loop_mode":"hybrid","roles":[{"id":"human_1","required":true},{"id":"dummy_1","required":true}]}'
+  -d '{}'
+```
+
+The response returns `session_id`, `loop_mode`, `roles`, and role `invites`.
+
+You can list active sessions with:
+
+```bash
+curl -sS http://127.0.0.1:7070/sessions
 ```
 
 3. Start human client with returned human invite token:
@@ -93,7 +103,7 @@ npm run dummy:random
 5. Start session with returned admin token:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:7070/sessions/demo_sess/start \
+curl -sS -X POST http://127.0.0.1:7070/sessions/<session_id>/start \
   -H 'content-type: application/json' \
   -d '{"admin_token":"<admin_token>"}'
 ```
