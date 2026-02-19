@@ -46,3 +46,44 @@ Notes:
 - Browser apps should import from `index.ts`; Node-only HTTP helpers are isolated in `node.ts`.
 - Basic physics, sprite animation, and image preloading are configurable through `CanvasHostOptions`.
 - Runtime logic is driven by `game_spec.json` + `game_logic.ts`.
+
+## Headless Session Server + Dummy Client
+
+`nanocalibur-demo/package.json` includes helper scripts:
+
+- `npm run headless:server`
+  Compiles generated TypeScript to `.nanocalibur_headless/` and starts a session-aware HTTP server on `http://127.0.0.1:7070` by default.
+- `npm run dummy:random`
+  Starts a random-input dummy client. Requires `NC_INVITE_TOKEN`.
+
+Typical flow:
+
+1. Start server:
+
+```bash
+npm run headless:server
+```
+
+2. Create a session (from another terminal):
+
+```bash
+curl -sS -X POST http://127.0.0.1:7070/sessions \\
+  -H 'content-type: application/json' \\
+  -d '{"session_id":"demo_sess","loop_mode":"hybrid","roles":[{"id":"dummy_1","required":true}]}'
+```
+
+3. Start dummy with returned invite token:
+
+```bash
+NC_BASE_URL=http://127.0.0.1:7070 \\
+NC_INVITE_TOKEN=<invite_token> \\
+npm run dummy:random
+```
+
+4. Start session with returned admin token:
+
+```bash
+curl -sS -X POST http://127.0.0.1:7070/sessions/demo_sess/start \\
+  -H 'content-type: application/json' \\
+  -d '{"admin_token":"<admin_token>"}'
+```
