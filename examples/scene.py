@@ -13,6 +13,7 @@ from nanocalibur.dsl_markers import (
     Tile,
     TileMap,
     OnToolCall,
+    Random,
     condition,
 )
 
@@ -49,6 +50,29 @@ def move_down(player: Player["hero"]):
 @condition(KeyboardCondition.end_press(["z", "q", "s", "d"]))
 def idle(player: Player["hero"]):
     player.play("idle")
+
+
+def llm_dummy_is_active(bot: Player["llm_dummy"]) -> bool:
+    return bot.active
+
+
+@condition(OnLogicalCondition(llm_dummy_is_active, Player["llm_dummy"]))
+def llm_dummy_step(bot: Player["llm_dummy"]):
+    direction = Random.int(0, 4)
+    if direction == 0:
+        bot.x = bot.x + bot.speed
+        bot.play("run")
+    elif direction == 1:
+        bot.x = bot.x - bot.speed
+        bot.play("run")
+    elif direction == 2:
+        bot.y = bot.y - bot.speed
+        bot.play("run")
+    elif direction == 3:
+        bot.y = bot.y + bot.speed
+        bot.play("run")
+    else:
+        bot.play("idle")
 
 @condition(OnOverlap(Player["hero"], Coin))
 def collect_coin(
@@ -124,6 +148,20 @@ hero_player = Player(
     )
 
 scene.add_actor(hero_player)
+
+llm_dummy_player = Player(
+        uid="llm_dummy",
+        x=96,
+        y=224,
+        w=32,
+        h=32,
+        speed=4,
+        z=1,
+        block_mask=1,
+        sprite="hero",
+    )
+
+scene.add_actor(llm_dummy_player)
 
 coin = Coin(uid="coin_1", x=320, y=224, active=True, sprite="coin")
 scene.add_actor(coin)
