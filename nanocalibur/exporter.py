@@ -16,6 +16,7 @@ from nanocalibur.game_model import (
     KeyboardConditionSpec,
     LogicalConditionSpec,
     MouseConditionSpec,
+    MultiplayerSpec,
     ProjectSpec,
     ResourceSpec,
     RuleSpec,
@@ -52,6 +53,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
         "map": _map_to_dict(project.tile_map),
         "camera": _camera_to_dict(project.camera),
         "scene": _scene_to_dict(project.scene),
+        "multiplayer": _multiplayer_to_dict(project.multiplayer),
         "interface_html": project.interface_html,
         "resources": [_resource_to_dict(resource) for resource in project.resources],
         "sprites": {
@@ -249,6 +251,21 @@ def _scene_to_dict(scene: SceneSpec | None) -> Dict[str, Any] | None:
         return None
     return {
         "gravity_enabled": scene.gravity_enabled,
+    }
+
+
+def _multiplayer_to_dict(multiplayer: MultiplayerSpec | None) -> Dict[str, Any] | None:
+    if multiplayer is None:
+        return None
+    return {
+        "default_loop": multiplayer.default_loop.value,
+        "allowed_loops": [mode.value for mode in multiplayer.allowed_loops],
+        "default_visibility": multiplayer.default_visibility.value,
+        "tick_rate": multiplayer.tick_rate,
+        "turn_timeout_ms": multiplayer.turn_timeout_ms,
+        "hybrid_window_ms": multiplayer.hybrid_window_ms,
+        "game_time_scale": multiplayer.game_time_scale,
+        "max_catchup_steps": multiplayer.max_catchup_steps,
     }
 
 
