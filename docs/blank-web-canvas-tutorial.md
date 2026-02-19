@@ -4,7 +4,7 @@ This tutorial shows a full standalone flow:
 
 1. Create a blank TypeScript web project.
 2. Write a NanoCalibur DSL scene in Python.
-3. Generate `src/nanocalibur_generated` with `build_web_scene.py`.
+3. Generate `src/nanocalibur_generated` with `build_game.py`.
 4. Start the browser app and run the scene.
 
 ## Prerequisites
@@ -123,7 +123,7 @@ scene.set_interface("<div>Score: {{score}}</div>")
 Run from your project directory:
 
 ```bash
-python /path/to/NanoCalibur/nanocalibur/build_web_scene.py ./scene.py --project .
+python /path/to/NanoCalibur/nanocalibur/build_game.py ./scene.py --project .
 ```
 
 This writes:

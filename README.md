@@ -20,8 +20,8 @@ nanocalibur/
     interpreter.ts     # Runtime rule interpreter
     canvas_host.ts     # Standalone canvas runtime host
     canvas/            # Physics, renderer, assets, animation modules
-  build_web_scene.py   # Python scene -> web bundle generator
-  templates/web_bundle # bridge/index/readme templates used by build_web_scene
+  build_game.py        # Python main.py + local imports -> web bundle generator
+  templates/web_bundle # bridge/index/readme templates used by build_game
 examples/
   scene.py             # End-to-end DSL scene example
 tests/
@@ -192,6 +192,40 @@ Built-in dynamic placeholders available in interface HTML:
 - `{{__actors_count}}`
 - `{{__scene_elapsed}}`
 
+### Code Blocks (Vibe Coding Workflow)
+
+`build_game.py` enables strict top-level filtering by default:
+- non-import top-level statements **outside** any `CodeBlock` are ignored with warnings
+- warnings explicitly mention `--allow-unboxed` if you want to disable this behavior
+
+Use structural blocks:
+
+```python
+CodeBlock.begin("player_controls", descr="keyboard movement")
+
+@condition(KeyboardCondition.on_press("d", id="human_1"))
+def move_right(player: Player["hero"]):
+    player.x = player.x + player.speed
+
+CodeBlock.end("player_controls")
+```
+
+Template blocks are supported via `AbstractCodeBlock`:
+
+```python
+AbstractCodeBlock.begin("player_controls", id=str, hero_name=str, descr="reusable controls")
+# ... rules/actions using `id` and `hero_name` ...
+AbstractCodeBlock.end("player_controls")
+
+AbstractCodeBlock.instantiate("player_controls", id="human_1", hero_name="hero_1")
+AbstractCodeBlock.instantiate("player_controls", id="human_2", hero_name="hero_2")
+```
+
+Rules:
+- every `CodeBlock.begin(...)` / `AbstractCodeBlock.begin(...)` must be closed by `end(...)`
+- uninstantiated abstract blocks emit warnings
+- instantiate values must be static constants (`int/float/str/bool/list/dict`)
+
 ### Callable Helpers
 
 Use `@callable` for reusable expression helpers:
@@ -238,10 +272,10 @@ Generated files:
 
 ## Build Web Bundle
 
-Use `nanocalibur/build_web_scene.py` to compile a Python scene and generate a browser-ready TypeScript bundle.
+Use `nanocalibur/build_game.py` to compile a Python game entry file and generate a browser-ready TypeScript bundle.
 
 ```bash
-python nanocalibur/build_web_scene.py examples/scene.py --project ./my-web-game
+python nanocalibur/build_game.py examples/scene.py --project ./my-web-game
 ```
 
 This generates a bundle (default `build/nanocalibur_generated/src/nanocalibur_generated`) and, with `--project`, copies it to:

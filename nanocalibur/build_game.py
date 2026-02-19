@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import shutil
 import sys
 from pathlib import Path
+from typing import List
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,17 +32,124 @@ def _read_template(filename: str) -> str:
     return template_path.read_text(encoding="utf-8")
 
 
-def build_web_input(scene_path: Path, output_dir: Path) -> Path:
-    if not scene_path.exists():
-        raise FileNotFoundError(f"Scene file not found: {scene_path}")
+def _resolve_module_file(candidate_base: Path) -> Path | None:
+    module_file = candidate_base.with_suffix(".py")
+    if module_file.exists() and module_file.is_file():
+        return module_file.resolve()
+    package_init = candidate_base / "__init__.py"
+    if package_init.exists() and package_init.is_file():
+        return package_init.resolve()
+    return None
 
-    source = scene_path.read_text(encoding="utf-8")
+
+def _extract_local_import_paths(
+    stmt: ast.stmt,
+    *,
+    project_root: Path,
+    current_file: Path,
+) -> List[Path]:
+    paths: List[Path] = []
+
+    if isinstance(stmt, ast.ImportFrom):
+        if stmt.level <= 0:
+            return []
+        base = current_file.parent
+        for _ in range(max(stmt.level - 1, 0)):
+            base = base.parent
+        if stmt.module:
+            target = base.joinpath(*stmt.module.split("."))
+            resolved = _resolve_module_file(target)
+            if resolved is not None:
+                paths.append(resolved)
+            return paths
+        for alias in stmt.names:
+            if alias.name == "*":
+                continue
+            target = base.joinpath(*alias.name.split("."))
+            resolved = _resolve_module_file(target)
+            if resolved is not None:
+                paths.append(resolved)
+        return paths
+
+    if isinstance(stmt, ast.Import):
+        for alias in stmt.names:
+            target = project_root.joinpath(*alias.name.split("."))
+            resolved = _resolve_module_file(target)
+            if resolved is not None:
+                paths.append(resolved)
+    return paths
+
+
+def _collect_game_source(main_path: Path) -> str:
+    if not main_path.exists():
+        raise FileNotFoundError(f"Game entry file not found: {main_path}")
+    if not main_path.is_file():
+        raise FileNotFoundError(f"Game entry path is not a file: {main_path}")
+
+    project_root = main_path.parent.resolve()
+    visited: set[Path] = set()
+    ordered_sources: list[tuple[Path, str]] = []
+
+    def visit(path: Path) -> None:
+        path = path.resolve()
+        if path in visited:
+            return
+        visited.add(path)
+
+        source = path.read_text(encoding="utf-8")
+        module = ast.parse(source)
+
+        deps: list[Path] = []
+        kept_body: list[ast.stmt] = []
+        for stmt in module.body:
+            local_deps = _extract_local_import_paths(
+                stmt,
+                project_root=project_root,
+                current_file=path,
+            )
+            if local_deps:
+                deps.extend(local_deps)
+                continue
+            kept_body.append(stmt)
+
+        for dep in deps:
+            visit(dep)
+
+        filtered_module = ast.Module(body=kept_body, type_ignores=[])
+        ast.fix_missing_locations(filtered_module)
+        ordered_sources.append((path, ast.unparse(filtered_module)))
+
+    visit(main_path)
+
+    chunks: list[str] = []
+    for path, chunk in ordered_sources:
+        try:
+            rel = path.relative_to(project_root)
+        except ValueError:
+            rel = path
+        chunks.append(f"# --- source: {rel} ---\n{chunk}")
+    return "\n\n".join(chunks)
+
+
+def build_web_input(
+    main_path: Path,
+    output_dir: Path,
+    *,
+    require_code_blocks: bool,
+) -> Path:
+    source = _collect_game_source(main_path)
     src_dir = output_dir / "src"
     generated_dir = src_dir / GENERATED_DIR_NAME
 
     generated_dir.mkdir(parents=True, exist_ok=True)
 
-    export_project(source, str(generated_dir), source_path=str(scene_path))
+    export_project(
+        source,
+        str(generated_dir),
+        source_path=str(main_path),
+        require_code_blocks=require_code_blocks,
+        unboxed_disable_flag="--allow-unboxed",
+    )
 
     runtime_dir = ROOT / "nanocalibur" / "runtime"
     for runtime_file in (
@@ -89,13 +198,13 @@ def sync_into_web_project(bundle_dir: Path, project_dir: Path) -> Path:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Compile a NanoCalibur Python scene and generate a browser-consumable "
-            "TypeScript input bundle."
+            "Build a NanoCalibur game from a Python entry module (main.py) "
+            "and local imports into a browser-consumable TypeScript bundle."
         )
     )
     parser.add_argument(
-        "scene",
-        help="Path to the Python DSL scene file to compile.",
+        "main",
+        help="Path to the Python game entry file (typically main.py).",
     )
     parser.add_argument(
         "--output",
@@ -110,17 +219,29 @@ def _parse_args() -> argparse.Namespace:
             "is copied to <project>/src/nanocalibur_generated."
         ),
     )
+    parser.add_argument(
+        "--allow-unboxed",
+        action="store_true",
+        help=(
+            "Disable strict CodeBlock filtering and keep top-level non-import statements "
+            "that are outside any CodeBlock."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
 
-    scene_path = Path(args.scene).resolve()
+    main_path = Path(args.main).resolve()
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(exist_ok=True)
 
-    bundle_dir = build_web_input(scene_path, output_dir)
+    bundle_dir = build_web_input(
+        main_path,
+        output_dir,
+        require_code_blocks=not args.allow_unboxed,
+    )
 
     print(f"Generated NanoCalibur bundle: {bundle_dir}")
     print(f"- {bundle_dir / 'game_spec.json'}")
