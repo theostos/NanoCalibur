@@ -52,6 +52,7 @@ The project must make LLM interaction first-class, not an afterthought.
 - Equal actor masks mutually block and separate.
 - Actor animation/lifecycle actions use instance methods (`actor.play("clip")`, `actor.destroy()`), not static `Actor.play(...)`/`Actor.destroy(...)`.
 - UI overlay is opt-in via `game.set_interface(html)`; no default hardcoded interface should be assumed.
+- Collision conditions are split by intent: `OnOverlap(...)` (legacy alias `CollisionRelated(...)`) and `OnContact(...)`.
 - Keep condition/action semantics deterministic and statically checkable where possible.
 
 ## Dev Rules

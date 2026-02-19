@@ -131,6 +131,14 @@ export class PhysicsSystem {
   }
 
   resolvePostActionSolidCollisions(): void {
+    this.resolvePostActionTileBlocking();
+    this.resolveActorMaskCollisions();
+    // Actor separation can push actors into solid tiles near boundaries.
+    // Run tile blocking once more to keep post-action state valid.
+    this.resolvePostActionTileBlocking();
+  }
+
+  private resolvePostActionTileBlocking(): void {
     for (const body of this.bodies.values()) {
       if (!body.config.enabled || !body.active || body.blockMask === null) {
         continue;
@@ -142,6 +150,47 @@ export class PhysicsSystem {
       body.y = body.prevY;
       body.vx = 0;
       body.vy = 0;
+    }
+  }
+
+  private resolveActorMaskCollisions(): void {
+    const candidates = Array.from(this.bodies.values()).filter((body) =>
+      this.isBodyActorMaskCollisionEnabled(body),
+    );
+    if (candidates.length < 2) {
+      return;
+    }
+
+    for (let pass = 0; pass < 4; pass += 1) {
+      let moved = false;
+
+      for (let i = 0; i < candidates.length; i += 1) {
+        const a = candidates[i];
+        for (let j = i + 1; j < candidates.length; j += 1) {
+          const b = candidates[j];
+          if (a.blockMask !== b.blockMask) {
+            continue;
+          }
+
+          const overlapX = (a.w + b.w) / 2 - Math.abs(a.x - b.x);
+          const overlapY = (a.h + b.h) / 2 - Math.abs(a.y - b.y);
+          if (overlapX <= 0 || overlapY <= 0) {
+            continue;
+          }
+
+          const resolveOnX = overlapX <= overlapY;
+          const overlap = (resolveOnX ? overlapX : overlapY) + EPSILON;
+          const direction = this.resolveSeparationDirection(a, b, resolveOnX);
+          if (!this.separateBodiesAlongAxis(a, b, overlap, resolveOnX, direction)) {
+            continue;
+          }
+          moved = true;
+        }
+      }
+
+      if (!moved) {
+        break;
+      }
     }
   }
 
@@ -177,6 +226,97 @@ export class PhysicsSystem {
       }
     }
     return collisions;
+  }
+
+  detectContacts(actors: ActorState[]): CollisionPair[] {
+    const contacts: CollisionPair[] = [];
+    for (let i = 0; i < actors.length; i += 1) {
+      const a = actors[i];
+      if (!this.isActorCollisionEnabled(a)) {
+        continue;
+      }
+      const bodyA = this.bodies.get(a.uid);
+      if (!bodyA || !this.isBodyActorMaskCollisionEnabled(bodyA)) {
+        continue;
+      }
+
+      for (let j = i + 1; j < actors.length; j += 1) {
+        const b = actors[j];
+        if (!this.isActorCollisionEnabled(b)) {
+          continue;
+        }
+        const bodyB = this.bodies.get(b.uid);
+        if (!bodyB || !this.isBodyActorMaskCollisionEnabled(bodyB)) {
+          continue;
+        }
+        if (bodyA.blockMask !== bodyB.blockMask) {
+          continue;
+        }
+        if (this.areBodiesTouchingOrOverlapping(bodyA, bodyB)) {
+          contacts.push({ aUid: a.uid, bUid: b.uid });
+        }
+      }
+    }
+    return contacts;
+  }
+
+  detectTileOverlaps(
+    actors: ActorState[],
+  ): Array<{ actorUid: string; tileX: number; tileY: number; tileMask: number }> {
+    const overlaps: Array<{
+      actorUid: string;
+      tileX: number;
+      tileY: number;
+      tileMask: number;
+    }> = [];
+    if (!this.mapSpec) {
+      return overlaps;
+    }
+
+    for (const actor of actors) {
+      if (!this.isActorCollisionEnabled(actor)) {
+        continue;
+      }
+      const body = this.bodies.get(actor.uid);
+      if (!body || body.blockMask === null) {
+        continue;
+      }
+
+      const leftTile = Math.floor((body.x - body.w / 2 + 1) / this.mapSpec.tile_size);
+      const rightTile = Math.floor((body.x + body.w / 2 - 1) / this.mapSpec.tile_size);
+      const topTile = Math.floor((body.y - body.h / 2 + 1) / this.mapSpec.tile_size);
+      const bottomTile = Math.floor((body.y + body.h / 2 - 1) / this.mapSpec.tile_size);
+
+      for (let tileY = topTile; tileY <= bottomTile; tileY += 1) {
+        for (let tileX = leftTile; tileX <= rightTile; tileX += 1) {
+          if (!this.mapSpec) {
+            continue;
+          }
+          if (
+            tileX < 0 ||
+            tileY < 0 ||
+            tileX >= this.mapSpec.width ||
+            tileY >= this.mapSpec.height
+          ) {
+            continue;
+          }
+          if (!this.isTileBlockingForActorMask(tileX, tileY, body.blockMask)) {
+            continue;
+          }
+          const tileMask = this.tileBlockMasks.get(`${tileX},${tileY}`);
+          if (tileMask === undefined) {
+            continue;
+          }
+          overlaps.push({
+            actorUid: actor.uid,
+            tileX,
+            tileY,
+            tileMask,
+          });
+        }
+      }
+    }
+    return overlaps;
   }
 
   private ensureBody(actor: ActorState): PhysicsBodyRuntime {
@@ -377,6 +517,89 @@ export class PhysicsSystem {
     return true;
   }
 
+  private isBodyActorMaskCollisionEnabled(body: PhysicsBodyRuntime): boolean {
+    return (
+      body.active &&
+      body.config.enabled &&
+      body.config.collidable &&
+      body.blockMask !== null
+    );
+  }
+
+  private resolveSeparationDirection(
+    a: PhysicsBodyRuntime,
+    b: PhysicsBodyRuntime,
+    onX: boolean,
+  ): number {
+    const aAxis = onX ? a.x : a.y;
+    const bAxis = onX ? b.x : b.y;
+    if (aAxis < bAxis) {
+      return -1;
+    }
+    if (aAxis > bAxis) {
+      return 1;
+    }
+
+    const aPrev = onX ? a.prevX : a.prevY;
+    const bPrev = onX ? b.prevX : b.prevY;
+    if (aPrev < bPrev) {
+      return -1;
+    }
+    if (aPrev > bPrev) {
+      return 1;
+    }
+    return a.uid < b.uid ? -1 : 1;
+  }
+
+  private separateBodiesAlongAxis(
+    a: PhysicsBodyRuntime,
+    b: PhysicsBodyRuntime,
+    overlap: number,
+    onX: boolean,
+    direction: number,
+  ): boolean {
+    let moveA = 0;
+    let moveB = 0;
+    if (a.config.dynamic && b.config.dynamic) {
+      moveA = overlap / 2;
+      moveB = overlap - moveA;
+    } else if (a.config.dynamic) {
+      moveA = overlap;
+    } else if (b.config.dynamic) {
+      moveB = overlap;
+    } else {
+      return false;
+    }
+
+    if (onX) {
+      if (moveA > 0) {
+        a.x += direction * moveA;
+        a.vx = 0;
+      }
+      if (moveB > 0) {
+        b.x -= direction * moveB;
+        b.vx = 0;
+      }
+    } else {
+      if (moveA > 0) {
+        a.y += direction * moveA;
+        a.vy = 0;
+      }
+      if (moveB > 0) {
+        b.y -= direction * moveB;
+        b.vy = 0;
+      }
+    }
+
+    if (moveA > 0) {
+      this.clampBodyToWorld(a);
+    }
+    if (moveB > 0) {
+      this.clampBodyToWorld(b);
+    }
+    return true;
+  }
+
   private resolveActorMask(actor: ActorState): number | null {
     return this.normalizeMaskValue(actor.block_mask);
   }
@@ -386,6 +609,19 @@ export class PhysicsSystem {
       return null;
     }
     return Math.trunc(value);
+  }
+
+  private areBodiesTouchingOrOverlapping(
+    a: PhysicsBodyRuntime,
+    b: PhysicsBodyRuntime,
+  ): boolean {
+    const dx = Math.abs(a.x - b.x);
+    const dy = Math.abs(a.y - b.y);
+    const halfW = (a.w + b.w) / 2;
+    const halfH = (a.h + b.h) / 2;
+    const tolerance = EPSILON * 2;
+
+    return dx <= halfW + tolerance && dy <= halfH + tolerance;
   }
 
   private isTileBlockingForActorMask(

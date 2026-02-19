@@ -22,6 +22,7 @@ export interface NanoCaliburFrameInput {
   mouse?: FramePhaseInput;
   uiButtons?: string[];
   collisions?: CollisionFrameInput[];
+  contacts?: CollisionFrameInput[];
   toolCalls?: Array<string | ToolFrameInput>;
   keysJustPressed?: string[];
   keysBegin?: string[];
@@ -423,8 +424,25 @@ export class NanoCaliburInterpreter {
       };
     }
 
-    if (condition.kind === "collision") {
-      const collisions = Array.isArray(frame.collisions) ? frame.collisions : [];
+    if (
+      condition.kind === "collision" ||
+      condition.kind === "overlap" ||
+      condition.kind === "contact"
+    ) {
+      const mode =
+        typeof condition.mode === "string"
+          ? condition.mode
+          : condition.kind === "contact"
+            ? "contact"
+            : "overlap";
+      const collisions =
+        mode === "contact"
+          ? Array.isArray(frame.contacts)
+            ? frame.contacts
+            : []
+          : Array.isArray(frame.collisions)
+            ? frame.collisions
+            : [];
       for (const collision of collisions) {
         const [a, b] = this.resolveCollisionPair(collision);
         if (!a || !b) {

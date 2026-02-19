@@ -405,7 +405,17 @@ class Tile:
 
 
 def CollisionRelated(_left, _right):
-    """Condition helper for collision checks between two selectors."""
+    """Legacy alias for overlap checks between two selectors."""
+    return None
+
+
+def OnOverlap(_left, _right):
+    """Condition helper for overlap checks between two selectors."""
+    return None
+
+
+def OnContact(_left, _right):
+    """Condition helper for blocking-contact checks between two selectors."""
     return None
 
 

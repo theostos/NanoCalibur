@@ -1,4 +1,5 @@
 import {
+  CollisionFrameInput,
   InterpreterState,
   NanoCaliburFrameInput,
   NanoCaliburInterpreter,
@@ -202,13 +203,42 @@ export class RuntimeCore {
     this.physics.syncBodiesFromActors(beforeActors, false);
     this.physics.integrate(dtSeconds);
     this.physics.writeBodiesToActors(beforeActors);
+    this.physics.resolvePostActionSolidCollisions();
+    this.physics.writeBodiesToActors(beforeActors);
+
+    const actorOverlaps = this.physics.detectCollisions(beforeActors);
+    const contacts = this.physics.detectContacts(beforeActors);
+    const tileOverlaps = this.physics.detectTileOverlaps(beforeActors);
+    const actorsByUid = new Map(beforeActors.map((actor) => [actor.uid, actor] as const));
+    const overlapFrameEvents: CollisionFrameInput[] = [
+      ...actorOverlaps.map((pair) => ({ aUid: pair.aUid, bUid: pair.bUid })),
+      ...tileOverlaps
+        .map((item) => {
+          const actor = actorsByUid.get(item.actorUid);
+          if (!actor) {
+            return null;
+          }
+          return {
+            a: actor,
+            b: {
+              uid: `__tile_${item.tileX}_${item.tileY}`,
+              type: "Tile",
+              tile_x: item.tileX,
+              tile_y: item.tileY,
+              block_mask: item.tileMask,
+            },
+          };
+        })
+        .filter((entry): entry is CollisionFrameInput => entry !== null),
+    ];
 
     const frame: NanoCaliburFrameInput = {
       keyboard: input.keyboard,
       mouse: input.mouse,
       uiButtons: input.uiButtons,
       toolCalls: input.toolCalls,
-      collisions: this.physics.detectCollisions(beforeActors),
+      collisions: overlapFrameEvents,
+      contacts: contacts.map((pair) => ({ aUid: pair.aUid, bUid: pair.bUid })),
     };
 
     this.interpreter.tick(frame);

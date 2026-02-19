@@ -29,6 +29,11 @@ class ConditionKind(Enum):
     TOOL = "tool"
 
 
+class CollisionMode(Enum):
+    OVERLAP = "overlap"
+    CONTACT = "contact"
+
+
 class InputPhase(Enum):
     BEGIN = "begin"
     ON = "on"
@@ -56,6 +61,7 @@ class ButtonConditionSpec:
 class CollisionConditionSpec:
     left: ActorSelectorSpec
     right: ActorSelectorSpec
+    mode: CollisionMode = CollisionMode.OVERLAP
 
 
 @dataclass(frozen=True)

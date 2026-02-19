@@ -2,11 +2,11 @@ from nanocalibur.dsl_markers import (
     Actor,
     Camera,
     Color,
-    CollisionRelated,
     Tick,
     Game,
     Global,
     KeyboardCondition,
+    OnOverlap,
     Scene,
     Sprite,
     Tile,
@@ -49,7 +49,7 @@ def move_down(player: Player["hero"]):
 def idle(player: Player["hero"]):
     player.play("idle")
 
-@condition(CollisionRelated(Player["hero"], Coin))
+@condition(OnOverlap(Player["hero"], Coin))
 def collect_coin(
     hero: Player,
     coin: Coin,
@@ -75,7 +75,8 @@ def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
     for _ in range(20):
         yield tick
     if last_coin is not None:
-        coin = Coin(x=last_coin.x + 32,
+        new_x = last_coin.x + 32
+        coin = Coin(x=new_x,
             y=224,
             active=True,
             sprite="coin",
@@ -87,6 +88,14 @@ game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
 game.add_global("score", 0)
+game.set_interface(
+    """
+<div style="position:absolute;left:12px;top:12px;padding:8px 10px;background:rgba(8,10,14,0.62);color:#f2f5fa;border-radius:8px;font-family:monospace;">
+  <div>Score: {{score}}</div>
+  <div>Actors: {{__actors_count}}</div>
+</div>
+"""
+)
 
 hero_player = Player(
         uid="hero",
@@ -105,7 +114,7 @@ scene.add_actor(hero_player)
 coin = Coin(uid="coin_1", x=320, y=224, active=True, sprite="coin")
 scene.add_actor(coin)
 
-coin_pet = Coin(uid="coin_pet", x=200, y=192, block_mask=10, parent="hero", active=True, sprite="coin")
+coin_pet = Coin(uid="coin_pet", x=200, y=300, block_mask=1, parent="hero", active=True, sprite="coin")
 scene.add_actor(coin_pet)
 
 game.add_resource(

@@ -73,9 +73,6 @@ export class CanvasRenderer {
     if (this.options.showDebugColliders) {
       this.drawDebugColliders(actors, camera);
     }
-    if (this.options.showHud !== false) {
-      this.drawHud(state);
-    }
   }
 
   private resolveCamera(
@@ -372,23 +369,6 @@ export class CanvasRenderer {
       this.ctx.strokeRect(x, y, w, h);
     }
 
-    this.ctx.restore();
-  }
-
-  private drawHud(state: InterpreterState): void {
-    this.ctx.save();
-    this.ctx.fillStyle = "rgba(8, 10, 14, 0.62)";
-    this.ctx.fillRect(10, 10, 240, 62);
-
-    this.ctx.fillStyle = "#f2f5fa";
-    this.ctx.font = "14px monospace";
-
-    const globals = state.globals as Record<string, unknown>;
-    const score = asNumber(globals.score, 0);
-    const actors = Array.isArray(state.actors) ? state.actors.length : 0;
-
-    this.ctx.fillText(`Score: ${score}`, 18, 34);
-    this.ctx.fillText(`Actors: ${actors}`, 18, 54);
     this.ctx.restore();
   }
 

@@ -6,6 +6,7 @@ import pytest
 from nanocalibur.errors import DSLValidationError
 from nanocalibur.game_model import (
     ButtonConditionSpec,
+    CollisionMode,
     InputPhase,
     KeyboardConditionSpec,
     MouseConditionSpec,
@@ -857,6 +858,56 @@ def test_collision_rule_requires_first_two_action_parameters_to_be_actors():
             game.add_rule(CollisionRelated(Player["hero"], Player), bad)
             """
         )
+
+
+def test_on_overlap_and_on_contact_conditions_set_collision_mode():
+    project = compile_project(
+        """
+        class Player(Actor):
+            life: int
+
+        class Coin(Actor):
+            active: bool
+
+        def on_overlap(hero: Player, coin: Coin):
+            hero.life = hero.life + 1
+
+        def on_contact(hero: Player, coin: Coin):
+            hero.life = hero.life - 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", life=1))
+        scene.add_actor(Coin(uid="coin_1", active=True))
+        scene.add_rule(OnOverlap(Player["hero"], Coin), on_overlap)
+        scene.add_rule(OnContact(Player["hero"], Coin), on_contact)
+        """
+    )
+
+    assert project.rules[0].condition.mode == CollisionMode.OVERLAP
+    assert project.rules[1].condition.mode == CollisionMode.CONTACT
+
+
+def test_on_overlap_allows_tile_selector():
+    project = compile_project(
+        """
+        class Player(Actor):
+            life: int
+
+        def on_tile_overlap(hero: Player, tile: Actor[-1]):
+            hero.life = hero.life + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", life=1))
+        scene.add_rule(OnOverlap(Player["hero"], Tile), on_tile_overlap)
+        """
+    )
+
+    condition = project.rules[0].condition
+    assert condition.right.actor_type == "Tile"
 
 
 def test_global_variable_object_is_accepted_in_add_global_forms():

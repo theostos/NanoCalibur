@@ -80,7 +80,8 @@ Static forms like `Actor.play(player, ...)` and `Actor.destroy(player)` are not 
 - `MouseCondition.begin_click("left")`
 - `MouseCondition.on_click("left")`
 - `MouseCondition.end_click("left")`
-- `CollisionRelated(selector_a, selector_b)`
+- `OnOverlap(selector_a, selector_b)` (legacy alias: `CollisionRelated(...)`)
+- `OnContact(selector_a, selector_b)`
 - `LogicalRelated(predicate_fn, selector)`
 - `ToolCalling("tool_name", "tool docstring")`
 - `OnButton("button_name")`
@@ -89,6 +90,11 @@ Rule declaration styles:
 - `scene.add_rule(condition_expr, action_fn)` (preferred)
 - `game.add_rule(condition_expr, action_fn)` (legacy-compatible)
 - `@condition(condition_expr)` decorator on action functions
+
+Examples:
+- `OnOverlap(Player["hero"], Coin)` for actor-vs-actor overlap
+- `OnOverlap(Player["hero"], Tile)` for actor-vs-blocking-tile overlap
+- `OnContact(Player["hero"], Coin)` for blocking contact events (equal `block_mask`)
 
 ### Scene/Game Split
 
@@ -107,11 +113,14 @@ game.set_scene(scene)
 
 ```python
 game.set_interface(
-    "<div>Score: {{score}}</div><button data-button=\"spawn_bonus\">Spawn</button>"
+    "<div>Score: {{score}}</div><div>Actors: {{__actors_count}}</div>"
 )
 ```
 
 Use `OnButton("spawn_bonus")` conditions only when your interface includes a matching `data-button` entry.
+Built-in dynamic placeholders available in interface HTML:
+- `{{__actors_count}}`
+- `{{__scene_elapsed}}`
 
 ## Compile and Export (Python)
 
@@ -177,9 +186,7 @@ if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Canvas element #game not found.');
 }
 
-const host = attachNanoCalibur(canvas, {
-  showHud: true,
-});
+const host = attachNanoCalibur(canvas);
 
 void host.start();
 ```

@@ -24,6 +24,7 @@ from nanocalibur.game_model import (
     ButtonConditionSpec,
     CameraMode,
     CameraSpec,
+    CollisionMode,
     ColorSpec,
     CollisionConditionSpec,
     ConditionSpec,
@@ -1221,6 +1222,8 @@ class ProjectCompiler:
         if isinstance(node.func, ast.Name):
             return node.func.id in {
                 "CollisionRelated",
+                "OnOverlap",
+                "OnContact",
                 "LogicalRelated",
                 "ToolCalling",
                 "OnButton",
@@ -1352,12 +1355,21 @@ class ProjectCompiler:
                     "MouseCondition.<phase>(...) accepts zero or one argument."
                 )
 
-        if isinstance(node.func, ast.Name) and node.func.id == "CollisionRelated":
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id in {"CollisionRelated", "OnOverlap", "OnContact"}
+        ):
             if len(node.args) != 2 or node.keywords:
-                raise DSLValidationError("CollisionRelated(...) expects two selectors.")
+                raise DSLValidationError(
+                    f"{node.func.id}(...) expects two selectors."
+                )
             left = self._parse_selector(node.args[0], compiler)
             right = self._parse_selector(node.args[1], compiler)
-            return CollisionConditionSpec(left=left, right=right)
+            if node.func.id == "OnContact":
+                mode = CollisionMode.CONTACT
+            else:
+                mode = CollisionMode.OVERLAP
+            return CollisionConditionSpec(left=left, right=right, mode=mode)
 
         if isinstance(node.func, ast.Name) and node.func.id == "LogicalRelated":
             if len(node.args) != 2 or node.keywords:
@@ -1424,6 +1436,8 @@ class ProjectCompiler:
         self, node: ast.AST, compiler: DSLCompiler
     ) -> Optional[str]:
         actor_name = _expect_name(node, "actor type")
+        if actor_name == "Tile":
+            return "Tile"
         if actor_name == "Actor":
             return None
         if actor_name not in compiler.schemas.actor_fields:

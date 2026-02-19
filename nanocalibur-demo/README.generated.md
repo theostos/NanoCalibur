@@ -30,9 +30,7 @@ if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Canvas element #game not found.');
 }
 
-const host = attachNanoCalibur(canvas, {
-  showHud: true,
-});
+const host = attachNanoCalibur(canvas);
 
 void host.start();
 ```

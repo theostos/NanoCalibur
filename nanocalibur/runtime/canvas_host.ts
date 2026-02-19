@@ -150,7 +150,7 @@ export class CanvasHost {
         ? new InterfaceOverlay(canvas, interfaceHtml)
         : null;
     if (this.interfaceOverlay) {
-      this.interfaceOverlay.updateGlobals(this.core.getState().globals);
+      this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals());
     }
     this.renderer.render(this.core.getState(), this.core.getMap());
   }
@@ -202,8 +202,22 @@ export class CanvasHost {
 
     this.core.step(dtSeconds, { keyboard, mouse, uiButtons });
     if (this.interfaceOverlay) {
-      this.interfaceOverlay.updateGlobals(this.core.getState().globals);
+      this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals());
     }
+  }
+
+  private buildInterfaceGlobals(): Record<string, any> {
+    const state = this.core.getState();
+    const globals =
+      state.globals && typeof state.globals === "object"
+        ? { ...(state.globals as Record<string, any>) }
+        : {};
+    globals.__actors_count = Array.isArray(state.actors) ? state.actors.length : 0;
+    globals.__scene_elapsed =
+      state.scene && typeof state.scene.elapsed === "number"
+        ? state.scene.elapsed
+        : 0;
+    return globals;
   }
 
   private installInputListeners(): void {

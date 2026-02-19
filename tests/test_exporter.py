@@ -168,3 +168,36 @@ def test_export_project_serializes_interface_html_and_button_condition(tmp_path)
     assert "Score: {{score}}" in spec["interface_html"]
     assert spec["rules"][0]["condition"]["kind"] == "button"
     assert spec["rules"][0]["condition"]["name"] == "spawn_bonus"
+
+
+def test_export_project_serializes_overlap_and_contact_modes(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            life: int
+
+        class Coin(Actor):
+            active: bool
+
+        def on_overlap(hero: Player, coin: Coin):
+            hero.life = hero.life + 1
+
+        def on_contact(hero: Player, coin: Coin):
+            hero.life = hero.life - 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", life=1))
+        scene.add_actor(Coin(uid="coin_1", active=True))
+        scene.add_rule(OnOverlap(Player["hero"], Coin), on_overlap)
+        scene.add_rule(OnContact(Player["hero"], Coin), on_contact)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["rules"][0]["condition"]["kind"] == "collision"
+    assert spec["rules"][0]["condition"]["mode"] == "overlap"
+    assert spec["rules"][1]["condition"]["kind"] == "collision"
+    assert spec["rules"][1]["condition"]["mode"] == "contact"

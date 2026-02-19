@@ -458,3 +458,98 @@ def test_runtime_button_condition_matches_ui_buttons(tmp_path):
     )
     count = json.loads(proc.stdout.strip())
     assert count == 1
+
+
+def test_runtime_collision_modes_distinguish_overlap_and_contact(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [
+            {{ type: "Player", uid: "hero", fields: {{ x: 10, y: 10, active: true }} }},
+            {{ type: "Coin", uid: "coin_1", fields: {{ x: 10, y: 10, active: true }} }}
+          ],
+          globals: [
+            {{ name: "overlap_count", kind: "int", value: 0 }},
+            {{ name: "contact_count", kind: "int", value: 0 }}
+          ],
+          predicates: [],
+          rules: [
+            {{
+              condition: {{
+                kind: "collision",
+                mode: "overlap",
+                left: {{ kind: "with_uid", actor_type: "Player", uid: "hero" }},
+                right: {{ kind: "any", actor_type: "Coin", uid: null }}
+              }},
+              action: "on_overlap"
+            }},
+            {{
+              condition: {{
+                kind: "collision",
+                mode: "contact",
+                left: {{ kind: "with_uid", actor_type: "Player", uid: "hero" }},
+                right: {{ kind: "any", actor_type: "Coin", uid: null }}
+              }},
+              action: "on_contact"
+            }}
+          ]
+        }};
+
+        const actions = {{
+          on_overlap: (ctx) => {{
+            ctx.globals.overlap_count = ctx.globals.overlap_count + 1;
+          }},
+          on_contact: (ctx) => {{
+            ctx.globals.contact_count = ctx.globals.contact_count + 1;
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{
+          collisions: [{{ aUid: "hero", bUid: "coin_1" }}],
+          contacts: []
+        }});
+        i.tick({{
+          collisions: [],
+          contacts: [{{ aUid: "hero", bUid: "coin_1" }}]
+        }});
+
+        console.log(JSON.stringify(i.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["overlap_count"] == 1
+    assert values["contact_count"] == 1

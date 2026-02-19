@@ -147,6 +147,7 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
     if isinstance(condition, CollisionConditionSpec):
         return {
             "kind": "collision",
+            "mode": condition.mode.value,
             "left": _selector_to_dict(condition.left),
             "right": _selector_to_dict(condition.right),
         }
