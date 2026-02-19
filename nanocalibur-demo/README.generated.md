@@ -11,6 +11,9 @@ Included files:
 - `canvas_host.ts`
 - `headless_host.ts`
 - `headless_http_server.ts`
+- `session_runtime.ts`
+- `session_manager.ts`
+- `replay_store_sqlite.ts`
 - `symbolic_renderer.ts`
 - `bridge.ts`
 - `index.ts`
