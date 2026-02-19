@@ -355,7 +355,7 @@ export class NanoCaliburInterpreter {
         }
         globals[globalVar.name] = uid ? this.getActorByUid(uid) : null;
       } else {
-        globals[globalVar.name] = globalVar.value;
+        globals[globalVar.name] = this.cloneStructuredValue(globalVar.value);
       }
     }
     return globals;
@@ -364,7 +364,7 @@ export class NanoCaliburInterpreter {
   private initActors(actorSpecs: Record<string, any>[]): Record<string, any>[] {
     return actorSpecs.map((actor) => {
       const out = {
-        ...(actor.fields || {}),
+        ...(this.cloneStructuredValue(actor.fields || {}) as Record<string, any>),
         uid: actor.uid,
         type: actor.type,
       } as Record<string, any>;
@@ -393,7 +393,7 @@ export class NanoCaliburInterpreter {
       }
       const roleFields =
         role.fields && typeof role.fields === "object"
-          ? { ...(role.fields as Record<string, any>) }
+          ? (this.cloneStructuredValue(role.fields) as Record<string, any>)
           : {};
       out[id] = {
         id,
@@ -1064,7 +1064,7 @@ export class NanoCaliburInterpreter {
         if (!(fieldName in schema)) {
           continue;
         }
-        actor[fieldName] = Array.isArray(value) ? [...value] : value;
+        actor[fieldName] = this.cloneStructuredValue(value);
       }
     }
 
@@ -1247,7 +1247,24 @@ export class NanoCaliburInterpreter {
     if (typeLabel.startsWith("list[")) {
       return [];
     }
+    if (typeLabel.startsWith("dict[")) {
+      return {};
+    }
     return null;
+  }
+
+  private cloneStructuredValue(value: any): any {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.cloneStructuredValue(item));
+    }
+    if (value && typeof value === "object") {
+      const out: Record<string, any> = {};
+      for (const [key, item] of Object.entries(value)) {
+        out[key] = this.cloneStructuredValue(item);
+      }
+      return out;
+    }
+    return value;
   }
 
   private getActorByUid(uid: string): Record<string, any> | null {

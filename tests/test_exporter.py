@@ -386,3 +386,30 @@ def test_export_project_serializes_role_schemas_and_fields(tmp_path):
     assert spec["role_schemas"]["HumanRole"]["cards"] == "list[str]"
     assert spec["roles"][0]["type"] == "HumanRole"
     assert spec["roles"][0]["fields"] == {"score": 2, "cards": []}
+
+
+def test_export_project_serializes_dict_types_and_values(tmp_path):
+    source = textwrap.dedent(
+        """
+        class HumanRole(Role):
+            score_by_mode: Dict[str, int]
+
+        class Player(Actor):
+            inventory: Dict[str, List[int]]
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_global("score_by_mode", {"solo": 1} + {"duo": 2})
+        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score_by_mode={"solo": 4}))
+        scene.add_actor(Player(uid="hero", inventory={"coins": [1, 2]}))
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["schemas"]["Player"]["inventory"] == "dict[str, list[int]]"
+    assert spec["role_schemas"]["HumanRole"]["score_by_mode"] == "dict[str, int]"
+    globals_by_name = {entry["name"]: entry for entry in spec["globals"]}
+    assert globals_by_name["score_by_mode"]["kind"] == "dict"
+    assert globals_by_name["score_by_mode"]["value"] == {"solo": 1, "duo": 2}

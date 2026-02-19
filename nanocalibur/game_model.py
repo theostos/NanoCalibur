@@ -5,7 +5,9 @@ from typing import Dict, List, Optional, Union
 from nanocalibur.ir import ActionIR, CallableIR, PredicateIR
 
 PrimitiveValue = Union[int, float, str, bool, None]
-ListValue = List[PrimitiveValue]
+StructuredValue = Union[PrimitiveValue, "ListValue", "DictValue"]
+ListValue = List[StructuredValue]
+DictValue = Dict[str, StructuredValue]
 
 try:
     from enum import StrEnum  # type: ignore[attr-defined]
@@ -101,6 +103,7 @@ class GlobalValueKind(Enum):
     STR = "str"
     BOOL = "bool"
     LIST = "list"
+    DICT = "dict"
     ACTOR_REF = "actor_ref"
 
 
@@ -114,7 +117,7 @@ class ActorRefValue:
 class GlobalVariableSpec:
     name: str
     kind: GlobalValueKind
-    value: Union[PrimitiveValue, ListValue, ActorRefValue]
+    value: Union[PrimitiveValue, ListValue, DictValue, ActorRefValue]
     list_elem_kind: Optional[str] = None
 
 
@@ -122,7 +125,7 @@ class GlobalVariableSpec:
 class ActorInstanceSpec:
     actor_type: str
     uid: str
-    fields: Dict[str, Union[PrimitiveValue, ListValue]]
+    fields: Dict[str, Union[PrimitiveValue, ListValue, DictValue]]
 
 
 @dataclass(frozen=True)
@@ -206,7 +209,7 @@ class RoleSpec:
     required: bool = True
     kind: RoleKind = RoleKind.HYBRID
     role_type: str = "Role"
-    fields: Dict[str, Union[PrimitiveValue, ListValue]] = field(default_factory=dict)
+    fields: Dict[str, Union[PrimitiveValue, ListValue, DictValue]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

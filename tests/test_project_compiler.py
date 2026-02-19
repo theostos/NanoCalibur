@@ -7,6 +7,7 @@ from nanocalibur.errors import DSLValidationError
 from nanocalibur.game_model import (
     ButtonConditionSpec,
     CollisionMode,
+    GlobalValueKind,
     InputPhase,
     KeyboardConditionSpec,
     MultiplayerLoopMode,
@@ -294,6 +295,33 @@ def test_project_parses_role_schema_and_role_bindings():
     assert add_score.params[0].role_selector is not None
     assert add_score.params[0].role_selector.id == "human_1"
     assert add_score.params[0].role_type == "HumanRole"
+
+
+def test_project_supports_dict_field_types_for_roles_actors_and_globals():
+    project = compile_project(
+        """
+        class HumanRole(Role):
+            score_by_mode: Dict[str, int]
+
+        class Player(Actor):
+            inventory: Dict[str, List[int]]
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_global("score_by_mode", {"solo": 1} + {"duo": 2})
+        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score_by_mode={"solo": 5}))
+        scene.add_actor(Player(uid="hero", inventory={"coins": [1] + [2, 3]}))
+        """
+    )
+
+    assert project.role_schemas["HumanRole"]["score_by_mode"] == "dict[str, int]"
+    assert project.actor_schemas["Player"]["inventory"] == "dict[str, list[int]]"
+    global_by_name = {g.name: g for g in project.globals}
+    assert global_by_name["score_by_mode"].kind == GlobalValueKind.DICT
+    assert global_by_name["score_by_mode"].value == {"solo": 1, "duo": 2}
+    assert project.roles[0].fields["score_by_mode"] == {"solo": 5}
+    assert project.actors[0].fields["inventory"] == {"coins": [1, 2, 3]}
 
 
 def test_role_binding_requires_declared_role_id():
@@ -1454,6 +1482,32 @@ def test_scene_set_interface_accepts_literal_and_alias_variable():
     assert project.interface_html is not None
     assert "Score: {{score}}" in project.interface_html
     assert 'data-button="spawn_bonus"' in project.interface_html
+
+
+def test_setup_sprite_arguments_allow_static_expressions():
+    project = compile_project(
+        """
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_resource("hero_sheet", "hero.png")
+        game.add_sprite(
+            Sprite(
+                name="hero" + "_alt",
+                resource="hero_sheet",
+                frame_width=16,
+                frame_height=16,
+                default_clip="idle",
+                clips={
+                    "idle": {"frames": [0, 1, 2, 3] + [4, 5], "ticks_per_frame": 8, "loop": True},
+                },
+            )
+        )
+        """
+    )
+
+    assert project.sprites[0].name == "hero_alt"
+    assert project.sprites[0].clips[0].frames == [0, 1, 2, 3, 4, 5]
 
 
 def test_game_set_interface_is_rejected():

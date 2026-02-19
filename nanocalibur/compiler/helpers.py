@@ -2,7 +2,7 @@ import ast
 from typing import Dict
 
 from nanocalibur.errors import DSLValidationError
-from nanocalibur.typesys import FieldType, ListType, Prim, PrimType
+from nanocalibur.typesys import DictType, FieldType, ListType, Prim, PrimType
 
 
 def _is_docstring_expr(node: ast.AST) -> bool:
@@ -71,7 +71,7 @@ def _validate_global_binding_type(node: ast.AST) -> None:
         return
 
     raise DSLValidationError(
-        "Global typed binding only supports int, float, str, bool, or nested List[...] with primitive elements."
+        "Global typed binding only supports int, float, str, bool, List[...], or Dict[str, ...] with supported primitive/container elements."
     )
 
 
@@ -84,6 +84,19 @@ def _is_supported_global_binding_type(node: ast.AST) -> bool:
         and node.value.id in {"List", "list"}
     ):
         return _is_supported_global_binding_type(node.slice)
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"Dict", "dict"}
+    ):
+        if not isinstance(node.slice, ast.Tuple) or len(node.slice.elts) != 2:
+            return False
+        key_node, value_node = node.slice.elts
+        return (
+            isinstance(key_node, ast.Name)
+            and key_node.id == "str"
+            and _is_supported_global_binding_type(value_node)
+        )
     return False
 
 
@@ -134,6 +147,21 @@ def _parse_typed_literal_value(
             _parse_typed_literal_value(elem, field_type.elem, source_name)
             for elem in node.elts
         ]
+
+    if isinstance(field_type, DictType):
+        if not isinstance(node, ast.Dict):
+            raise DSLValidationError(f"{source_name} expected dict literal value.")
+        out: dict[str, object] = {}
+        for key_node, value_node in zip(node.keys, node.values):
+            if key_node is None:
+                raise DSLValidationError(f"{source_name} dict key cannot be omitted.")
+            key_value = _parse_typed_literal_value(key_node, field_type.key, source_name)
+            if not isinstance(key_value, str):
+                raise DSLValidationError(f"{source_name} dict keys must be strings.")
+            out[key_value] = _parse_typed_literal_value(
+                value_node, field_type.value, source_name
+            )
+        return out
 
     raise DSLValidationError(f"{source_name} uses unsupported field type.")
 

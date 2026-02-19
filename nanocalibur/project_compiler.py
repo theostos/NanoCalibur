@@ -75,7 +75,7 @@ from nanocalibur.ir import (
     While,
     Yield,
 )
-from nanocalibur.typesys import FieldType, ListType, Prim, PrimType
+from nanocalibur.typesys import DictType, FieldType, ListType, Prim, PrimType
 
 
 COLLISION_LEFT_BINDING_UID = "__nanocalibur_collision_left__"
@@ -436,7 +436,17 @@ class ProjectCompiler:
                 list_elem_kind=_field_type_label(field_type),
             )
 
-        raise DSLValidationError("GlobalVariable(...) type must be primitive or List[...].")
+        if isinstance(field_type, DictType):
+            return GlobalVariableSpec(
+                name=global_name,
+                kind=GlobalValueKind.DICT,
+                value=value,
+                list_elem_kind=_field_type_label(field_type),
+            )
+
+        raise DSLValidationError(
+            "GlobalVariable(...) type must be primitive, List[...], or Dict[str, ...]."
+        )
 
     def _compile_functions(
         self, module: ast.Module, compiler: DSLCompiler
@@ -1500,6 +1510,30 @@ class ProjectCompiler:
     def _parse_global_value(
         self, node: ast.AST, compiler: DSLCompiler
     ) -> Tuple[GlobalValueKind, object, Optional[str]]:
+        static_value = None
+        has_static_value = False
+        try:
+            static_value = _eval_static_expr(node)
+            has_static_value = True
+        except DSLValidationError:
+            has_static_value = False
+
+        if has_static_value:
+            if isinstance(static_value, bool):
+                return GlobalValueKind.BOOL, static_value, None
+            if isinstance(static_value, int) and not isinstance(static_value, bool):
+                return GlobalValueKind.INT, static_value, None
+            if isinstance(static_value, float):
+                return GlobalValueKind.FLOAT, static_value, None
+            if isinstance(static_value, str):
+                return GlobalValueKind.STR, static_value, None
+            if isinstance(static_value, list):
+                list_kind = _infer_primitive_list_kind(static_value)
+                return GlobalValueKind.LIST, static_value, list_kind
+            if isinstance(static_value, dict):
+                dict_kind = _infer_primitive_dict_kind(static_value)
+                return GlobalValueKind.DICT, static_value, dict_kind
+
         if isinstance(node, ast.Constant):
             if isinstance(node.value, bool):
                 return GlobalValueKind.BOOL, node.value, None
@@ -1510,11 +1544,6 @@ class ProjectCompiler:
             if isinstance(node.value, str):
                 return GlobalValueKind.STR, node.value, None
             raise DSLValidationError("Unsupported constant type in global value.")
-
-        if isinstance(node, ast.List):
-            values = [_expect_primitive_or_nested_list_constant(e) for e in node.elts]
-            list_kind = _infer_primitive_list_kind(values)
-            return GlobalValueKind.LIST, values, list_kind
 
         if isinstance(node, (ast.Call, ast.Subscript, ast.Name)):
             selector = self._parse_selector(node, compiler)
@@ -2658,53 +2687,52 @@ class ProjectCompiler:
         )
 
     def _parse_sprite_clips(self, node: ast.AST) -> List[AnimationClipSpec]:
-        if not isinstance(node, ast.Dict):
+        raw_value = _eval_static_expr(node)
+        if not isinstance(raw_value, dict):
             raise DSLValidationError(
                 "add_sprite(..., clips=...) expects a dict of clip definitions."
             )
-
         clips: List[AnimationClipSpec] = []
         seen_names: set[str] = set()
-        for key_node, value_node in zip(node.keys, node.values):
-            if key_node is None:
+        for raw_key, raw_clip in raw_value.items():
+            if not isinstance(raw_key, str):
                 raise DSLValidationError("Clip names must be strings.")
-            clip_name = _expect_string(key_node, "clip name")
+            clip_name = raw_key
             if clip_name in seen_names:
                 raise DSLValidationError(f"Duplicate clip '{clip_name}'.")
             seen_names.add(clip_name)
 
-            if isinstance(value_node, ast.List):
-                frames = _expect_int_list(value_node, f"frames for clip '{clip_name}'")
+            if isinstance(raw_clip, list):
+                frames = self._expect_int_values(
+                    raw_clip, f"frames for clip '{clip_name}'"
+                )
                 clips.append(AnimationClipSpec(name=clip_name, frames=frames))
                 continue
 
-            if isinstance(value_node, ast.Dict):
-                # build dict manually from literal keys to keep ast-only parsing
-                payload: Dict[str, ast.AST] = {}
-                for sub_key, sub_val in zip(value_node.keys, value_node.values):
-                    if sub_key is None:
-                        raise DSLValidationError("Clip config keys must be strings.")
-                    payload[_expect_string(sub_key, "clip config key")] = sub_val
-
-                if "frames" not in payload:
+            if isinstance(raw_clip, dict):
+                if "frames" not in raw_clip:
                     raise DSLValidationError(
                         f"Clip '{clip_name}' missing required 'frames'."
                     )
-                frames = _expect_int_list(
-                    payload["frames"], f"frames for clip '{clip_name}'"
+                frames = self._expect_int_values(
+                    raw_clip["frames"], f"frames for clip '{clip_name}'"
                 )
-                ticks_per_frame = _expect_int_or_default(
-                    payload.get("ticks_per_frame"),
-                    f"ticks_per_frame for clip '{clip_name}'",
-                    8,
-                )
+                ticks_raw = raw_clip.get("ticks_per_frame", 8)
+                if not isinstance(ticks_raw, int) or isinstance(ticks_raw, bool):
+                    raise DSLValidationError(
+                        f"ticks_per_frame for clip '{clip_name}' must be an integer."
+                    )
+                ticks_per_frame = ticks_raw
                 if ticks_per_frame <= 0:
                     raise DSLValidationError(
                         f"ticks_per_frame for clip '{clip_name}' must be > 0."
                     )
-                loop = _expect_bool_or_default(
-                    payload.get("loop"), f"loop for clip '{clip_name}'", True
-                )
+                loop_raw = raw_clip.get("loop", True)
+                if not isinstance(loop_raw, bool):
+                    raise DSLValidationError(
+                        f"loop for clip '{clip_name}' must be a bool."
+                    )
+                loop = loop_raw
                 clips.append(
                     AnimationClipSpec(
                         name=clip_name,
@@ -2722,6 +2750,19 @@ class ProjectCompiler:
         if not clips:
             raise DSLValidationError("add_sprite(..., clips=...) cannot be empty.")
         return clips
+
+    def _expect_int_values(self, raw_value: object, label: str) -> List[int]:
+        if not isinstance(raw_value, list):
+            raise DSLValidationError(f"Expected {label} as list[int].")
+        values: List[int] = []
+        for item in raw_value:
+            if isinstance(item, int) and not isinstance(item, bool):
+                values.append(item)
+                continue
+            raise DSLValidationError(f"Expected {label} as list[int].")
+        if not values:
+            raise DSLValidationError(f"Expected {label} to contain at least one frame.")
+        return values
 
     def _bind_collision_action_params(
         self,
@@ -3175,18 +3216,270 @@ def _expect_name(node: ast.AST, label: str) -> str:
     raise DSLValidationError(f"Expected {label} name.")
 
 
+def _eval_static_expr(node: ast.AST):
+    if isinstance(node, ast.Constant):
+        value = node.value
+        if value is None:
+            return None
+        if isinstance(value, (bool, int, float, str)):
+            return value
+        raise DSLValidationError("Unsupported constant value in setup expression.")
+
+    if isinstance(node, ast.List):
+        return [_eval_static_expr(item) for item in node.elts]
+
+    if isinstance(node, ast.Tuple):
+        return tuple(_eval_static_expr(item) for item in node.elts)
+
+    if isinstance(node, ast.Dict):
+        out: Dict[object, object] = {}
+        for key_node, value_node in zip(node.keys, node.values):
+            if key_node is None:
+                raise DSLValidationError("Dict unpacking is not supported in setup expressions.")
+            key = _eval_static_expr(key_node)
+            if not isinstance(key, (str, int, float, bool)):
+                raise DSLValidationError(
+                    "Dict keys in setup expressions must be primitive constants."
+                )
+            out[key] = _eval_static_expr(value_node)
+        return out
+
+    if isinstance(node, ast.UnaryOp):
+        operand = _eval_static_expr(node.operand)
+        if isinstance(node.op, ast.Not):
+            return not bool(operand)
+        if isinstance(node.op, ast.UAdd):
+            if isinstance(operand, bool) or not isinstance(operand, (int, float)):
+                raise DSLValidationError("Unary '+' expects an int or float operand.")
+            return +operand
+        if isinstance(node.op, ast.USub):
+            if isinstance(operand, bool) or not isinstance(operand, (int, float)):
+                raise DSLValidationError("Unary '-' expects an int or float operand.")
+            return -operand
+        raise DSLValidationError(
+            f"Unsupported unary operator in setup expression: {type(node.op).__name__}"
+        )
+
+    if isinstance(node, ast.BinOp):
+        left = _eval_static_expr(node.left)
+        right = _eval_static_expr(node.right)
+
+        if isinstance(node.op, ast.Add):
+            if isinstance(left, list) and isinstance(right, list):
+                return left + right
+            if isinstance(left, dict) and isinstance(right, dict):
+                return {**left, **right}
+            if isinstance(left, str) and isinstance(right, str):
+                return left + right
+            if isinstance(left, bool) or isinstance(right, bool):
+                raise DSLValidationError("Operator '+' does not accept bool operands.")
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left + right
+            raise DSLValidationError(
+                "Unsupported '+' operands in setup expression. Use compatible "
+                "int/float/str/list/dict values."
+            )
+
+        if isinstance(node.op, ast.Sub):
+            if isinstance(left, bool) or isinstance(right, bool):
+                raise DSLValidationError("Operator '-' does not accept bool operands.")
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left - right
+            raise DSLValidationError("Operator '-' expects int/float operands.")
+
+        if isinstance(node.op, ast.Mult):
+            if isinstance(left, bool) or isinstance(right, bool):
+                raise DSLValidationError("Operator '*' does not accept bool operands.")
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left * right
+            if isinstance(left, str) and isinstance(right, int):
+                return left * right
+            if isinstance(left, int) and isinstance(right, str):
+                return left * right
+            if isinstance(left, list) and isinstance(right, int):
+                return left * right
+            if isinstance(left, int) and isinstance(right, list):
+                return left * right
+            raise DSLValidationError(
+                "Unsupported '*' operands in setup expression."
+            )
+
+        if isinstance(node.op, ast.Div):
+            if isinstance(left, bool) or isinstance(right, bool):
+                raise DSLValidationError("Operator '/' does not accept bool operands.")
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left / right
+            raise DSLValidationError("Operator '/' expects int/float operands.")
+
+        if isinstance(node.op, ast.FloorDiv):
+            if isinstance(left, bool) or isinstance(right, bool):
+                raise DSLValidationError("Operator '//' does not accept bool operands.")
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left // right
+            raise DSLValidationError("Operator '//' expects int/float operands.")
+
+        if isinstance(node.op, ast.Mod):
+            if isinstance(left, bool) or isinstance(right, bool):
+                raise DSLValidationError("Operator '%' does not accept bool operands.")
+            if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                return left % right
+            if isinstance(left, str):
+                return left % right
+            raise DSLValidationError("Operator '%' expects numeric operands.")
+
+        raise DSLValidationError(
+            f"Unsupported binary operator in setup expression: {type(node.op).__name__}"
+        )
+
+    if isinstance(node, ast.BoolOp):
+        if not node.values:
+            raise DSLValidationError("Empty boolean expression is not supported.")
+        if isinstance(node.op, ast.And):
+            current = _eval_static_expr(node.values[0])
+            for value_node in node.values[1:]:
+                if not current:
+                    return current
+                current = _eval_static_expr(value_node)
+            return current
+        if isinstance(node.op, ast.Or):
+            current = _eval_static_expr(node.values[0])
+            for value_node in node.values[1:]:
+                if current:
+                    return current
+                current = _eval_static_expr(value_node)
+            return current
+        raise DSLValidationError(
+            f"Unsupported boolean operator in setup expression: {type(node.op).__name__}"
+        )
+
+    if isinstance(node, ast.Compare):
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            raise DSLValidationError("Chained comparisons are not supported in setup expressions.")
+        left = _eval_static_expr(node.left)
+        right = _eval_static_expr(node.comparators[0])
+        op = node.ops[0]
+        if isinstance(op, ast.Eq):
+            return left == right
+        if isinstance(op, ast.NotEq):
+            return left != right
+        if isinstance(op, ast.Lt):
+            return left < right
+        if isinstance(op, ast.LtE):
+            return left <= right
+        if isinstance(op, ast.Gt):
+            return left > right
+        if isinstance(op, ast.GtE):
+            return left >= right
+        if isinstance(op, ast.Is):
+            return left is right
+        if isinstance(op, ast.IsNot):
+            return left is not right
+        raise DSLValidationError(
+            f"Unsupported comparison operator in setup expression: {type(op).__name__}"
+        )
+
+    if isinstance(node, ast.Call):
+        if node.keywords:
+            raise DSLValidationError("Keyword arguments are not supported in setup expression calls.")
+        if not isinstance(node.func, ast.Attribute):
+            raise DSLValidationError(
+                "Only collection helper calls are supported in setup expressions."
+            )
+        receiver = _eval_static_expr(node.func.value)
+        args = [_eval_static_expr(arg) for arg in node.args]
+        method = node.func.attr
+        if method == "concat":
+            if len(args) != 1:
+                raise DSLValidationError("concat(...) expects exactly one argument.")
+            other = args[0]
+            if isinstance(receiver, list) and isinstance(other, list):
+                return receiver + other
+            if isinstance(receiver, dict) and isinstance(other, dict):
+                return {**receiver, **other}
+            if isinstance(receiver, str) and isinstance(other, str):
+                return receiver + other
+            raise DSLValidationError(
+                "concat(...) is only supported for list/list, dict/dict, or str/str."
+            )
+        if method == "append":
+            if len(args) != 1:
+                raise DSLValidationError("append(...) expects exactly one argument.")
+            if not isinstance(receiver, list):
+                raise DSLValidationError("append(...) receiver must be a list.")
+            return [*receiver, args[0]]
+        if method == "pop":
+            if isinstance(receiver, list):
+                data = list(receiver)
+                if len(args) == 0:
+                    if not data:
+                        raise DSLValidationError("pop() on empty list in setup expression.")
+                    return data.pop()
+                if len(args) == 1 and isinstance(args[0], int):
+                    return data.pop(args[0])
+                raise DSLValidationError("list.pop(...) expects no args or one int index.")
+            if isinstance(receiver, dict):
+                data = dict(receiver)
+                if len(args) == 1:
+                    return data.pop(args[0])
+                if len(args) == 2:
+                    return data.pop(args[0], args[1])
+                raise DSLValidationError("dict.pop(...) expects key or key/default.")
+            raise DSLValidationError("pop(...) receiver must be list or dict.")
+        if method == "get":
+            if not isinstance(receiver, dict):
+                raise DSLValidationError("get(...) receiver must be a dict.")
+            if len(args) == 1:
+                return receiver.get(args[0])
+            if len(args) == 2:
+                return receiver.get(args[0], args[1])
+            raise DSLValidationError("get(...) expects key or key/default.")
+        if method == "keys":
+            if not isinstance(receiver, dict):
+                raise DSLValidationError("keys() receiver must be a dict.")
+            if args:
+                raise DSLValidationError("keys() does not accept arguments.")
+            return list(receiver.keys())
+        if method == "values":
+            if not isinstance(receiver, dict):
+                raise DSLValidationError("values() receiver must be a dict.")
+            if args:
+                raise DSLValidationError("values() does not accept arguments.")
+            return list(receiver.values())
+        if method == "items":
+            if not isinstance(receiver, dict):
+                raise DSLValidationError("items() receiver must be a dict.")
+            if args:
+                raise DSLValidationError("items() does not accept arguments.")
+            return [[k, v] for k, v in receiver.items()]
+        if method == "update":
+            if not isinstance(receiver, dict):
+                raise DSLValidationError("update(...) receiver must be a dict.")
+            if len(args) != 1 or not isinstance(args[0], dict):
+                raise DSLValidationError("update(...) expects exactly one dict argument.")
+            return {**receiver, **args[0]}
+        raise DSLValidationError(
+            f"Unsupported setup expression method '{method}'."
+        )
+
+    raise DSLValidationError(f"Unsupported setup expression: {type(node).__name__}")
+
+
 def _expect_string(node: ast.AST, label: str) -> str:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
+    value = _eval_static_expr(node)
+    if isinstance(value, str):
+        return value
     raise DSLValidationError(f"Expected {label} string.")
 
 
 def _expect_string_list(node: ast.AST, label: str) -> List[str]:
-    if not isinstance(node, ast.List):
+    value = _eval_static_expr(node)
+    if not isinstance(value, list):
         raise DSLValidationError(f"Expected {label} list.")
     out: List[str] = []
-    for item in node.elts:
-        out.append(_expect_string(item, label))
+    for item in value:
+        if not isinstance(item, str):
+            raise DSLValidationError(f"Expected {label} list[str].")
+        out.append(item)
     return out
 
 
@@ -3259,12 +3552,15 @@ def _parse_role_kind(node: Optional[ast.AST]) -> RoleKind:
 
 
 def _expect_string_or_string_list(node: ast.AST, label: str) -> str | List[str]:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.List):
+    value = _eval_static_expr(node)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
         values: List[str] = []
-        for item in node.elts:
-            values.append(_expect_string(item, label))
+        for item in value:
+            if not isinstance(item, str):
+                raise DSLValidationError(f"Expected {label} list[str].")
+            values.append(item)
         if not values:
             raise DSLValidationError(f"Expected {label} list to contain at least one key.")
         return values
@@ -3278,17 +3574,23 @@ def _expect_string_to_string_list_dict_or_default(
 ) -> Dict[str, List[str]]:
     if node is None:
         return dict(default)
-    if not isinstance(node, ast.Dict):
+    parsed = _eval_static_expr(node)
+    if not isinstance(parsed, dict):
         raise DSLValidationError(f"Expected {label} dict[str, str | list[str]].")
 
     out: Dict[str, List[str]] = {}
-    for key_node, value_node in zip(node.keys, node.values):
-        if key_node is None:
+    for raw_key, raw_value in parsed.items():
+        key = raw_key if isinstance(raw_key, str) else None
+        if key is None:
             raise DSLValidationError(f"Expected {label} keys to be strings.")
-        key = _expect_string(key_node, f"{label} key")
         if not key:
             raise DSLValidationError(f"Expected {label} key to be non-empty.")
-        raw_values = _expect_string_or_string_list(value_node, f"{label} value")
+        if isinstance(raw_value, str):
+            raw_values: str | List[str] = raw_value
+        elif isinstance(raw_value, list):
+            raw_values = raw_value
+        else:
+            raise DSLValidationError(f"Expected {label} value string or list[str].")
         values = [raw_values] if isinstance(raw_values, str) else raw_values
         deduped: List[str] = []
         seen: set[str] = set()
@@ -3306,12 +3608,9 @@ def _expect_string_to_string_list_dict_or_default(
 
 
 def _expect_int(node: ast.AST, label: str) -> int:
-    if (
-        isinstance(node, ast.Constant)
-        and isinstance(node.value, int)
-        and not isinstance(node.value, bool)
-    ):
-        return node.value
+    value = _eval_static_expr(node)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
     raise DSLValidationError(f"Expected {label} integer.")
 
 
@@ -3326,47 +3625,61 @@ def _expect_float_or_default(
 ) -> float:
     if node is None:
         return default
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        if isinstance(node.value, bool):
-            raise DSLValidationError(f"Expected {label} float.")
-        return float(node.value)
+    value = _eval_static_expr(node)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
     raise DSLValidationError(f"Expected {label} float.")
 
 
 def _expect_bool_or_default(node: Optional[ast.AST], label: str, default: bool) -> bool:
     if node is None:
         return default
-    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
-        return node.value
+    value = _eval_static_expr(node)
+    if isinstance(value, bool):
+        return value
     raise DSLValidationError(f"Expected {label} bool.")
 
 
 def _expect_int_list(node: ast.AST, label: str) -> List[int]:
-    if not isinstance(node, ast.List):
+    values_raw = _eval_static_expr(node)
+    if not isinstance(values_raw, list):
         raise DSLValidationError(f"Expected {label} as list[int].")
     values: List[int] = []
-    for item in node.elts:
-        values.append(_expect_int(item, label))
+    for item in values_raw:
+        if isinstance(item, int) and not isinstance(item, bool):
+            values.append(item)
+            continue
+        raise DSLValidationError(f"Expected {label} as list[int].")
     if not values:
         raise DSLValidationError(f"Expected {label} to contain at least one frame.")
     return values
 
 
 def _expect_int_matrix(node: ast.AST, label: str) -> List[List[int]]:
-    if not isinstance(node, ast.List):
+    rows_raw = _eval_static_expr(node)
+    if not isinstance(rows_raw, list):
         raise DSLValidationError(f"Expected {label} as list[list[int]].")
     rows: List[List[int]] = []
-    for row_node in node.elts:
-        if not isinstance(row_node, ast.List):
+    for row_node in rows_raw:
+        if not isinstance(row_node, list):
             raise DSLValidationError(f"Expected {label} rows as list[int].")
-        rows.append([_expect_int(cell, f"{label} cell") for cell in row_node.elts])
+        row_values: List[int] = []
+        for cell in row_node:
+            if isinstance(cell, int) and not isinstance(cell, bool):
+                row_values.append(cell)
+                continue
+            raise DSLValidationError(f"Expected {label} cell integer.")
+        rows.append(row_values)
     return rows
 
 
 def _expect_optional_int(node: ast.AST, label: str) -> Optional[int]:
-    if isinstance(node, ast.Constant) and node.value is None:
+    value = _eval_static_expr(node)
+    if value is None:
         return None
-    return _expect_int(node, label)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise DSLValidationError(f"Expected {label} integer.")
 
 
 def _expect_primitive_or_nested_list_constant(node: ast.AST):
@@ -3402,38 +3715,93 @@ def _infer_primitive_list_kind(values: List[object]) -> str:
         return "float"
     if all(isinstance(v, str) for v in values):
         return "str"
+    if all(isinstance(v, dict) for v in values):
+        dict_kinds = [
+            _infer_primitive_dict_kind(v) for v in values if isinstance(v, dict)
+        ]
+        first = dict_kinds[0]
+        if any(kind != first for kind in dict_kinds[1:]):
+            raise DSLValidationError("Global list values must have homogeneous dict element types.")
+        return first
     raise DSLValidationError("Global list values must have homogeneous primitive types.")
 
 
+def _infer_primitive_dict_kind(values: Dict[object, object]) -> str:
+    if not values:
+        return "dict[str, any]"
+    key_types: set[str] = set()
+    value_types: List[str] = []
+
+    for key, value in values.items():
+        if not isinstance(key, str):
+            raise DSLValidationError("Global dict values must use string keys.")
+        key_types.add("str")
+
+        if isinstance(value, bool):
+            value_types.append("bool")
+            continue
+        if isinstance(value, int) and not isinstance(value, bool):
+            value_types.append("int")
+            continue
+        if isinstance(value, float):
+            value_types.append("float")
+            continue
+        if isinstance(value, str):
+            value_types.append("str")
+            continue
+        if isinstance(value, list):
+            value_types.append(f"list[{_infer_primitive_list_kind(value)}]")
+            continue
+        if isinstance(value, dict):
+            value_types.append(_infer_primitive_dict_kind(value))
+            continue
+        raise DSLValidationError("Global dict values must contain primitive/list/dict values.")
+
+    value_type = value_types[0]
+    if any(kind != value_type for kind in value_types[1:]):
+        raise DSLValidationError("Global dict values must have homogeneous value types.")
+    return f"dict[str, {value_type}]"
+
+
 def _parse_typed_value(node: ast.AST, field_type: FieldType):
+    value = _eval_static_expr(node)
+
     if isinstance(field_type, PrimType):
         if field_type.prim == Prim.BOOL:
-            if isinstance(node, ast.Constant) and isinstance(node.value, bool):
-                return node.value
+            if isinstance(value, bool):
+                return value
             raise DSLValidationError("Expected bool value.")
         if field_type.prim == Prim.INT:
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, int)
-                and not isinstance(node.value, bool)
-            ):
-                return node.value
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
             raise DSLValidationError("Expected int value.")
         if field_type.prim == Prim.FLOAT:
-            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-                if isinstance(node.value, bool):
-                    raise DSLValidationError("Expected float value.")
-                return float(node.value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
             raise DSLValidationError("Expected float value.")
         if field_type.prim == Prim.STR:
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                return node.value
+            if isinstance(value, str):
+                return value
             raise DSLValidationError("Expected str value.")
 
     if isinstance(field_type, ListType):
-        if not isinstance(node, ast.List):
+        if not isinstance(value, list):
             raise DSLValidationError("Expected list value.")
-        return [_parse_typed_value(elem, field_type.elem) for elem in node.elts]
+        parsed_list = []
+        for elem in value:
+            parsed_list.append(_parse_typed_runtime_value(elem, field_type.elem))
+        return parsed_list
+
+    if isinstance(field_type, DictType):
+        if not isinstance(value, dict):
+            raise DSLValidationError("Expected dict value.")
+        parsed_dict: Dict[str, object] = {}
+        for key, item in value.items():
+            parsed_key = _parse_typed_runtime_value(key, field_type.key)
+            if not isinstance(parsed_key, str):
+                raise DSLValidationError("Dict keys must be strings.")
+            parsed_dict[parsed_key] = _parse_typed_runtime_value(item, field_type.value)
+        return parsed_dict
 
     raise DSLValidationError("Unsupported field type in actor instance.")
 
@@ -3450,6 +3818,8 @@ def _default_value_for_type(field_type: FieldType):
             return ""
     if isinstance(field_type, ListType):
         return []
+    if isinstance(field_type, DictType):
+        return {}
     raise DSLValidationError("Unsupported field type for default value.")
 
 
@@ -3458,6 +3828,8 @@ def _field_type_label(field_type: FieldType) -> str:
         return field_type.prim.value
     if isinstance(field_type, ListType):
         return f"list[{_field_type_label(field_type.elem)}]"
+    if isinstance(field_type, DictType):
+        return f"dict[{_field_type_label(field_type.key)}, {_field_type_label(field_type.value)}]"
     raise DSLValidationError("Unsupported field type in schema export.")
 
 
@@ -3471,16 +3843,65 @@ def _parse_global_type_expr(node: ast.AST) -> FieldType:
             return PrimType(Prim.STR)
         if node.id == "bool":
             return PrimType(Prim.BOOL)
-        raise DSLValidationError("GlobalVariable type must be int, float, str, bool, or List[...].")
+        raise DSLValidationError(
+            "GlobalVariable type must be int, float, str, bool, List[...], or Dict[str, ...]."
+        )
 
-    if (
-        isinstance(node, ast.Subscript)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in {"List", "list"}
-    ):
-        return ListType(_parse_global_type_expr(node.slice))
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        if node.value.id in {"List", "list"}:
+            return ListType(_parse_global_type_expr(node.slice))
+        if node.value.id in {"Dict", "dict"}:
+            if not isinstance(node.slice, ast.Tuple) or len(node.slice.elts) != 2:
+                raise DSLValidationError(
+                    "GlobalVariable Dict type must be Dict[str, value_type]."
+                )
+            key_type = _parse_global_type_expr(node.slice.elts[0])
+            if not isinstance(key_type, PrimType) or key_type.prim != Prim.STR:
+                raise DSLValidationError("GlobalVariable dict keys must be str.")
+            value_type = _parse_global_type_expr(node.slice.elts[1])
+            return DictType(key=key_type, value=value_type)
 
-    raise DSLValidationError("GlobalVariable type must be int, float, str, bool, or List[...].")
+    raise DSLValidationError(
+        "GlobalVariable type must be int, float, str, bool, List[...], or Dict[str, ...]."
+    )
+
+
+def _parse_typed_runtime_value(value, field_type: FieldType):
+    if isinstance(field_type, PrimType):
+        if field_type.prim == Prim.BOOL:
+            if isinstance(value, bool):
+                return value
+            raise DSLValidationError("Expected bool value.")
+        if field_type.prim == Prim.INT:
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+            raise DSLValidationError("Expected int value.")
+        if field_type.prim == Prim.FLOAT:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+            raise DSLValidationError("Expected float value.")
+        if field_type.prim == Prim.STR:
+            if isinstance(value, str):
+                return value
+            raise DSLValidationError("Expected str value.")
+
+    if isinstance(field_type, ListType):
+        if not isinstance(value, list):
+            raise DSLValidationError("Expected list value.")
+        return [_parse_typed_runtime_value(item, field_type.elem) for item in value]
+
+    if isinstance(field_type, DictType):
+        if not isinstance(value, dict):
+            raise DSLValidationError("Expected dict value.")
+        parsed: Dict[str, object] = {}
+        for key, item in value.items():
+            parsed_key = _parse_typed_runtime_value(key, field_type.key)
+            if not isinstance(parsed_key, str):
+                raise DSLValidationError("Dict keys must be strings.")
+            parsed[parsed_key] = _parse_typed_runtime_value(item, field_type.value)
+        return parsed
+
+    raise DSLValidationError("Unsupported field type in actor instance.")
 
 
 def _extract_declared_actor_ctor_uid(ctor: ast.Call) -> Optional[str]:
