@@ -55,8 +55,10 @@ Notes:
   Compiles generated TypeScript to `.nanocalibur_headless/` and starts a session-aware HTTP server on `http://127.0.0.1:7070` by default.
 - `npm run dummy:random`
   Starts a random dummy client that joins a role and sends `llm_dummy_*` tool commands. Requires `NC_INVITE_TOKEN`.
+- `npm run human:play`
+  Starts a human terminal client that joins a role, sends keyboard commands, and renders live session snapshots.
 
-Typical flow:
+Typical flow (human + dummy in one shared session):
 
 1. Start server:
 
@@ -64,26 +66,39 @@ Typical flow:
 npm run headless:server
 ```
 
-2. Create a session (from another terminal):
+2. Create a session with two roles (from another terminal):
 
 ```bash
-curl -sS -X POST http://127.0.0.1:7070/sessions \\
-  -H 'content-type: application/json' \\
-  -d '{"session_id":"demo_sess","loop_mode":"hybrid","roles":[{"id":"dummy_1","required":true}]}'
+curl -sS -X POST http://127.0.0.1:7070/sessions \
+  -H 'content-type: application/json' \
+  -d '{"session_id":"demo_sess","loop_mode":"hybrid","roles":[{"id":"human_1","required":true},{"id":"dummy_1","required":true}]}'
 ```
 
-3. Start dummy with returned invite token:
+3. Start human client with returned human invite token:
 
 ```bash
-NC_BASE_URL=http://127.0.0.1:7070 \\
-NC_INVITE_TOKEN=<invite_token> \\
+NC_BASE_URL=http://127.0.0.1:7070 \
+NC_INVITE_TOKEN=<human_invite_token> \
+npm run human:play
+```
+
+4. Start dummy with returned dummy invite token:
+
+```bash
+NC_BASE_URL=http://127.0.0.1:7070 \
+NC_INVITE_TOKEN=<dummy_invite_token> \
 npm run dummy:random
 ```
 
-4. Start session with returned admin token:
+5. Start session with returned admin token:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:7070/sessions/demo_sess/start \\
-  -H 'content-type: application/json' \\
+curl -sS -X POST http://127.0.0.1:7070/sessions/demo_sess/start \
+  -H 'content-type: application/json' \
   -d '{"admin_token":"<admin_token>"}'
 ```
+
+`human:play` controls:
+- movement: `zqsd`, `wasd`, or arrow keys
+- `e`: call `spawn_bonus`
+- `n`: call `llm_dummy_next_turn`
