@@ -151,7 +151,7 @@ game.set_multiplayer(
     )
 )
 game.add_global("score", 0)
-game.set_interface(
+scene.set_interface(
     """
 <div style="position:absolute;left:12px;top:12px;padding:8px 10px;background:rgba(8,10,14,0.62);color:#f2f5fa;border-radius:8px;font-family:monospace;">
   <div>Actors: {{__actors_count}}</div>

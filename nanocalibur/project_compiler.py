@@ -1056,6 +1056,20 @@ class ProjectCompiler:
                     )
                     continue
 
+                if scene_method_name == "set_interface":
+                    if scene_kwargs:
+                        raise DSLValidationError(
+                            "scene.set_interface(...) does not accept keyword args."
+                        )
+                    if len(scene_args) != 1:
+                        raise DSLValidationError(
+                            "scene.set_interface(...) expects one argument."
+                        )
+                    interface_html = self._resolve_interface_html_arg(
+                        scene_args[0], declared_interface_vars
+                    )
+                    continue
+
                 raise DSLValidationError(
                     f"Unsupported scene method '{scene_method_name}'."
                 )

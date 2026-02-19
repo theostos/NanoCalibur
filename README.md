@@ -178,15 +178,16 @@ Rules:
 
 ### Interface Overlay (Optional)
 
-`game.set_interface(...)` is optional. If omitted, no HTML overlay is created.
+`scene.set_interface(...)` is optional. If omitted, no HTML overlay is created.
 
 ```python
-game.set_interface(
+scene.set_interface(
     "<div>Score: {{score}}</div><div>Actors: {{__actors_count}}</div>"
 )
 ```
 
 Use `OnButton("spawn_bonus")` conditions only when your interface includes a matching `data-button` entry.
+You can update the overlay at runtime from an action with `scene.set_interface(...)` (for example to show/hide a panel based on game state).
 Built-in dynamic placeholders available in interface HTML:
 - `{{__actors_count}}`
 - `{{__scene_elapsed}}`

@@ -1439,7 +1439,7 @@ def test_on_button_condition_helper_registers_button_rule():
     assert condition.name == "spawn_bonus"
 
 
-def test_set_interface_accepts_literal_and_alias_variable():
+def test_scene_set_interface_accepts_literal_and_alias_variable():
     project = compile_project(
         '''
         game = Game()
@@ -1447,13 +1447,26 @@ def test_set_interface_accepts_literal_and_alias_variable():
         game.set_scene(scene)
         hud = "<div>Score: {{score}}</div><button data-button=\\"spawn_bonus\\">Spawn</button>"
         alias_hud = hud
-        game.set_interface(alias_hud)
+        scene.set_interface(alias_hud)
         '''
     )
 
     assert project.interface_html is not None
     assert "Score: {{score}}" in project.interface_html
     assert 'data-button="spawn_bonus"' in project.interface_html
+
+
+def test_game_set_interface_is_still_supported_for_legacy_projects():
+    project = compile_project(
+        '''
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.set_interface("<div>Legacy</div>")
+        '''
+    )
+
+    assert project.interface_html == "<div>Legacy</div>"
 
 
 def test_legacy_condition_helpers_are_rejected():

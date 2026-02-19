@@ -177,7 +177,7 @@ def test_export_project_resolves_grid_file_relative_to_source_path(tmp_path):
     assert spec["map"]["tile_grid"] == [[0, 1, 0], [1, 0, 0]]
 
 
-def test_export_project_serializes_interface_html_and_button_condition(tmp_path):
+def test_export_project_serializes_scene_interface_html_and_button_condition(tmp_path):
     source = textwrap.dedent(
         '''
         @condition(OnButton("spawn_bonus"))
@@ -187,7 +187,7 @@ def test_export_project_serializes_interface_html_and_button_condition(tmp_path)
         game = Game()
         scene = Scene(gravity=False)
         game.set_scene(scene)
-        game.set_interface("<div>Score: {{score}}</div><button data-button=\\"spawn_bonus\\">Spawn</button>")
+        scene.set_interface("<div>Score: {{score}}</div><button data-button=\\"spawn_bonus\\">Spawn</button>")
         '''
     )
 
