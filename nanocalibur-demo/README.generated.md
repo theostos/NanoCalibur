@@ -59,6 +59,16 @@ Notes:
   Starts the browser-rendered human client (webpack dev server) in session mode. Requires `NC_INVITE_TOKEN`.
 - `npm run human:cli`
   Starts the terminal human client (symbolic stream mode).
+- `npm run session:auto`
+  One-command orchestrator: starts headless server, creates a session, launches dummy + human clients, waits for required roles, then starts the session.
+
+Quick one-row startup:
+
+```bash
+npm run session:auto -- 9020
+```
+
+The optional trailing argument is the preferred human web port.
 
 Typical flow (human + dummy in one shared session):
 
