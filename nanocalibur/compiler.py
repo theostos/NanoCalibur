@@ -74,6 +74,8 @@ BASE_ACTOR_FIELDS: Dict[str, FieldType] = {
     "uid": PrimType(Prim.STR),
     "x": PrimType(Prim.FLOAT),
     "y": PrimType(Prim.FLOAT),
+    "vx": PrimType(Prim.FLOAT),
+    "vy": PrimType(Prim.FLOAT),
     "w": PrimType(Prim.FLOAT),
     "h": PrimType(Prim.FLOAT),
     "z": PrimType(Prim.FLOAT),
@@ -89,6 +91,8 @@ BASE_ACTOR_DEFAULT_OVERRIDES = {
     "z": 0.0,
     "x": 0.0,
     "y": 0.0,
+    "vx": 0.0,
+    "vy": 0.0,
 }
 
 CALLABLE_EXPR_PREFIX = "__nc_callable__:"

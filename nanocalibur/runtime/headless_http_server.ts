@@ -206,11 +206,13 @@ export class HeadlessHttpServer {
       const host = this.createHostForSession();
       const sessionId = this.generateUniqueSessionId();
       const loopMode = this.resolveSessionLoopMode(host);
+      const tickRate = this.resolveSessionTickRate(host);
       const rolesFromSpec = this.resolveSessionRoles(host);
       const fallbackRoles = this.parseRoleConfigsFromPayload(payload);
       const created = this.sessionManager.createSession(sessionId, host, {
         seed: typeof payload.seed === "string" ? payload.seed : undefined,
         loopMode,
+        defaultStepSeconds: 1 / tickRate,
         roles: rolesFromSpec.length > 0 ? rolesFromSpec : fallbackRoles,
         pace: {
           gameTimeScale:
@@ -238,6 +240,7 @@ export class HeadlessHttpServer {
         status: created.status,
         admin_token: created.adminToken,
         loop_mode: created.runtime.getLoopMode(),
+        tick_rate: tickRate,
         roles: this.sessionManager.listSessionRoles(created.id),
         invites,
       });
@@ -415,12 +418,19 @@ export class HeadlessHttpServer {
         state: this.sessionManager.getSessionState(sessionId),
       });
 
+      const session = this.sessionManager.getSession(sessionId);
+      const stepSeconds =
+        session && session.runtime
+          ? session.runtime.getDefaultStepSeconds()
+          : 1 / 20;
+      const intervalMs = Math.max(10, Math.round(stepSeconds * 1000));
       const interval = setInterval(() => {
         try {
+          const result = this.sessionManager!.tickSession(sessionId, stepSeconds);
           this.writeSseEvent(res, "snapshot", {
             session_id: sessionId,
-            frame: this.sessionManager!.getSessionFrame(sessionId),
-            state: this.sessionManager!.getSessionState(sessionId),
+            frame: result.frame,
+            state: result.state,
           });
         } catch (_error) {
           clearInterval(interval);
@@ -430,7 +440,7 @@ export class HeadlessHttpServer {
             // ignore broken connection writes
           }
         }
-      }, 1000);
+      }, intervalMs);
 
       req.on("close", () => {
         clearInterval(interval);
@@ -624,6 +634,20 @@ export class HeadlessHttpServer {
       return fromScene;
     }
     return "real_time";
+  }
+
+  private resolveSessionTickRate(host: HeadlessHost): number {
+    const spec = host.getInterpreter().getSpec() as Record<string, any>;
+    const fromSpec =
+      spec &&
+      spec.multiplayer &&
+      typeof spec.multiplayer.tick_rate === "number"
+        ? spec.multiplayer.tick_rate
+        : null;
+    if (typeof fromSpec === "number" && Number.isFinite(fromSpec) && fromSpec > 0) {
+      return Math.floor(fromSpec);
+    }
+    return 20;
   }
 
   private resolveSessionRoles(

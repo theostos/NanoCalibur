@@ -127,6 +127,39 @@ def test_project_parses_multiplayer_configuration():
     assert project.multiplayer.max_catchup_steps == 2
 
 
+def test_actor_base_fields_include_velocity_components():
+    project = compile_project(
+        """
+        class Player(Actor):
+            speed: int
+
+        def noop(player: Player["hero"]):
+            player.vx = player.speed
+
+        game = Game()
+        scene = Scene()
+        game.set_scene(scene)
+        scene.add_actor(
+            Player(
+                uid="hero",
+                x=10,
+                y=20,
+                vx=12,
+                vy=4,
+                speed=42,
+            )
+        )
+        scene.add_rule(KeyboardCondition.on_press("d"), noop)
+        """
+    )
+
+    actor = project.actors[0]
+    assert actor.fields["vx"] == 12
+    assert actor.fields["vy"] == 4
+    assert project.actor_schemas["Player"]["vx"] == "float"
+    assert project.actor_schemas["Player"]["vy"] == "float"
+
+
 def test_turn_based_multiplayer_requires_next_turn_call():
     with pytest.raises(DSLValidationError, match="scene.next_turn"):
         compile_project(

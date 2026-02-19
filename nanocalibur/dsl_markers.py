@@ -70,6 +70,7 @@ class Actor:
     Built-in engine-managed fields:
     - ``uid`` stable actor identifier
     - ``x``, ``y`` world position
+    - ``vx``, ``vy`` linear velocity (units/second)
     - ``w``, ``h`` collider/render size
     - ``active`` lifecycle flag
     - ``block_mask`` tile-blocking priority (``None`` disables tile blocking)
@@ -82,6 +83,8 @@ class Actor:
     uid: str
     x: float
     y: float
+    vx: float
+    vy: float
     w: float
     h: float
     active: bool
@@ -100,6 +103,8 @@ class Actor:
         *,
         x: float = 0.0,
         y: float = 0.0,
+        vx: float = 0.0,
+        vy: float = 0.0,
         w: float | None = None,
         h: float | None = None,
         z: float = 0.0,

@@ -76,6 +76,10 @@ export class SessionRuntime {
     return this.loopMode;
   }
 
+  getDefaultStepSeconds(): number {
+    return this.defaultStepSeconds;
+  }
+
   getRoleOrder(): string[] {
     return [...this.roleOrder];
   }
@@ -188,6 +192,10 @@ export class SessionRuntime {
         break;
       }
     }
+
+    if (queue.length === 0) {
+      this.host.step({ dtSeconds });
+    }
   }
 
   private tickHybrid(dtSeconds: number): void {
@@ -211,6 +219,7 @@ export class SessionRuntime {
         }
       }
       if (!consumedAny) {
+        this.host.step({ dtSeconds });
         return;
       }
     }
