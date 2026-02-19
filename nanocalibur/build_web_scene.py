@@ -49,6 +49,9 @@ def build_web_input(scene_path: Path, output_dir: Path) -> Path:
         "canvas_host.ts",
         "headless_host.ts",
         "headless_http_server.ts",
+        "session_runtime.ts",
+        "session_manager.ts",
+        "replay_store_sqlite.ts",
         "symbolic_renderer.ts",
     ):
         shutil.copy2(runtime_dir / runtime_file, generated_dir / runtime_file)
@@ -128,6 +131,9 @@ def main() -> None:
     print(f"- {bundle_dir / 'canvas_host.ts'}")
     print(f"- {bundle_dir / 'headless_host.ts'}")
     print(f"- {bundle_dir / 'headless_http_server.ts'}")
+    print(f"- {bundle_dir / 'session_runtime.ts'}")
+    print(f"- {bundle_dir / 'session_manager.ts'}")
+    print(f"- {bundle_dir / 'replay_store_sqlite.ts'}")
     print(f"- {bundle_dir / 'symbolic_renderer.ts'}")
     print(f"- {bundle_dir / 'bridge.ts'}")
     print(f"- {bundle_dir / 'index.ts'}")
