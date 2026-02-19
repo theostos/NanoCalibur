@@ -123,6 +123,22 @@ export class SessionRuntime {
       typeof dtSeconds === "number" && Number.isFinite(dtSeconds) && dtSeconds > 0
         ? dtSeconds
         : this.defaultStepSeconds;
+
+    if (this.loopMode === "turn_based") {
+      this.tickTurnBased(targetStepSeconds);
+      return {
+        frame: this.host.getSymbolicFrame(),
+        state: this.host.getState(),
+      };
+    }
+    if (this.loopMode === "hybrid") {
+      this.tickHybrid(targetStepSeconds);
+      return {
+        frame: this.host.getSymbolicFrame(),
+        state: this.host.getState(),
+      };
+    }
+
     const intervalMs = (targetStepSeconds * 1000) / this.gameTimeScale;
 
     if (this.lastSteppedAtMs === 0) {
@@ -140,13 +156,7 @@ export class SessionRuntime {
     const wantedSteps = Math.max(1, Math.floor(elapsedWallMs / intervalMs));
     const steps = Math.min(this.maxCatchupSteps, wantedSteps);
     for (let index = 0; index < steps; index += 1) {
-      if (this.loopMode === "turn_based") {
-        this.tickTurnBased(targetStepSeconds);
-      } else if (this.loopMode === "hybrid") {
-        this.tickHybrid(targetStepSeconds);
-      } else {
-        this.tickRealTime(targetStepSeconds);
-      }
+      this.tickRealTime(targetStepSeconds);
     }
     this.lastSteppedAtMs = nowMs;
 

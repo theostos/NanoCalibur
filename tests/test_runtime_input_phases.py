@@ -173,6 +173,83 @@ def test_runtime_tool_condition_and_tools_metadata(tmp_path):
     assert values["tools"][0]["name"] == "spawn_bonus"
 
 
+def test_runtime_scene_next_turn_updates_turn_state(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [],
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "keyboard", phase: "begin", key: "A" }}, action: "advance" }}
+          ],
+          multiplayer: {{
+            default_loop: "turn_based"
+          }}
+        }};
+
+        const actions = {{
+          advance: (ctx) => {{
+            ctx.scene.nextTurn();
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{ keyboard: {{ begin: ["A"], on: [], end: [] }} }});
+        const first = i.getState().scene;
+        i.tick({{}});
+        const second = i.getState().scene;
+
+        console.log(JSON.stringify({{
+          first_turn: first.turn,
+          first_changed: first.turnChangedThisStep,
+          second_turn: second.turn,
+          second_changed: second.turnChangedThisStep,
+          mode: first.loopMode
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["first_turn"] == 1
+    assert values["first_changed"] is True
+    assert values["second_turn"] == 1
+    assert values["second_changed"] is False
+    assert values["mode"] == "turn_based"
+
+
 def test_runtime_parent_binding_moves_children_with_parent(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
