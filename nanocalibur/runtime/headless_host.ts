@@ -48,6 +48,12 @@ export class HeadlessHost {
       mouse: input.mouse,
       uiButtons: input.uiButtons,
       toolCalls: input.toolCalls,
+      roleId:
+        typeof input.roleId === "string"
+          ? input.roleId
+          : typeof input.role_id === "string"
+            ? input.role_id
+            : undefined,
     });
 
     return this.getSymbolicFrame();

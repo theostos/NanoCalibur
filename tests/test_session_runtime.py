@@ -183,6 +183,64 @@ def test_hybrid_runtime_stops_processing_cycle_when_next_turn_called(tmp_path):
     assert values["secondTurn"] == 1
 
 
+def test_session_runtime_passes_role_id_for_scoped_keyboard_conditions(tmp_path):
+    runtime_path, headless_path, session_runtime_path = _compile_runtime(tmp_path)
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+        const {{ SessionRuntime }} = require({json.dumps(str(session_runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [{{ name: "moves", kind: "int", value: 0 }}],
+          predicates: [],
+          rules: [
+            {{
+              condition: {{ kind: "keyboard", phase: "on", key: "d", role_id: "human_1" }},
+              action: "move"
+            }}
+          ]
+        }};
+
+        const actions = {{
+          move: (ctx) => {{
+            ctx.globals.moves = ctx.globals.moves + 1;
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, actions, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        const runtime = new SessionRuntime(host, {{
+          loopMode: "real_time",
+          roleOrder: ["human_1", "dummy_1"]
+        }});
+
+        runtime.enqueue("dummy_1", {{
+          kind: "input",
+          keyboard: {{ on: ["d"] }}
+        }});
+        runtime.enqueue("human_1", {{
+          kind: "input",
+          keyboard: {{ on: ["d"] }}
+        }});
+        runtime.tick();
+
+        console.log(JSON.stringify(host.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["moves"] == 1
+
+
 def test_session_manager_enforces_unique_seeds(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_dir = root / "nanocalibur" / "runtime"
