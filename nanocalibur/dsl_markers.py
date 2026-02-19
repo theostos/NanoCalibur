@@ -170,6 +170,10 @@ class Scene:
         """Spawn a new actor instance inside the current scene."""
         return None
 
+    def next_turn(self):
+        """Advance the session turn in turn-based or hybrid loop modes."""
+        return None
+
 
 class Tick:
     """Action parameter marker for per-frame wait tokens.
@@ -215,6 +219,24 @@ class Sprite:
         return None
 
 
+class Multiplayer:
+    """Multiplayer runtime defaults and loop controls."""
+
+    def __init__(
+        self,
+        *,
+        default_loop: str = "real_time",
+        allowed_loops: list[str] | None = None,
+        default_visibility: str = "shared",
+        tick_rate: int = 20,
+        turn_timeout_ms: int = 15_000,
+        hybrid_window_ms: int = 500,
+        game_time_scale: float = 1.0,
+        max_catchup_steps: int = 1,
+    ):
+        return None
+
+
 class Game:
     """Top-level DSL game container."""
 
@@ -249,6 +271,10 @@ class Game:
 
     def set_interface(self, _html: str):
         """Configure an HTML overlay rendered above the canvas."""
+        return None
+
+    def set_multiplayer(self, _multiplayer: Multiplayer):
+        """Configure multiplayer loop and pacing defaults."""
         return None
 
     def add_resource(self, _name: str, _path: str):
