@@ -74,21 +74,6 @@ function uniqueStrings(values) {
   return out;
 }
 
-function keyboardAliasesForToken(token) {
-  const lower = token.toLowerCase();
-  if (lower === 'arrowup') return ['ArrowUp', 'arrowup', 'w', 'z', 'W', 'Z', 'KeyW', 'KeyZ'];
-  if (lower === 'arrowleft') return ['ArrowLeft', 'arrowleft', 'a', 'q', 'A', 'Q', 'KeyA', 'KeyQ'];
-  if (lower === 'arrowdown') return ['ArrowDown', 'arrowdown', 's', 'S', 'KeyS'];
-  if (lower === 'arrowright') return ['ArrowRight', 'arrowright', 'd', 'D', 'KeyD'];
-  if (lower === 'w') return ['w', 'W', 'z', 'Z', 'ArrowUp', 'arrowup', 'KeyW', 'KeyZ'];
-  if (lower === 'z') return ['z', 'Z', 'w', 'W', 'ArrowUp', 'arrowup', 'KeyZ', 'KeyW'];
-  if (lower === 'a') return ['a', 'A', 'q', 'Q', 'ArrowLeft', 'arrowleft', 'KeyA', 'KeyQ'];
-  if (lower === 'q') return ['q', 'Q', 'a', 'A', 'ArrowLeft', 'arrowleft', 'KeyQ', 'KeyA'];
-  if (lower === 's') return ['s', 'S', 'ArrowDown', 'arrowdown', 'KeyS'];
-  if (lower === 'd') return ['d', 'D', 'ArrowRight', 'arrowright', 'KeyD'];
-  return [token];
-}
-
 function keyboardTokensFromKeypress(key) {
   if (!key || typeof key !== 'object') {
     return [];
@@ -99,34 +84,26 @@ function keyboardTokensFromKeypress(key) {
   const tokens = [];
 
   if (typeof name === 'string' && name.length > 0) {
-    if (name === 'up') {
-      tokens.push('ArrowUp', 'arrowup');
-    } else if (name === 'left') {
-      tokens.push('ArrowLeft', 'arrowleft');
-    } else if (name === 'down') {
-      tokens.push('ArrowDown', 'arrowdown');
-    } else if (name === 'right') {
-      tokens.push('ArrowRight', 'arrowright');
-    } else {
-      tokens.push(name);
+    tokens.push(name);
+    if (name === 'up' || name === 'down' || name === 'left' || name === 'right') {
+      tokens.push(`Arrow${name.charAt(0).toUpperCase()}${name.slice(1)}`);
+    }
+    if (/^[a-zA-Z]$/.test(name)) {
+      tokens.push(name.toLowerCase(), name.toUpperCase(), `Key${name.toUpperCase()}`);
     }
   }
 
   if (typeof seq === 'string' && seq.length > 0) {
-    tokens.push(seq, seq.toLowerCase());
+    tokens.push(seq);
     if (seq.length === 1) {
-      tokens.push(seq.toUpperCase());
+      tokens.push(seq.toLowerCase(), seq.toUpperCase());
       if (/^[a-zA-Z]$/.test(seq)) {
         tokens.push(`Key${seq.toUpperCase()}`);
       }
     }
   }
 
-  const aliased = [];
-  for (const token of tokens) {
-    aliased.push(...keyboardAliasesForToken(token));
-  }
-  return uniqueStrings([...tokens, ...aliased]);
+  return uniqueStrings(tokens);
 }
 
 function mapKeyToCommand(key) {

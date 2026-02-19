@@ -105,10 +105,17 @@ Examples:
 
 - `Game` manages globals, resources, sprites, and active scene.
 - `Scene` manages actors, rules, map, camera, gravity toggle, spawn actions, and turn progression via `scene.next_turn()`.
+- Keyboard matching is normalized in the runtime (`d`/`D`/`KeyD`, `ArrowUp`/`up`, etc.).
+- You can add game-specific key aliases at scene level with `keyboard_aliases`.
 
 ```python
 game = Game()
-scene = Scene(gravity=False)
+scene = Scene(
+    gravity=False,
+    keyboard_aliases={
+        "z": ["w"],  # optional layout alias (for this game only)
+    },
+)
 game.set_scene(scene)
 ```
 

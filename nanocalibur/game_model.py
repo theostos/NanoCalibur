@@ -243,6 +243,7 @@ class SpriteSpec:
 @dataclass(frozen=True)
 class SceneSpec:
     gravity_enabled: bool = False
+    keyboard_aliases: Dict[str, List[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -112,6 +112,33 @@ def test_export_project_serializes_tile_grid_and_tile_defs(tmp_path):
     assert tile_map["tile_defs"]["2"]["sprite"] == "coin"
 
 
+def test_export_project_serializes_scene_keyboard_aliases(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(
+            gravity=False,
+            keyboard_aliases={
+                "z": ["w", "ArrowUp"],
+                "q": "a",
+            },
+        )
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=16, y=16))
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["scene"]["keyboard_aliases"] == {
+        "z": ["w", "ArrowUp"],
+        "q": ["a"],
+    }
+
+
 def test_export_project_resolves_grid_file_relative_to_source_path(tmp_path):
     scene_dir = tmp_path / "scene_src"
     maps_dir = tmp_path / "maps"

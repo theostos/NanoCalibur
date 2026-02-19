@@ -96,6 +96,87 @@ def test_runtime_keyboard_and_mouse_phase_matching(tmp_path):
     assert values["ms_end"] == 1
 
 
+def test_runtime_keyboard_normalization_and_scene_aliases(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "arrow", kind: "int", value: 0 }},
+            {{ name: "code", kind: "int", value: 0 }},
+            {{ name: "layout", kind: "int", value: 0 }}
+          ],
+          scene: {{
+            keyboard_aliases: {{
+              z: ["w"]
+            }}
+          }},
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "keyboard", phase: "on", key: "up" }}, action: "inc_arrow" }},
+            {{ condition: {{ kind: "keyboard", phase: "on", key: "d" }}, action: "inc_code" }},
+            {{ condition: {{ kind: "keyboard", phase: "on", key: "z" }}, action: "inc_layout" }}
+          ]
+        }};
+
+        function makeInc(name) {{
+          return (ctx) => {{
+            ctx.globals[name] = ctx.globals[name] + 1;
+          }};
+        }}
+
+        const actions = {{
+          inc_arrow: makeInc("arrow"),
+          inc_code: makeInc("code"),
+          inc_layout: makeInc("layout")
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{ keyboard: {{ on: ["ArrowUp"] }} }});
+        i.tick({{ keyboard: {{ on: ["KeyD"] }} }});
+        i.tick({{ keyboard: {{ on: ["w"] }} }});
+        console.log(JSON.stringify(i.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["arrow"] == 1
+    assert values["code"] == 1
+    assert values["layout"] == 1
+
+
 def test_runtime_tool_condition_and_tools_metadata(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"

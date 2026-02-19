@@ -428,6 +428,33 @@ def test_compile_project_with_scene_managed_actors_rules_map_and_camera():
     assert project.tile_map.tile_size == 16
 
 
+def test_scene_keyboard_aliases_are_parsed():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(
+            gravity=False,
+            keyboard_aliases={
+                "z": ["w", "ArrowUp"],
+                "q": "a",
+                " ": ["Space"],
+            },
+        )
+        game.set_scene(scene)
+        """
+    )
+
+    assert project.scene is not None
+    assert project.scene.keyboard_aliases == {
+        "z": ["w", "ArrowUp"],
+        "q": ["a"],
+        " ": ["Space"],
+    }
+
+
 def test_add_actor_constructor_form_generates_uid_and_parent_link():
     project = compile_project(
         """

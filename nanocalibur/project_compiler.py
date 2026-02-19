@@ -2318,7 +2318,7 @@ class ProjectCompiler:
             raise DSLValidationError("Scene(...) only supports keyword arguments.")
 
         kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
-        allowed = {"gravity"}
+        allowed = {"gravity", "keyboard_aliases"}
         unexpected = sorted(set(kwargs.keys()) - allowed)
         if unexpected:
             raise DSLValidationError(
@@ -2331,7 +2331,15 @@ class ProjectCompiler:
             "scene gravity_enabled",
             False,
         )
-        return SceneSpec(gravity_enabled=gravity_enabled)
+        keyboard_aliases = _expect_string_to_string_list_dict_or_default(
+            kwargs.get("keyboard_aliases"),
+            "scene keyboard_aliases",
+            {},
+        )
+        return SceneSpec(
+            gravity_enabled=gravity_enabled,
+            keyboard_aliases=keyboard_aliases,
+        )
 
     def _parse_resource(
         self, args: List[ast.AST], kwargs: Dict[str, ast.AST]
@@ -3171,6 +3179,40 @@ def _expect_string_or_string_list(node: ast.AST, label: str) -> str | List[str]:
             raise DSLValidationError(f"Expected {label} list to contain at least one key.")
         return values
     raise DSLValidationError(f"Expected {label} string or list[str].")
+
+
+def _expect_string_to_string_list_dict_or_default(
+    node: Optional[ast.AST],
+    label: str,
+    default: Dict[str, List[str]],
+) -> Dict[str, List[str]]:
+    if node is None:
+        return dict(default)
+    if not isinstance(node, ast.Dict):
+        raise DSLValidationError(f"Expected {label} dict[str, str | list[str]].")
+
+    out: Dict[str, List[str]] = {}
+    for key_node, value_node in zip(node.keys, node.values):
+        if key_node is None:
+            raise DSLValidationError(f"Expected {label} keys to be strings.")
+        key = _expect_string(key_node, f"{label} key")
+        if not key:
+            raise DSLValidationError(f"Expected {label} key to be non-empty.")
+        raw_values = _expect_string_or_string_list(value_node, f"{label} value")
+        values = [raw_values] if isinstance(raw_values, str) else raw_values
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not value:
+                raise DSLValidationError(
+                    f"Expected {label} values for key '{key}' to be non-empty strings."
+                )
+            if value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        out[key] = deduped
+    return out
 
 
 def _expect_int(node: ast.AST, label: str) -> int:

@@ -101,6 +101,7 @@ export class NanoCaliburInterpreter {
   private readonly actorRefGlobals = new Map<string, string>();
   private readonly runningActions: ActionGenerator[] = [];
   private readonly sceneState: InterpreterSceneState;
+  private readonly keyboardAliasLookup: Map<string, Set<string>>;
   private runtimeHooks: RuntimeHooks;
 
   constructor(
@@ -122,6 +123,7 @@ export class NanoCaliburInterpreter {
     this.predicateMeta = this.buildPredicateMeta(this.spec.predicates || []);
     this.maskedTiles = this.buildMaskedTileSet(this.map);
     this.sceneState = this.initSceneState(this.spec.scene || null);
+    this.keyboardAliasLookup = this.buildKeyboardAliasLookup(this.spec.scene || null);
   }
 
   tick(frame: NanoCaliburFrameInput = {}): void {
@@ -594,24 +596,24 @@ export class NanoCaliburInterpreter {
     key: string | string[],
   ): boolean {
     const keyboard = frame.keyboard || {};
-    const begin = this.normalizeStringArray(
+    const begin = this.expandKeyboardValues(this.normalizeStringArray(
       keyboard.begin || frame.keysJustPressed || frame.keysBegin || [],
-    );
-    const on = this.normalizeStringArray(
+    ));
+    const on = this.expandKeyboardValues(this.normalizeStringArray(
       keyboard.on || frame.keysPressed || frame.keysDown || [],
-    );
-    const end = this.normalizeStringArray(
+    ));
+    const end = this.expandKeyboardValues(this.normalizeStringArray(
       keyboard.end || frame.keysJustReleased || frame.keysEnd || [],
-    );
+    ));
     if (Array.isArray(key)) {
       for (const item of key) {
-        if (this.phaseArrayContains(phase, begin, on, end, item)) {
+        if (this.phaseSetContains(phase, begin, on, end, item)) {
           return true;
         }
       }
       return false;
     }
-    return this.phaseArrayContains(phase, begin, on, end, key);
+    return this.phaseSetContains(phase, begin, on, end, key);
   }
 
   private matchMousePhase(
@@ -655,6 +657,159 @@ export class NanoCaliburInterpreter {
       return end.includes(value);
     }
     return on.includes(value);
+  }
+
+  private phaseSetContains(
+    phase: string,
+    begin: Set<string>,
+    on: Set<string>,
+    end: Set<string>,
+    value: string,
+  ): boolean {
+    const candidates = this.expandKeyboardToken(value);
+    if (phase === "begin") {
+      return this.setContainsAny(begin, candidates);
+    }
+    if (phase === "end") {
+      return this.setContainsAny(end, candidates);
+    }
+    return this.setContainsAny(on, candidates);
+  }
+
+  private setContainsAny(haystack: Set<string>, candidates: string[]): boolean {
+    for (const candidate of candidates) {
+      if (haystack.has(candidate)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private expandKeyboardValues(values: string[]): Set<string> {
+    const out = new Set<string>();
+    for (const value of values) {
+      const expanded = this.expandKeyboardToken(value);
+      for (const token of expanded) {
+        out.add(token);
+      }
+    }
+    return out;
+  }
+
+  private expandKeyboardToken(token: string): string[] {
+    if (typeof token !== "string" || token.length === 0) {
+      return [];
+    }
+
+    const out = new Set<string>();
+    const queue: string[] = [token];
+    while (queue.length > 0) {
+      const current = queue.pop();
+      if (!current || out.has(current)) {
+        continue;
+      }
+      out.add(current);
+
+      const lower = current.toLowerCase();
+      if (!out.has(lower)) {
+        queue.push(lower);
+      }
+
+      if (/^[a-zA-Z]$/.test(current)) {
+        const upper = current.toUpperCase();
+        const lowerLetter = current.toLowerCase();
+        const code = `Key${upper}`;
+        if (!out.has(upper)) {
+          queue.push(upper);
+        }
+        if (!out.has(lowerLetter)) {
+          queue.push(lowerLetter);
+        }
+        if (!out.has(code)) {
+          queue.push(code);
+        }
+      } else {
+        const codeMatch = /^Key([a-zA-Z])$/.exec(current);
+        if (codeMatch) {
+          const letter = codeMatch[1];
+          const upper = letter.toUpperCase();
+          const lowerLetter = upper.toLowerCase();
+          if (!out.has(upper)) {
+            queue.push(upper);
+          }
+          if (!out.has(lowerLetter)) {
+            queue.push(lowerLetter);
+          }
+        }
+      }
+
+      const aliases = this.keyboardAliasLookup.get(lower);
+      if (aliases) {
+        for (const alias of aliases) {
+          if (!out.has(alias)) {
+            queue.push(alias);
+          }
+        }
+      }
+    }
+
+    return [...out];
+  }
+
+  private buildKeyboardAliasLookup(
+    sceneSpec: Record<string, any> | null,
+  ): Map<string, Set<string>> {
+    const groups: string[][] = [
+      ["ArrowUp", "arrowup", "up"],
+      ["ArrowDown", "arrowdown", "down"],
+      ["ArrowLeft", "arrowleft", "left"],
+      ["ArrowRight", "arrowright", "right"],
+      [" ", "Space", "space", "Spacebar"],
+    ];
+
+    const sceneAliases =
+      sceneSpec && sceneSpec.keyboard_aliases && typeof sceneSpec.keyboard_aliases === "object"
+        ? (sceneSpec.keyboard_aliases as Record<string, unknown>)
+        : {};
+    for (const [source, aliasValue] of Object.entries(sceneAliases)) {
+      if (typeof source !== "string" || source.length === 0) {
+        continue;
+      }
+      const aliases: string[] = [];
+      if (typeof aliasValue === "string") {
+        aliases.push(aliasValue);
+      } else if (Array.isArray(aliasValue)) {
+        for (const item of aliasValue) {
+          if (typeof item === "string" && item.length > 0) {
+            aliases.push(item);
+          }
+        }
+      }
+      if (aliases.length === 0) {
+        continue;
+      }
+      groups.push([source, ...aliases]);
+    }
+
+    const lookup = new Map<string, Set<string>>();
+    for (const group of groups) {
+      const tokens = Array.from(new Set(group.filter((token) => token.length > 0)));
+      if (tokens.length < 2) {
+        continue;
+      }
+      for (const token of tokens) {
+        const key = token.toLowerCase();
+        let entry = lookup.get(key);
+        if (!entry) {
+          entry = new Set<string>();
+          lookup.set(key, entry);
+        }
+        for (const candidate of tokens) {
+          entry.add(candidate);
+        }
+      }
+    }
+    return lookup;
   }
 
   private normalizeStringArray(value: unknown): string[] {

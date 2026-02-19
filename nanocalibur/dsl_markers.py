@@ -150,7 +150,12 @@ class Scene:
         """Allow ``Scene[...]`` syntax if needed for compatibility."""
         return cls
 
-    def __init__(self, *, gravity: bool = False):
+    def __init__(
+        self,
+        *,
+        gravity: bool = False,
+        keyboard_aliases: dict[str, str | list[str]] | None = None,
+    ):
         """Declare scene-level runtime options."""
         return None
 

@@ -264,6 +264,7 @@ def _scene_to_dict(scene: SceneSpec | None) -> Dict[str, Any] | None:
         return None
     return {
         "gravity_enabled": scene.gravity_enabled,
+        "keyboard_aliases": scene.keyboard_aliases,
     }
 
 
