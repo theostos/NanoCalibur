@@ -352,35 +352,124 @@ async function fetchSessionStatus(
   return target.status;
 }
 
-function normalizeMovementKey(rawKey: string): string | null {
-  const key = rawKey.toLowerCase();
-  if (key === 'arrowup' || key === 'z' || key === 'w') return 'z';
-  if (key === 'arrowleft' || key === 'q' || key === 'a') return 'q';
-  if (key === 'arrowdown' || key === 's') return 's';
-  if (key === 'arrowright' || key === 'd') return 'd';
-  return null;
+function uniqueStrings(values: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== 'string' || value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
-function mapBrowserKeyDownToCommand(event: KeyboardEvent): Record<string, any> | null {
-  const movement = normalizeMovementKey(event.key);
-  if (movement) {
-    return { kind: 'input', keyboard: { on: [movement] } };
-  }
-  const key = event.key.toLowerCase();
-  if (key === 'g' || key === 'h') {
-    return { kind: 'input', keyboard: { begin: [key] } };
-  }
-  if (key === 'e') return { kind: 'tool', name: 'spawn_bonus' };
-  if (key === 'n') return { kind: 'tool', name: 'llm_dummy_next_turn' };
-  return null;
+function keyboardAliasesForToken(token: string): string[] {
+  const lower = token.toLowerCase();
+  if (lower === 'arrowup') return ['ArrowUp', 'arrowup', 'w', 'z', 'W', 'Z', 'KeyW', 'KeyZ'];
+  if (lower === 'arrowleft') return ['ArrowLeft', 'arrowleft', 'a', 'q', 'A', 'Q', 'KeyA', 'KeyQ'];
+  if (lower === 'arrowdown') return ['ArrowDown', 'arrowdown', 's', 'S', 'KeyS'];
+  if (lower === 'arrowright') return ['ArrowRight', 'arrowright', 'd', 'D', 'KeyD'];
+  if (lower === 'w') return ['w', 'W', 'z', 'Z', 'ArrowUp', 'arrowup', 'KeyW', 'KeyZ'];
+  if (lower === 'z') return ['z', 'Z', 'w', 'W', 'ArrowUp', 'arrowup', 'KeyZ', 'KeyW'];
+  if (lower === 'a') return ['a', 'A', 'q', 'Q', 'ArrowLeft', 'arrowleft', 'KeyA', 'KeyQ'];
+  if (lower === 'q') return ['q', 'Q', 'a', 'A', 'ArrowLeft', 'arrowleft', 'KeyQ', 'KeyA'];
+  if (lower === 's') return ['s', 'S', 'ArrowDown', 'arrowdown', 'KeyS'];
+  if (lower === 'd') return ['d', 'D', 'ArrowRight', 'arrowright', 'KeyD'];
+  return [token];
 }
 
-function mapBrowserKeyUpToCommand(event: KeyboardEvent): Record<string, any> | null {
-  const movement = normalizeMovementKey(event.key);
-  if (!movement) {
+function collectKeyboardKeysForRole(
+  spec: Record<string, any>,
+  roleId: string,
+): Set<string> {
+  const out = new Set<string>();
+  const rules = Array.isArray(spec?.rules) ? spec.rules : [];
+  for (const rule of rules) {
+    const condition = rule && typeof rule === 'object' ? rule.condition : null;
+    if (!condition || typeof condition !== 'object' || condition.kind !== 'keyboard') {
+      continue;
+    }
+    const conditionRoleId =
+      typeof condition.role_id === 'string' ? condition.role_id : null;
+    if (conditionRoleId && conditionRoleId !== roleId) {
+      continue;
+    }
+    const key = condition.key;
+    if (typeof key === 'string' && key.length > 0) {
+      out.add(key);
+      continue;
+    }
+    if (Array.isArray(key)) {
+      for (const item of key) {
+        if (typeof item === 'string' && item.length > 0) {
+          out.add(item);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function browserKeyboardTokens(event: KeyboardEvent): string[] {
+  const key = typeof event.key === 'string' ? event.key : '';
+  const code = typeof event.code === 'string' ? event.code : '';
+  const tokens: string[] = [];
+  if (key.length > 0) {
+    tokens.push(key);
+    const aliases = keyboardAliasesForToken(key);
+    for (const alias of aliases) {
+      tokens.push(alias);
+    }
+    if (key.length === 1) {
+      tokens.push(key.toLowerCase());
+      tokens.push(key.toUpperCase());
+      if (/^[a-zA-Z]$/.test(key)) {
+        tokens.push(`Key${key.toUpperCase()}`);
+      }
+    }
+  }
+  if (code.length > 0) {
+    tokens.push(code);
+  }
+  return uniqueStrings(tokens);
+}
+
+function filterKnownKeyboardKeys(
+  tokens: string[],
+  knownKeys: Set<string>,
+): string[] {
+  if (knownKeys.size === 0) {
+    return [];
+  }
+  const matched = tokens.filter((token) => knownKeys.has(token));
+  if (matched.length > 0) {
+    return matched;
+  }
+  return [];
+}
+
+function mapBrowserKeyDownToCommand(
+  event: KeyboardEvent,
+  knownKeys: Set<string>,
+): Record<string, any> | null {
+  const tokens = filterKnownKeyboardKeys(browserKeyboardTokens(event), knownKeys);
+  if (tokens.length === 0) {
     return null;
   }
-  return { kind: 'input', keyboard: { end: [movement] } };
+  return { kind: 'input', keyboard: { begin: tokens, on: tokens } };
+}
+
+function mapBrowserKeyUpToCommand(
+  event: KeyboardEvent,
+  knownKeys: Set<string>,
+): Record<string, any> | null {
+  const tokens = filterKnownKeyboardKeys(browserKeyboardTokens(event), knownKeys);
+  if (tokens.length === 0) {
+    return null;
+  }
+  return { kind: 'input', keyboard: { end: tokens } };
 }
 
 async function startSessionBrowserClient(
@@ -405,7 +494,12 @@ async function startSessionBrowserClient(
 
   const sessionId = joined.session_id;
   const accessToken = joined.access_token;
+  const roleId = joined.role_id;
   const sessionSpec = createNanoCaliburInterpreter().getSpec();
+  const knownKeyboardKeys = collectKeyboardKeysForRole(
+    sessionSpec as Record<string, any>,
+    roleId,
+  );
   const rendererOptions = mergeSpecOptions(
     DEFAULT_CANVAS_OPTIONS,
     sessionSpec as Record<string, any>,
@@ -508,7 +602,7 @@ async function startSessionBrowserClient(
     if (event.repeat) {
       return;
     }
-    const command = mapBrowserKeyDownToCommand(event);
+    const command = mapBrowserKeyDownToCommand(event, knownKeyboardKeys);
     if (!command) {
       return;
     }
@@ -517,7 +611,7 @@ async function startSessionBrowserClient(
   });
 
   window.addEventListener('keyup', (event) => {
-    const command = mapBrowserKeyUpToCommand(event);
+    const command = mapBrowserKeyUpToCommand(event, knownKeyboardKeys);
     if (!command) {
       return;
     }

@@ -57,34 +57,90 @@ function formatFrame(snapshot) {
     lines.push(legend);
   }
   lines.push('');
-  lines.push('Controls: zqsd / wasd / arrows | g=gravity_on | h=gravity_off | e=spawn_bonus | n=llm_dummy_next_turn | Ctrl+C quit');
+  lines.push('Controls: keyboard input is forwarded to session rules | Ctrl+C quit');
   return lines.join('\n');
 }
 
-function mapKeyToCommand(key) {
+function uniqueStrings(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    if (typeof value !== 'string' || value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function keyboardAliasesForToken(token) {
+  const lower = token.toLowerCase();
+  if (lower === 'arrowup') return ['ArrowUp', 'arrowup', 'w', 'z', 'W', 'Z', 'KeyW', 'KeyZ'];
+  if (lower === 'arrowleft') return ['ArrowLeft', 'arrowleft', 'a', 'q', 'A', 'Q', 'KeyA', 'KeyQ'];
+  if (lower === 'arrowdown') return ['ArrowDown', 'arrowdown', 's', 'S', 'KeyS'];
+  if (lower === 'arrowright') return ['ArrowRight', 'arrowright', 'd', 'D', 'KeyD'];
+  if (lower === 'w') return ['w', 'W', 'z', 'Z', 'ArrowUp', 'arrowup', 'KeyW', 'KeyZ'];
+  if (lower === 'z') return ['z', 'Z', 'w', 'W', 'ArrowUp', 'arrowup', 'KeyZ', 'KeyW'];
+  if (lower === 'a') return ['a', 'A', 'q', 'Q', 'ArrowLeft', 'arrowleft', 'KeyA', 'KeyQ'];
+  if (lower === 'q') return ['q', 'Q', 'a', 'A', 'ArrowLeft', 'arrowleft', 'KeyQ', 'KeyA'];
+  if (lower === 's') return ['s', 'S', 'ArrowDown', 'arrowdown', 'KeyS'];
+  if (lower === 'd') return ['d', 'D', 'ArrowRight', 'arrowright', 'KeyD'];
+  return [token];
+}
+
+function keyboardTokensFromKeypress(key) {
   if (!key || typeof key !== 'object') {
-    return null;
+    return [];
   }
 
   const name = key.name;
   const seq = key.sequence;
+  const tokens = [];
 
-  if (name === 'up') return { kind: 'input', keyboard: { on: ['z'] } };
-  if (name === 'left') return { kind: 'input', keyboard: { on: ['q'] } };
-  if (name === 'down') return { kind: 'input', keyboard: { on: ['s'] } };
-  if (name === 'right') return { kind: 'input', keyboard: { on: ['d'] } };
+  if (typeof name === 'string' && name.length > 0) {
+    if (name === 'up') {
+      tokens.push('ArrowUp', 'arrowup');
+    } else if (name === 'left') {
+      tokens.push('ArrowLeft', 'arrowleft');
+    } else if (name === 'down') {
+      tokens.push('ArrowDown', 'arrowdown');
+    } else if (name === 'right') {
+      tokens.push('ArrowRight', 'arrowright');
+    } else {
+      tokens.push(name);
+    }
+  }
 
-  if (seq === 'z' || seq === 'w') return { kind: 'input', keyboard: { on: ['z'] } };
-  if (seq === 'q' || seq === 'a') return { kind: 'input', keyboard: { on: ['q'] } };
-  if (seq === 's') return { kind: 'input', keyboard: { on: ['s'] } };
-  if (seq === 'd') return { kind: 'input', keyboard: { on: ['d'] } };
-  if (seq === 'g') return { kind: 'input', keyboard: { begin: ['g'] } };
-  if (seq === 'h') return { kind: 'input', keyboard: { begin: ['h'] } };
+  if (typeof seq === 'string' && seq.length > 0) {
+    tokens.push(seq, seq.toLowerCase());
+    if (seq.length === 1) {
+      tokens.push(seq.toUpperCase());
+      if (/^[a-zA-Z]$/.test(seq)) {
+        tokens.push(`Key${seq.toUpperCase()}`);
+      }
+    }
+  }
 
-  if (seq === 'e') return { kind: 'tool', name: 'spawn_bonus' };
-  if (seq === 'n') return { kind: 'tool', name: 'llm_dummy_next_turn' };
+  const aliased = [];
+  for (const token of tokens) {
+    aliased.push(...keyboardAliasesForToken(token));
+  }
+  return uniqueStrings([...tokens, ...aliased]);
+}
 
-  return null;
+function mapKeyToCommand(key) {
+  const tokens = keyboardTokensFromKeypress(key);
+  if (tokens.length === 0) {
+    return null;
+  }
+  return {
+    kind: 'input',
+    keyboard: {
+      begin: tokens,
+      on: tokens,
+    },
+  };
 }
 
 async function main() {
