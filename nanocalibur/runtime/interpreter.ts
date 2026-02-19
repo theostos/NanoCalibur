@@ -51,6 +51,7 @@ export interface InterpreterSceneState {
   turn: number;
   loopMode: "real_time" | "turn_based" | "hybrid";
   turnChangedThisStep: boolean;
+  interfaceHtml: string;
 }
 
 export interface InterpreterState {
@@ -171,6 +172,7 @@ export class NanoCaliburInterpreter {
         turn: this.sceneState.turn,
         loopMode: this.sceneState.loopMode,
         turnChangedThisStep: this.sceneState.turnChangedThisStep,
+        interfaceHtml: this.sceneState.interfaceHtml,
       },
     };
   }
@@ -186,6 +188,7 @@ export class NanoCaliburInterpreter {
       turn: this.sceneState.turn,
       loopMode: this.sceneState.loopMode,
       turnChangedThisStep: this.sceneState.turnChangedThisStep,
+      interfaceHtml: this.sceneState.interfaceHtml,
     };
   }
 
@@ -278,6 +281,7 @@ export class NanoCaliburInterpreter {
         elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
         nextTurn: () => this.nextTurn(),
+        setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -308,6 +312,7 @@ export class NanoCaliburInterpreter {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -424,6 +429,8 @@ export class NanoCaliburInterpreter {
       turn: 0,
       loopMode,
       turnChangedThisStep: false,
+      interfaceHtml:
+        typeof this.spec?.interface_html === "string" ? this.spec.interface_html : "",
     };
   }
 
@@ -437,6 +444,11 @@ export class NanoCaliburInterpreter {
   private nextTurn(): void {
     this.sceneState.turn += 1;
     this.sceneState.turnChangedThisStep = true;
+  }
+
+  private setInterfaceHtml(html: string): void {
+    this.sceneState.interfaceHtml =
+      typeof html === "string" ? html : String(html ?? "");
   }
 
   private buildMaskedTileSet(mapSpec: Record<string, any> | null): Set<string> {

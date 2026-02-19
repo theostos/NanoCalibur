@@ -835,6 +835,21 @@ class DSLCompiler:
                 name="scene_set_gravity",
                 args=[Const(method == "enable_gravity")],
             )
+        if method == "set_interface":
+            if expr.keywords:
+                raise DSLValidationError(
+                    f"{owner}.set_interface(...) does not accept keyword args."
+                )
+            if len(expr.args) != 1:
+                raise DSLValidationError(
+                    f"{owner}.set_interface(...) expects one HTML string argument."
+                )
+            html_expr = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+            if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
+                raise DSLValidationError(
+                    f"{owner}.set_interface(...) HTML must be a string."
+                )
+            return CallStmt(name="scene_set_interface", args=[html_expr])
         if method == "next_turn":
             if expr.args or expr.keywords:
                 raise DSLValidationError(f"{owner}.next_turn(...) does not accept arguments.")
@@ -861,6 +876,23 @@ class DSLCompiler:
                 name="scene_set_gravity",
                 args=[Const(method == "enable_gravity")],
             )
+        if method == "set_interface":
+            if expr.keywords:
+                raise DSLValidationError(
+                    "Scene.set_interface(...) does not accept keyword args."
+                )
+            if len(expr.args) != 2:
+                raise DSLValidationError(
+                    "Scene.set_interface(...) expects scene and html arguments."
+                )
+            scene_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+            self._require_scene_var(scene_arg, scope, "Scene.set_interface(...)")
+            html_expr = self._compile_expr(expr.args[1], scope, allow_range_call=False)
+            if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
+                raise DSLValidationError(
+                    "Scene.set_interface(...) HTML must be a string."
+                )
+            return CallStmt(name="scene_set_interface", args=[html_expr])
         if method == "next_turn":
             if expr.keywords:
                 raise DSLValidationError("Scene.next_turn(...) does not accept keyword args.")

@@ -175,6 +175,10 @@ class Scene:
         """Configure camera behavior for this scene."""
         return None
 
+    def set_interface(self, _html: str):
+        """Configure an HTML overlay rendered above the canvas for this scene."""
+        return None
+
     def enable_gravity(self):
         """Enable gravity in the current scene."""
         return None
@@ -317,7 +321,7 @@ class Game:
         return None
 
     def set_interface(self, _html: str):
-        """Configure an HTML overlay rendered above the canvas."""
+        """Configure an HTML overlay rendered above the canvas (legacy; prefer scene.set_interface)."""
         return None
 
     def set_multiplayer(self, _multiplayer: Multiplayer):

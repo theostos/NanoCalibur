@@ -229,6 +229,19 @@ def test_ts_emits_scene_spawn_with_expression_fields():
     assert 'ctx.scene.spawnActor("Coin", "", { "x": (last_coin.x + 32), "y": 224, "active": true, "sprite": "coin" });' in ts
 
 
+def test_ts_emits_scene_set_interface_call():
+    ts = compile_to_ts(
+        """
+        def open_panel(scene: Scene):
+            scene.set_interface("<button data-button='win'>Win</button>")
+        """
+    )
+
+    assert "setInterfaceHtml?: (html: string) => void;" in ts
+    assert "if (ctx.scene && ctx.scene.setInterfaceHtml) {" in ts
+    assert "ctx.scene.setInterfaceHtml(String(\"<button data-button='win'>Win</button>\"));" in ts
+
+
 def test_ts_emits_negative_index_lookup_for_typed_actor_binding():
     ts = compile_to_ts(
         """

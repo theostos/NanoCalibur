@@ -401,6 +401,22 @@ def test_accept_scene_instance_calls():
     assert spawn_bonus.body[1].name == "scene_spawn_actor"
 
 
+def test_accept_scene_set_interface_calls():
+    actions = compile_source(
+        """
+        def set_ui(scene: Scene):
+            scene.set_interface("<div>hello</div>")
+            Scene.set_interface(scene, "<div>world</div>")
+        """
+    )
+
+    set_ui = actions[0]
+    assert isinstance(set_ui.body[0], CallStmt)
+    assert isinstance(set_ui.body[1], CallStmt)
+    assert set_ui.body[0].name == "scene_set_interface"
+    assert set_ui.body[1].name == "scene_set_interface"
+
+
 def test_accept_scene_elapsed_read_access():
     actions = compile_source(
         """

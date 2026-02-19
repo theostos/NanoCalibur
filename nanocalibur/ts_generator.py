@@ -52,6 +52,7 @@ export interface RuntimeSceneContext {
   gravityEnabled?: boolean;
   elapsed?: number;
   setGravityEnabled?: (enabled: boolean) => void;
+  setInterfaceHtml?: (html: string) => void;
   spawnActor?: (actorType: string, uid: string, fields?: Record<string, any>) => any;
   nextTurn?: () => void;
 }
@@ -449,6 +450,17 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                 return [
                     pad + "if (ctx.scene && ctx.scene.setGravityEnabled) {",
                     pad + f"  ctx.scene.setGravityEnabled(Boolean({enabled_expr}));",
+                    pad + "}",
+                ]
+            if stmt.name == "scene_set_interface":
+                if len(stmt.args) != 1:
+                    raise DSLValidationError(
+                        "scene_set_interface call must have exactly 1 argument."
+                    )
+                html_expr = self._emit_expr(stmt.args[0])
+                return [
+                    pad + "if (ctx.scene && ctx.scene.setInterfaceHtml) {",
+                    pad + f"  ctx.scene.setInterfaceHtml(String({html_expr}));",
                     pad + "}",
                 ]
             if stmt.name == "scene_spawn_actor":
