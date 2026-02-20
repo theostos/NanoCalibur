@@ -1157,7 +1157,7 @@ def test_keyboard_condition_accepts_key_lists():
 def test_condition_decorator_adds_rule_without_add_rule_call():
     project = compile_project(
         """
-        @condition(KeyboardCondition.begin_press("g", id="human_1"))
+        @remote_condition(KeyboardCondition.begin_press("g", id="human_1"))
         def enable_gravity(scene: Scene):
             Scene.enable_gravity(scene)
 
@@ -1221,9 +1221,12 @@ def test_local_condition_decorator_adds_overlap_rule():
     assert project.rules[0].condition.mode == CollisionMode.OVERLAP
 
 
-def test_local_condition_warns_when_used_with_remote_condition_kind():
-    with pytest.warns(UserWarning, match="client-event-driven"):
-        project = compile_project(
+def test_local_condition_errors_when_used_with_remote_condition_kind():
+    with pytest.raises(
+        DSLValidationError,
+        match="@local_condition on action 'enable_gravity' cannot wrap KeyboardCondition",
+    ):
+        compile_project(
             """
             @local_condition(KeyboardCondition.begin_press("g", id="human_1"))
             def enable_gravity(scene: Scene):
@@ -1235,12 +1238,13 @@ def test_local_condition_warns_when_used_with_remote_condition_kind():
             """
         )
 
-    assert len(project.rules) == 1
 
-
-def test_remote_condition_warns_when_used_with_local_condition_kind():
-    with pytest.warns(UserWarning, match="server-evaluated"):
-        project = compile_project(
+def test_remote_condition_errors_when_used_with_local_condition_kind():
+    with pytest.raises(
+        DSLValidationError,
+        match="@remote_condition on action 'collect' cannot wrap OnOverlap",
+    ):
+        compile_project(
             """
             class Player(Actor):
                 pass
@@ -1260,13 +1264,29 @@ def test_remote_condition_warns_when_used_with_local_condition_kind():
             """
         )
 
-    assert len(project.rules) == 1
+
+def test_condition_decorator_is_no_longer_supported():
+    with pytest.raises(
+        DSLValidationError,
+        match="The @condition\\(\\.\\.\\.\\) decorator is no longer supported",
+    ):
+        compile_project(
+            """
+            @condition(KeyboardCondition.begin_press("g", id="human_1"))
+            def enable_gravity(scene: Scene):
+                Scene.enable_gravity(scene)
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            game.set_scene(Scene(gravity=False))
+            """
+        )
 
 
 def test_condition_decorator_supports_tool_calling():
     project = compile_project(
         """
-        @condition(OnToolCall("spawn_bonus", id="human_1"))
+        @remote_condition(OnToolCall("spawn_bonus", id="human_1"))
         def spawn(scene: Scene):
             \"\"\"Spawn one bonus coin\"\"\"
             scene.enable_gravity()
@@ -1288,7 +1308,7 @@ def test_condition_decorator_tool_call_warns_without_action_docstring():
     with pytest.warns(UserWarning, match="MISSING INFORMAL DESCRIPTION"):
         project = compile_project(
             """
-            @condition(OnToolCall("spawn_bonus", id="human_1"))
+            @remote_condition(OnToolCall("spawn_bonus", id="human_1"))
             def spawn(scene: Scene):
                 scene.enable_gravity()
 
@@ -1324,12 +1344,12 @@ def test_tool_calling_name_cannot_bind_multiple_actions():
     with pytest.raises(DSLValidationError, match="already bound to action"):
         compile_project(
             """
-            @condition(OnToolCall("toggle", id="human_1"))
+            @remote_condition(OnToolCall("toggle", id="human_1"))
             def enable(scene: Scene):
                 \"\"\"Enable gravity\"\"\"
                 scene.enable_gravity()
 
-            @condition(OnToolCall("toggle", id="human_1"))
+            @remote_condition(OnToolCall("toggle", id="human_1"))
             def disable(scene: Scene):
                 \"\"\"Disable gravity\"\"\"
                 scene.disable_gravity()
@@ -1586,7 +1606,7 @@ def test_scene_declared_actor_attached_to_requires_target_uid():
 def test_on_button_condition_helper_registers_button_rule():
     project = compile_project(
         """
-        @condition(OnButton("spawn_bonus"))
+        @remote_condition(OnButton("spawn_bonus"))
         def spawn(scene: Scene):
             scene.enable_gravity()
 
@@ -1689,7 +1709,7 @@ def test_callable_helper_can_be_used_from_action_and_is_exported():
         def next_x(x: float, offset: int) -> float:
             return x + offset
 
-        @condition(KeyboardCondition.begin_press("e", id="human_1"))
+        @remote_condition(KeyboardCondition.begin_press("e", id="human_1"))
         def spawn(scene: Scene, last_coin: Coin[-1]):
             if last_coin is not None:
                 x = next_x(last_coin.x, 32)
@@ -1720,7 +1740,7 @@ def test_callable_selector_annotations_warn_and_are_ignored():
             def get_speed(hero: Player["hero"]) -> int:
                 return hero.speed
 
-            @condition(KeyboardCondition.on_press("d", id="human_1"))
+            @remote_condition(KeyboardCondition.on_press("d", id="human_1"))
             def move(hero: Player["hero"]):
                 hero.x = hero.x + get_speed(hero)
 
@@ -1767,7 +1787,7 @@ def test_callable_dependency_chain_is_retained_when_referenced():
         def add_two(x: int) -> int:
             return add_one(x) + 1
 
-        @condition(KeyboardCondition.begin_press("e", id="human_1"))
+        @remote_condition(KeyboardCondition.begin_press("e", id="human_1"))
         def spawn(scene: Scene, last_coin: Coin[-1]):
             if last_coin is not None:
                 new_x = add_two(last_coin.x)
@@ -1879,7 +1899,7 @@ def test_abstract_code_block_warns_when_missing_docstring_description():
             """
             AbstractCodeBlock.begin("controls", role_id=str, hero_uid=str)
 
-            @condition(KeyboardCondition.on_press("d", id=role_id))
+            @remote_condition(KeyboardCondition.on_press("d", id=role_id))
             def move_right(player: Player[hero_uid]):
                 player.x = player.x + 1
 
@@ -1917,7 +1937,7 @@ def test_abstract_code_block_instantiation_expands_rules_and_selectors():
         )
         \"\"\"keyboard movement\"\"\"
 
-        @condition(KeyboardCondition.on_press("d", id=id))
+        @remote_condition(KeyboardCondition.on_press("d", id=id))
         def move_right(player: Player[hero_name]):
             player.x = player.x + 1
 
@@ -1966,7 +1986,7 @@ def test_abstract_code_block_warns_when_not_instantiated():
             AbstractCodeBlock.begin("unused", id=str)
             \"\"\"unused template\"\"\"
 
-            @condition(KeyboardCondition.on_press("d", id=id))
+            @remote_condition(KeyboardCondition.on_press("d", id=id))
             def move_right(player: Player["hero"]):
                 player.x = player.x + 1
 

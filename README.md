@@ -97,12 +97,12 @@ The `id` value must match a role declared with `game.add_role(Role(...))`.
 Rule declaration styles:
 - `scene.add_rule(condition_expr, action_fn)` (preferred)
 - `game.add_rule(condition_expr, action_fn)` (legacy-compatible)
-- `@condition(condition_expr)` decorator on action functions
 - `@local_condition(condition_expr)` marker for server-evaluated conditions (`OnOverlap`/`OnContact`/`OnLogicalCondition`)
 - `@remote_condition(condition_expr)` marker for client-input-driven conditions (`KeyboardCondition`/`MouseCondition`/`OnToolCall`/`OnButton`)
 - `@callable` decorator on helper functions that can be called inside action/predicate expressions
 
-`@local_condition` and `@remote_condition` do not change runtime translation; they add intent metadata and compiler warnings on mismatches.
+`@condition(...)` is no longer supported.
+`@local_condition` and `@remote_condition` do not change runtime translation; they add intent metadata and compiler errors on mismatches.
 
 Examples:
 - `OnOverlap(Player["hero"], Coin)` for actor-vs-actor overlap
@@ -209,7 +209,7 @@ Use structural blocks:
 CodeBlock.begin("player_controls")
 """keyboard movement"""
 
-@condition(KeyboardCondition.on_press("d", id="human_1"))
+@remote_condition(KeyboardCondition.on_press("d", id="human_1"))
 def move_right(player: Player["hero"]):
     player.x = player.x + player.speed
 

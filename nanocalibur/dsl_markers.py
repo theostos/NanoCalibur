@@ -551,25 +551,12 @@ def OnButton(_name: str):
     """Condition helper for UI button clicks.
 
     Usage:
-        ``@condition(OnButton("spawn_bonus"))``
+        ``@remote_condition(OnButton("spawn_bonus"))``
     """
     return None
 
 
 F = TypeVar("F", bound=Callable[..., Any])
-
-
-def condition(_condition_expr) -> Callable[[F], F]:
-    """Attach a rule condition directly to an action function.
-
-    Example:
-        ``@condition(KeyboardCondition.begin_press("g", id="human_1"))``
-    """
-
-    def _decorate(fn: F) -> F:
-        return fn
-
-    return _decorate
 
 
 def local_condition(_condition_expr) -> Callable[[F], F]:

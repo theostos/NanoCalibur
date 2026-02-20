@@ -18,7 +18,7 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
         def is_dead(player: Player) -> bool:
             return player.life <= 0
 
-        @condition(OnToolCall("boost_heal", id="human_1"))
+        @remote_condition(OnToolCall("boost_heal", id="human_1"))
         def boost_heal(amount: Global["heal"]):
             \"\"\"Increase heal amount by one\"\"\"
             amount = amount + 1
@@ -181,7 +181,7 @@ def test_export_project_resolves_grid_file_relative_to_source_path(tmp_path):
 def test_export_project_serializes_scene_interface_html_and_button_condition(tmp_path):
     source = textwrap.dedent(
         '''
-        @condition(OnButton("spawn_bonus"))
+        @remote_condition(OnButton("spawn_bonus"))
         def spawn(scene: Scene):
             scene.enable_gravity()
 
@@ -243,7 +243,7 @@ def test_export_project_serializes_sprite_bindings_resources_and_callables(tmp_p
         def next_speed(speed: int) -> int:
             return speed + 1
 
-        @condition(KeyboardCondition.on_press("d", id="human_1"))
+        @remote_condition(KeyboardCondition.on_press("d", id="human_1"))
         def boost(player: Player["hero"]):
             player.speed = next_speed(player.speed)
             player.play("run")

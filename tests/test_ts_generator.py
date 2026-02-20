@@ -404,7 +404,7 @@ def test_ts_emits_callable_helpers_and_invocations():
         def next_x(x: float, offset: int) -> float:
             return x + offset
 
-        @condition(KeyboardCondition.begin_press("e", id="human_1"))
+        @remote_condition(KeyboardCondition.begin_press("e", id="human_1"))
         def spawn(scene: Scene, last_coin: Coin[-1]):
             if last_coin is not None:
                 x = next_x(last_coin.x, 32)
