@@ -36,10 +36,10 @@ def preprocess_code_blocks(
     *,
     require_code_blocks: bool,
     unboxed_disable_flag: str,
-) -> str:
+) -> ast.Module:
     module = ast.parse(source)
     if not require_code_blocks and not _contains_code_block_markers(module):
-        return source
+        return module
 
     output_body: List[ast.stmt] = []
     active: Optional[_ActiveBlock] = None
@@ -188,7 +188,7 @@ def preprocess_code_blocks(
 
     transformed = ast.Module(body=output_body, type_ignores=[])
     ast.fix_missing_locations(transformed)
-    return ast.unparse(transformed)
+    return transformed
 
 
 def _contains_code_block_markers(module: ast.Module) -> bool:

@@ -18,6 +18,7 @@ from nanocalibur.ir import (
     ObjectExpr,
     PredicateIR,
     Range,
+    Return,
     SubscriptExpr,
     Unary,
     Var,
@@ -766,6 +767,11 @@ function __nc_dict_items(base: any): any[] {
             for refresh_fn in post_yield_refresh_calls:
                 lines.append(pad + f"{refresh_fn}();")
             return lines
+
+        if isinstance(stmt, Return):
+            if stmt.value is None:
+                return [pad + "return;"]
+            return [pad + f"return {self._emit_expr(stmt.value)};"]
 
         if isinstance(stmt, Continue):
             return [pad + "continue;"]

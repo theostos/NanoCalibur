@@ -207,16 +207,14 @@ class ProjectCompiler:
             self._source_dir = Path.cwd()
 
         with dsl_source_context(source):
-            preprocessed_source = preprocess_code_blocks(
-                source,
-                require_code_blocks=require_code_blocks,
-                unboxed_disable_flag=unboxed_disable_flag,
-            )
-        with dsl_source_context(preprocessed_source):
             try:
-                module = ast.parse(preprocessed_source)
+                module = preprocess_code_blocks(
+                    source,
+                    require_code_blocks=require_code_blocks,
+                    unboxed_disable_flag=unboxed_disable_flag,
+                )
             except SyntaxError as exc:
-                raise DSLValidationError(_format_syntax_error(exc, preprocessed_source)) from exc
+                raise DSLValidationError(_format_syntax_error(exc, source)) from exc
             module = self._expand_top_level_static_control_flow(module)
             self._warn_immutable_dsl_edits(module)
 

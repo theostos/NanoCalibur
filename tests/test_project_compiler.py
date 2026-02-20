@@ -2351,6 +2351,40 @@ def test_code_block_warns_when_missing_docstring_description():
     assert len(project.actors) == 1
 
 
+def test_code_block_diagnostics_preserve_original_source_locations():
+    source = textwrap.dedent(
+        """
+        CodeBlock.begin("core")
+        \"\"\"main setup\"\"\"
+
+        class Player(Actor):
+            speed: int
+
+        def bad(player: Player["hero"]):
+            return player.speed
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+
+        CodeBlock.end("core")
+        """
+    )
+    expected_line = next(
+        index
+        for index, line in enumerate(source.splitlines(), start=1)
+        if "return player.speed" in line
+    )
+
+    with pytest.raises(DSLValidationError) as exc_info:
+        compile_project(source, require_code_blocks=True)
+
+    message = str(exc_info.value)
+    assert f"Location: line {expected_line}" in message
+    assert "return player.speed" in message
+
+
 def test_abstract_code_block_warns_when_missing_docstring_description():
     with pytest.warns(UserWarning, match="MISSING INFORMAL DESCRIPTION"):
         project = compile_project(

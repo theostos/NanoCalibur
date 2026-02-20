@@ -22,6 +22,7 @@ from nanocalibur.ir import (
     ObjectExpr,
     PredicateIR,
     Range,
+    Return,
     SubscriptExpr,
     Unary,
     Var,
@@ -359,6 +360,10 @@ def _callable_names_in_stmt(stmt) -> set[str]:
             names.update(_callable_names_in_stmt(child))
         return names
     if isinstance(stmt, Yield):
+        return _callable_names_in_expr(stmt.value)
+    if isinstance(stmt, Return):
+        if stmt.value is None:
+            return set()
         return _callable_names_in_expr(stmt.value)
     if isinstance(stmt, Continue):
         return set()

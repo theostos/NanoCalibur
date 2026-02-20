@@ -18,6 +18,7 @@ from nanocalibur.ir import (
     ListExpr,
     ObjectExpr,
     Range,
+    Return,
     SubscriptExpr,
     Unary,
     While,
@@ -719,6 +720,40 @@ def test_accept_continue_inside_loops():
     assert isinstance(action.body[0].body[0], Continue)
     assert isinstance(action.body[1], While)
     assert isinstance(action.body[1].body[0], Continue)
+
+
+def test_accept_bare_return_in_action():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def maybe_stop(player: Player["hero"]):
+            if player.speed <= 0:
+                return
+            player.x = player.x + player.speed
+        """
+    )
+
+    action = actions[0]
+    assert isinstance(action.body[0], If)
+    assert len(action.body[0].body) == 1
+    assert isinstance(action.body[0].body[0], Return)
+    assert action.body[0].body[0].value is None
+    assert isinstance(action.body[1], Assign)
+
+
+def test_reject_return_value_in_action():
+    with pytest.raises(DSLValidationError, match="Only bare 'return' is supported in action bodies"):
+        compile_source(
+            """
+            class Player(Actor):
+                speed: int
+
+            def bad(player: Player["hero"]):
+                return player.speed
+            """
+        )
 
 
 def test_reject_continue_outside_loop():

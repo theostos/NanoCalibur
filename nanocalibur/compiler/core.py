@@ -24,6 +24,7 @@ from nanocalibur.ir import (
     PredicateIR,
     Range,
     CameraSelector,
+    Return,
     RoleSelector,
     SubscriptExpr,
     Unary,
@@ -891,6 +892,14 @@ class DSLCompiler:
                     iterable=iterable,
                     body=body,
                 )
+
+            if isinstance(stmt, ast.Return):
+                if stmt.value is not None:
+                    raise DSLValidationError(
+                        "Only bare 'return' is supported in action bodies. "
+                        "Return values are only allowed as the final callable statement."
+                    )
+                return Return()
 
             if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
                 return self._compile_yield_stmt(stmt.value, scope)

@@ -159,6 +159,11 @@ class Continue(Stmt):
 
 
 @dataclass(frozen=True)
+class Return(Stmt):
+    value: Optional[Expr] = None
+
+
+@dataclass(frozen=True)
 class ActionIR:
     name: str
     params: List[ParamBinding]
