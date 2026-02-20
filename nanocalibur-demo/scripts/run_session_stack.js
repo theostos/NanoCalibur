@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const projectDir = path.resolve(__dirname, '..');
@@ -39,6 +40,20 @@ function normalizeUrlOrigin(value, fallback = '') {
   }
   try {
     return new URL(candidate).origin;
+  } catch (_error) {
+    return candidate;
+  }
+}
+
+function normalizeUrlBase(value, fallback = '') {
+  const candidate = trimTrailingSlash(value || fallback);
+  if (!candidate) {
+    return '';
+  }
+  try {
+    const parsed = new URL(candidate);
+    const normalizedPath = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '');
+    return `${parsed.origin}${normalizedPath}`;
   } catch (_error) {
     return candidate;
   }
@@ -119,6 +134,37 @@ function attachPrefixedOutput(stream, prefix, target, onLine) {
   });
 }
 
+function ensureParentDir(filePath) {
+  const parent = path.dirname(filePath);
+  fs.mkdirSync(parent, { recursive: true });
+}
+
+function timestamp() {
+  return new Date().toISOString();
+}
+
+function attachOutputToLog(stream, label, logStream) {
+  let buffer = '';
+  stream.on('data', (chunk) => {
+    buffer += String(chunk);
+    while (true) {
+      const idx = buffer.indexOf('\n');
+      if (idx < 0) {
+        break;
+      }
+      const line = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 1);
+      logStream.write(`[${timestamp()}] [${label}] ${line}\n`);
+    }
+  });
+  stream.on('end', () => {
+    if (!buffer) {
+      return;
+    }
+    logStream.write(`[${timestamp()}] [${label}] ${buffer}\n`);
+  });
+}
+
 function pickInvite(invites, preferredKinds, excludedRoleIds = new Set()) {
   for (const kind of preferredKinds) {
     const match = invites.find((entry) => (
@@ -158,6 +204,7 @@ function buildSessionShareUrl(webBaseUrl, apiBaseUrl, inviteToken) {
 async function waitForRequiredRolesConnected(baseUrl, sessionId, timeoutMs) {
   const startedAt = Date.now();
   let lastPrintedSignature = '';
+  let lastPendingRoles = [];
 
   while (true) {
     const payload = await requestJson(baseUrl, '/sessions', 'GET');
@@ -169,6 +216,7 @@ async function waitForRequiredRolesConnected(baseUrl, sessionId, timeoutMs) {
         .filter((entry) => entry.connected !== true)
         .map((entry) => entry.role_id)
         .filter((roleId) => typeof roleId === 'string');
+      lastPendingRoles = pending;
       if (pending.length === 0) {
         return;
       }
@@ -181,7 +229,8 @@ async function waitForRequiredRolesConnected(baseUrl, sessionId, timeoutMs) {
 
     if (typeof timeoutMs === 'number' && timeoutMs > 0 && Date.now() - startedAt >= timeoutMs) {
       throw new Error(
-        `Timed out waiting for required roles to connect for session '${sessionId}'.`,
+        `Timed out waiting for required roles to connect for session '${sessionId}'. `
+        + `Still missing: ${lastPendingRoles.join(', ') || 'unknown'}.`,
       );
     }
     await delay(500);
@@ -228,7 +277,7 @@ async function startSessionServer() {
   });
 }
 
-async function startWebHost(requestedWebPort) {
+async function startWebHost(requestedWebPort, envExtras = {}) {
   return new Promise((resolve, reject) => {
     const args = ['scripts/run_human_web.js', '--web-only'];
     if (requestedWebPort) {
@@ -239,6 +288,7 @@ async function startWebHost(requestedWebPort) {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        ...envExtras,
         NC_WEB_ONLY: '1',
         BROWSER: process.env.BROWSER || 'none',
       },
@@ -292,14 +342,49 @@ function launchClient(label, args, envExtras) {
   return child;
 }
 
+function launchClientToLog(label, args, envExtras, logPath) {
+  ensureParentDir(logPath);
+  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+  logStream.write(`[${timestamp()}] [${label}] start\n`);
+
+  const child = spawn(nodeCmd, args, {
+    cwd: projectDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ...envExtras,
+    },
+  });
+
+  attachOutputToLog(child.stdout, `${label}:stdout`, logStream);
+  attachOutputToLog(child.stderr, `${label}:stderr`, logStream);
+
+  child.on('error', (error) => {
+    logStream.write(`[${timestamp()}] [${label}] error: ${error.message || String(error)}\n`);
+  });
+
+  child.on('exit', (code, signal) => {
+    const reason = signal ? `signal ${signal}` : `code ${code}`;
+    logStream.write(`[${timestamp()}] [${label}] exited (${reason})\n`);
+    logStream.end();
+    console.log(`[stack] ${label} exited (${reason}).`);
+  });
+  return child;
+}
+
 async function main() {
   const requestedWebPort = process.argv[2] || process.env.NC_WEB_PORT || '';
   const shouldStartWebHost = (process.env.NC_START_WEB_HOST || '1') !== '0';
   const shouldLaunchDummy = (process.env.NC_LAUNCH_DUMMY || '1') !== '0';
   const shouldLaunchLocalHuman = process.env.NC_LAUNCH_LOCAL_HUMAN === '1';
   const shouldAutoStartSession = (process.env.NC_AUTOSTART_SESSION || '1') !== '0';
+  const shouldLogDummyToFile = (process.env.NC_DUMMY_LOG_TO_FILE || '1') !== '0';
   const waitTimeoutMs = toOptionalTimeoutMs(process.env.NC_WAIT_TIMEOUT_MS || '');
   const webHost = process.env.NC_WEB_HOST || '127.0.0.1';
+  const dummyLogPath = path.resolve(
+    projectDir,
+    process.env.NC_DUMMY_LOG_PATH || path.join('logs', 'dummy.log'),
+  );
   const fallbackWebPort = toPositiveIntOrDefault(
     requestedWebPort || process.env.NC_WEB_PORT || '9000',
     9000,
@@ -329,7 +414,9 @@ async function main() {
 
   let localWebUrl = normalizeUrlOrigin(`http://${webHost}:${fallbackWebPort}`);
   if (shouldStartWebHost) {
-    const { child: webChild, webUrl } = await startWebHost(requestedWebPort);
+    const { child: webChild, webUrl } = await startWebHost(requestedWebPort, {
+      NC_DEV_PROXY_TARGET: baseUrl,
+    });
     children.push(webChild);
     localWebUrl = normalizeUrlOrigin(webUrl, localWebUrl);
   }
@@ -380,30 +467,51 @@ async function main() {
       if (dummyInvite.role_id) {
         usedRoleIds.add(dummyInvite.role_id);
       }
-      const dummyChild = launchClient(
-        'dummy:random',
-        ['scripts/dummy_random_client.js'],
-        {
-          NC_BASE_URL: baseUrl,
-          NC_INVITE_TOKEN: dummyInvite.invite_token,
-          NC_INTERVAL_MS: process.env.NC_INTERVAL_MS || '400',
-        },
-      );
+      const dummyEnv = {
+        NC_BASE_URL: baseUrl,
+        NC_INVITE_TOKEN: dummyInvite.invite_token,
+        NC_INTERVAL_MS: process.env.NC_INTERVAL_MS || '400',
+      };
+      const dummyChild = shouldLogDummyToFile
+        ? launchClientToLog(
+          'dummy:random',
+          ['scripts/dummy_random_client.js'],
+          dummyEnv,
+          dummyLogPath,
+        )
+        : launchClient(
+          'dummy:random',
+          ['scripts/dummy_random_client.js'],
+          dummyEnv,
+        );
       children.push(dummyChild);
       console.log(`[stack] dummy role: ${dummyInvite.role_id || 'manual'}`);
+      if (shouldLogDummyToFile) {
+        console.log(`[stack] dummy logs: ${dummyLogPath}`);
+      }
     }
   }
 
-  const shareWebBase = normalizeUrlOrigin(
+  const shareWebBase = normalizeUrlBase(
     process.env.NC_PUBLIC_WEB_URL || process.env.NC_SHARE_WEB_URL || localWebUrl,
   );
-  const shareApiBase = normalizeUrlOrigin(
-    process.env.NC_PUBLIC_BASE_URL || process.env.NC_SHARE_BASE_URL || baseUrl,
+  const requestedApiBase = normalizeUrlBase(
+    process.env.NC_PUBLIC_BASE_URL || process.env.NC_SHARE_BASE_URL || '',
   );
+  const useSinglePublicUrlProxy =
+    shouldStartWebHost
+    && shareWebBase
+    && (!requestedApiBase || requestedApiBase === shareWebBase);
+  const shareApiBase = useSinglePublicUrlProxy
+    ? `${shareWebBase}/__nc_api`
+    : (requestedApiBase || baseUrl);
 
   const shareInvites = humanShareInvites(invites);
   console.log(`[stack] session created: ${sessionId}`);
   console.log(`[stack] loop mode: ${created.loop_mode}, tick rate: ${created.tick_rate}`);
+  if (useSinglePublicUrlProxy) {
+    console.log('[stack] using web host API proxy: /__nc_api -> local session server');
+  }
   if (shareInvites.length === 0) {
     console.warn('[stack] no human/hybrid invites found to share.');
   } else {

@@ -81,7 +81,16 @@ async function main() {
 
   const child = spawn(
     webpackDevServer,
-    ['--port', `${port}`, '--open', openPath],
+    [
+      '--host',
+      webHost,
+      '--port',
+      `${port}`,
+      '--allowed-hosts',
+      'all',
+      '--open',
+      openPath,
+    ],
     {
       cwd: path.resolve(__dirname, '..'),
       stdio: 'inherit',

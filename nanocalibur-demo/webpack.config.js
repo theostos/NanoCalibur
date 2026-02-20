@@ -1,5 +1,6 @@
 const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
+const devProxyTarget = process.env.NC_DEV_PROXY_TARGET || '';
 
 module.exports = {
     entry: './src/main.ts',
@@ -13,6 +14,17 @@ module.exports = {
         devMiddleware: {
             writeToDisk: true
         },
+        proxy: devProxyTarget
+            ? [
+                {
+                    context: ['/__nc_api'],
+                    target: devProxyTarget,
+                    changeOrigin: true,
+                    secure: false,
+                    pathRewrite: { '^/__nc_api': '' }
+                }
+            ]
+            : undefined,
         static: [
             {
                 directory: path.resolve(__dirname, 'dist'),
