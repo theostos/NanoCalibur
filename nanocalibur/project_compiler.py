@@ -718,7 +718,7 @@ class ProjectCompiler:
         declared_scene_vars: Dict[str, SceneSpec] = {}
         declared_multiplayer_vars: Dict[str, ast.Call] = {}
         declared_role_vars: Dict[str, ast.Call] = {}
-        declared_interface_vars: Dict[str, str] = {}
+        declared_interface_vars: Dict[str, Tuple[str, Optional[str]]] = {}
         active_scene_vars: set[str] = set()
         declared_actor_vars: Dict[str, ast.Call] = {}
         declared_tile_map_vars: Dict[str, ast.Call] = {}
@@ -921,7 +921,7 @@ class ProjectCompiler:
                             else None
                         )
                         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                            declared_interface_vars[target.id] = node.value.value
+                            declared_interface_vars[target.id] = (node.value.value, None)
                         elif isinstance(node.value, ast.Name):
                             source_name = _resolve_name_alias(node.value.id, name_aliases)
                             if source_name in declared_interface_vars:
@@ -930,6 +930,16 @@ class ProjectCompiler:
                                 declared_interface_vars.pop(target.id, None)
                         else:
                             declared_interface_vars.pop(target.id, None)
+                        if (
+                            resolved_call is not None
+                            and isinstance(resolved_call.func, ast.Name)
+                            and resolved_call.func.id == "Interface"
+                        ):
+                            declared_interface_vars[target.id] = self._parse_interface_constructor(
+                                resolved_call,
+                                compiler=compiler,
+                                source_name=f"Interface variable '{target.id}'",
+                            )
                         if resolved_call is not None:
                             if (
                                 isinstance(resolved_call.func, ast.Name)
@@ -1338,19 +1348,33 @@ class ProjectCompiler:
                         raise DSLValidationError(
                             "scene.set_interface(...) expects html and optional role selector."
                         )
-                    html = self._resolve_interface_html_arg(
+                    html, role_id = self._resolve_interface_arg(
                         scene_args[0],
                         declared_interface_vars,
+                        compiler=compiler,
+                        source_name="scene.set_interface(...) first argument",
                     )
-                    if len(scene_args) == 1:
+                    if len(scene_args) == 1 and role_id is None:
                         interface_html = html
                     else:
-                        role_id = self._parse_role_selector_id(
-                            scene_args[1],
-                            compiler=compiler,
-                            source_name="scene.set_interface role",
-                            allow_plain_string=True,
-                        )
+                        if len(scene_args) == 2:
+                            if role_id is not None:
+                                raise DSLValidationError(
+                                    "scene.set_interface(...) role is provided twice. "
+                                    "Either use scene.set_interface(Interface(..., Role[...])) "
+                                    "or scene.set_interface(html, Role[...])."
+                                )
+                            role_id = self._parse_role_selector_id(
+                                scene_args[1],
+                                compiler=compiler,
+                                source_name="scene.set_interface role",
+                                allow_plain_string=True,
+                            )
+                        if role_id is None:
+                            raise DSLValidationError(
+                                "scene.set_interface(...) role selector is required when the "
+                                "first argument is not a plain html string."
+                            )
                         interfaces_by_role[role_id] = html
                     continue
 
@@ -1606,22 +1630,98 @@ class ProjectCompiler:
             "scene.add_camera(...) expects Camera(...) or a camera variable."
         )
 
-    def _resolve_interface_html_arg(
+    def _resolve_interface_arg(
         self,
         node: ast.AST,
-        declared_interface_vars: Dict[str, str],
-    ) -> str:
+        declared_interface_vars: Dict[str, Tuple[str, Optional[str]]],
+        *,
+        compiler: DSLCompiler,
+        source_name: str,
+    ) -> Tuple[str, Optional[str]]:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
+            return node.value, None
         if isinstance(node, ast.Name):
             if node.id not in declared_interface_vars:
                 raise DSLValidationError(
-                    f"Unknown interface HTML variable '{node.id}' in set_interface(...)."
+                    f"Unknown interface variable '{node.id}' in set_interface(...)."
                 )
             return declared_interface_vars[node.id]
+        if isinstance(node, ast.Call):
+            return self._parse_interface_constructor(
+                node,
+                compiler=compiler,
+                source_name=source_name,
+            )
         raise DSLValidationError(
-            "set_interface(...) expects an HTML string or a variable bound to a string."
+            "set_interface(...) expects HTML string, Interface(...), or a variable bound to one."
         )
+
+    def _parse_interface_constructor(
+        self,
+        node: ast.Call,
+        *,
+        compiler: DSLCompiler,
+        source_name: str,
+    ) -> Tuple[str, Optional[str]]:
+        if not isinstance(node.func, ast.Name) or node.func.id != "Interface":
+            raise DSLValidationError(
+                f"{source_name} must be Interface(...), an html string, or an interface variable."
+            )
+        if any(keyword.arg is None for keyword in node.keywords):
+            raise DSLValidationError("Interface(...) does not support **kwargs expansion.")
+        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+        allowed = {"role", "from_file"}
+        unexpected = sorted(set(kwargs.keys()) - allowed)
+        if unexpected:
+            raise DSLValidationError(
+                f"Interface(...) received unsupported arguments: {unexpected}."
+            )
+        if len(node.args) not in {1, 2}:
+            raise DSLValidationError(
+                "Interface(...) expects source path/html and optional role selector."
+            )
+        if len(node.args) == 2 and "role" in kwargs:
+            raise DSLValidationError(
+                "Interface(...) role must be provided once (positional or keyword)."
+            )
+
+        source = _expect_string(node.args[0], "Interface source")
+        from_file = _expect_bool_or_default(
+            kwargs.get("from_file"),
+            "Interface from_file",
+            True,
+        )
+        html = self._load_interface_html_from_file(source) if from_file else source
+
+        role_node: Optional[ast.AST]
+        if len(node.args) == 2:
+            role_node = node.args[1]
+        else:
+            role_node = kwargs.get("role")
+        role_id: Optional[str] = None
+        if role_node is not None:
+            role_id = self._parse_role_selector_id(
+                role_node,
+                compiler=compiler,
+                source_name="Interface role",
+                allow_plain_string=True,
+            )
+        return html, role_id
+
+    def _load_interface_html_from_file(self, path_value: str) -> str:
+        raw_path = path_value.strip()
+        if not raw_path:
+            raise DSLValidationError("Interface(...) file path cannot be empty.")
+
+        candidate = Path(raw_path)
+        resolved = candidate if candidate.is_absolute() else (self._source_dir / candidate)
+
+        try:
+            return resolved.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise DSLValidationError(
+                f"Cannot read interface file '{raw_path}': {exc}."
+            ) from exc
 
     def _resolve_multiplayer_arg(
         self,

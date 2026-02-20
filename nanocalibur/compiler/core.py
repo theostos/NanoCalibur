@@ -993,16 +993,25 @@ class DSLCompiler:
                 raise DSLValidationError(
                     f"{owner}.set_interface(...) expects html and optional role selector."
                 )
-            html_expr = self._compile_expr(expr.args[0], scope, allow_range_call=False)
-            if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
-                raise DSLValidationError(
-                    f"{owner}.set_interface(...) HTML must be a string."
-                )
-            if len(expr.args) == 1:
-                return CallStmt(name="scene_set_interface", args=[html_expr])
-            role_expr = self._compile_role_ref_expr(
-                expr.args[1], scope, f"{owner}.set_interface(...) role"
+            html_expr, embedded_role_expr = self._compile_scene_interface_arg_expr(
+                expr.args[0],
+                scope,
+                source_name=f"{owner}.set_interface(...) first argument",
             )
+            explicit_role_expr: Optional[Expr] = None
+            if len(expr.args) == 2:
+                explicit_role_expr = self._compile_role_ref_expr(
+                    expr.args[1], scope, f"{owner}.set_interface(...) role"
+                )
+            if embedded_role_expr is not None and explicit_role_expr is not None:
+                raise DSLValidationError(
+                    f"{owner}.set_interface(...) role is provided twice. "
+                    "Either use set_interface(Interface(..., Role[...])) "
+                    "or set_interface(html, Role[...])."
+                )
+            role_expr = embedded_role_expr or explicit_role_expr
+            if role_expr is None:
+                return CallStmt(name="scene_set_interface", args=[html_expr])
             return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
         if method == "next_turn":
             if expr.args or expr.keywords:
@@ -1041,16 +1050,25 @@ class DSLCompiler:
                 )
             scene_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
             self._require_scene_var(scene_arg, scope, "Scene.set_interface(...)")
-            html_expr = self._compile_expr(expr.args[1], scope, allow_range_call=False)
-            if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
-                raise DSLValidationError(
-                    "Scene.set_interface(...) HTML must be a string."
-                )
-            if len(expr.args) == 2:
-                return CallStmt(name="scene_set_interface", args=[html_expr])
-            role_expr = self._compile_role_ref_expr(
-                expr.args[2], scope, "Scene.set_interface(...) role"
+            html_expr, embedded_role_expr = self._compile_scene_interface_arg_expr(
+                expr.args[1],
+                scope,
+                source_name="Scene.set_interface(...) first argument",
             )
+            explicit_role_expr: Optional[Expr] = None
+            if len(expr.args) == 3:
+                explicit_role_expr = self._compile_role_ref_expr(
+                    expr.args[2], scope, "Scene.set_interface(...) role"
+                )
+            if embedded_role_expr is not None and explicit_role_expr is not None:
+                raise DSLValidationError(
+                    "Scene.set_interface(...) role is provided twice. "
+                    "Either use Scene.set_interface(scene, Interface(..., Role[...])) "
+                    "or Scene.set_interface(scene, html, Role[...])."
+                )
+            role_expr = embedded_role_expr or explicit_role_expr
+            if role_expr is None:
+                return CallStmt(name="scene_set_interface", args=[html_expr])
             return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
         if method == "next_turn":
             if expr.keywords:
@@ -1074,6 +1092,67 @@ class DSLCompiler:
                 source_name="Scene.spawn(...)",
             )
         raise DSLValidationError("Unsupported Scene method call in action body.")
+
+    def _compile_scene_interface_arg_expr(
+        self,
+        node: ast.AST,
+        scope: ActionScope,
+        source_name: str,
+    ) -> tuple[Expr, Optional[Expr]]:
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Interface":
+            if any(keyword.arg is None for keyword in node.keywords):
+                raise DSLValidationError("Interface(...) does not support **kwargs expansion.")
+            kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+            unexpected = sorted(set(kwargs.keys()) - {"role", "from_file"})
+            if unexpected:
+                raise DSLValidationError(
+                    f"Interface(...) received unsupported arguments: {unexpected}."
+                )
+            if len(node.args) not in {1, 2}:
+                raise DSLValidationError(
+                    "Interface(...) expects source html and optional role selector."
+                )
+            if len(node.args) == 2 and "role" in kwargs:
+                raise DSLValidationError(
+                    "Interface(...) role must be provided once (positional or keyword)."
+                )
+            source_expr = self._compile_expr(node.args[0], scope, allow_range_call=False)
+            if not (isinstance(source_expr, Const) and isinstance(source_expr.value, str)):
+                raise DSLValidationError(
+                    "Interface(...) source must be a string literal in action context."
+                )
+            from_file = True
+            if "from_file" in kwargs:
+                from_file_node = kwargs["from_file"]
+                if not (
+                    isinstance(from_file_node, ast.Constant)
+                    and isinstance(from_file_node.value, bool)
+                ):
+                    raise DSLValidationError(
+                        "Interface(..., from_file=...) must use a boolean literal."
+                    )
+                from_file = from_file_node.value
+            if from_file:
+                raise DSLValidationError(
+                    "Interface(..., from_file=True) is not supported inside actions. "
+                    "Use inline HTML (from_file=False) or pass a plain string directly."
+                )
+            role_node: Optional[ast.AST]
+            if len(node.args) == 2:
+                role_node = node.args[1]
+            else:
+                role_node = kwargs.get("role")
+            role_expr = (
+                self._compile_role_ref_expr(role_node, scope, "Interface role")
+                if role_node is not None
+                else None
+            )
+            return source_expr, role_expr
+
+        html_expr = self._compile_expr(node, scope, allow_range_call=False)
+        if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
+            raise DSLValidationError(f"{source_name} HTML must be a string.")
+        return html_expr, None
 
     def _compile_scene_spawn_call(
         self,

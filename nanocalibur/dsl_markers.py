@@ -177,10 +177,16 @@ class Scene:
 
     def set_interface(
         self,
-        _html: str,
+        _html_or_interface: "str | Interface",
         _role: "str | Role | type[Role] | None" = None,
     ):
-        """Configure an HTML overlay for one role (or role subclass selector)."""
+        """Configure an HTML overlay for one role.
+
+        Accepted forms:
+        - ``scene.set_interface("<div>...</div>")``
+        - ``scene.set_interface("<div>...</div>", Role["human_1"])``
+        - ``scene.set_interface(Interface("ui/hud.html", Role["human_1"]))``
+        """
         return None
 
     def enable_gravity(self):
@@ -256,6 +262,23 @@ class Resource:
         return cls
 
     def __init__(self, _name: str, _path: str):
+        return None
+
+
+class Interface:
+    """Interface declaration used by :meth:`Scene.set_interface`.
+
+    By default the first argument is treated as a file path resolved from the
+    source file directory. Set ``from_file=False`` to pass inline HTML directly.
+    """
+
+    def __init__(
+        self,
+        _source: str,
+        _role: "str | type[Role] | None" = None,
+        *,
+        from_file: bool = True,
+    ):
         return None
 
 

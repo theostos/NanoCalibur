@@ -1775,6 +1775,58 @@ def test_scene_set_interface_accepts_role_selector():
     assert project.interfaces_by_role == {"human_1": "<div>P1 HUD</div>"}
 
 
+def test_scene_set_interface_accepts_interface_constructor_inline():
+    project = compile_project(
+        '''
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene.set_interface(Interface("<div>P1 HUD</div>", Role["human_1"], from_file=False))
+        '''
+    )
+
+    assert project.interfaces_by_role == {"human_1": "<div>P1 HUD</div>"}
+
+
+def test_scene_set_interface_accepts_interface_variable_from_file(tmp_path):
+    hud_path = tmp_path / "hud_h1.html"
+    hud_path.write_text("<div>P1 SCORE: {{self.personal_score}}</div>", encoding="utf-8")
+    source_path = tmp_path / "scene.py"
+
+    project = compile_project(
+        f'''
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        hud_h1 = Interface("{hud_path.name}", Role["human_1"])
+        scene.set_interface(hud_h1)
+        ''',
+        source_path=str(source_path),
+    )
+
+    assert project.interfaces_by_role == {
+        "human_1": "<div>P1 SCORE: {{self.personal_score}}</div>"
+    }
+
+
+def test_scene_set_interface_rejects_duplicate_role_in_interface_and_call():
+    with pytest.raises(DSLValidationError, match="role is provided twice"):
+        compile_project(
+            '''
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene.set_interface(
+                Interface("<div>P1 HUD</div>", Role["human_1"], from_file=False),
+                Role["human_1"],
+            )
+            '''
+        )
+
+
 def test_scene_set_interface_rejects_unknown_role_selector():
     with pytest.raises(DSLValidationError, match="unknown role id 'human_9'"):
         compile_project(
