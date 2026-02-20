@@ -23,6 +23,11 @@ interface TileSymbolInfo {
   description: string;
 }
 
+export interface SymbolicViewer {
+  roleId?: string | null;
+  roleKind?: string | null;
+}
+
 export class SymbolicRenderer {
   private readonly options: CanvasHostOptions;
 
@@ -30,10 +35,24 @@ export class SymbolicRenderer {
     this.options = options;
   }
 
-  render(state: InterpreterState, mapSpec: MapSpec | null): SymbolicFrame {
+  render(
+    state: InterpreterState,
+    mapSpec: MapSpec | null,
+    viewer: SymbolicViewer = {},
+  ): SymbolicFrame {
     const actors = (state.actors || []) as ActorState[];
     const tileSize = mapSpec ? Math.max(1, asNumber(mapSpec.tile_size, 32)) : 32;
-    const viewport = this.resolveViewport(state, actors, mapSpec, tileSize);
+    const cameraState = this.resolveViewerCamera(state, viewer.roleId || null);
+    const roleKind = typeof viewer.roleKind === "string" ? viewer.roleKind.toLowerCase() : null;
+    if (roleKind === "ai" && viewer.roleId && !cameraState) {
+      return {
+        width: 0,
+        height: 0,
+        rows: [],
+        legend: [],
+      };
+    }
+    const viewport = this.resolveViewport(state, actors, mapSpec, tileSize, cameraState);
     const { width, height, originX, originY } = viewport;
 
     const emptySymbol = this.normalizeSymbol(this.options.symbolic?.emptySymbol) || ".";
@@ -83,6 +102,7 @@ export class SymbolicRenderer {
     actors: ActorState[],
     mapSpec: MapSpec | null,
     tileSize: number,
+    cameraState: Record<string, any> | null,
   ): SymbolicViewport {
     const world = this.resolveWorldDimensions(actors, mapSpec, tileSize);
     const requestedWidth = this.resolveRequestedCropDimension(
@@ -90,12 +110,14 @@ export class SymbolicRenderer {
       tileSize,
       mapSpec,
       world.width,
+      cameraState && typeof cameraState.width === "number" ? cameraState.width : null,
     );
     const requestedHeight = this.resolveRequestedCropDimension(
       "height",
       tileSize,
       mapSpec,
       world.height,
+      cameraState && typeof cameraState.height === "number" ? cameraState.height : null,
     );
     const viewportWidth =
       mapSpec != null
@@ -110,7 +132,6 @@ export class SymbolicRenderer {
       world.width > 0 ? ((world.minX + world.maxX + 1) * tileSize) / 2 : tileSize / 2;
     const fallbackCenterY =
       world.height > 0 ? ((world.minY + world.maxY + 1) * tileSize) / 2 : tileSize / 2;
-    const cameraState = state.camera || null;
     const centerWorldX = asNumber(cameraState?.x, fallbackCenterX);
     const centerWorldY = asNumber(cameraState?.y, fallbackCenterY);
 
@@ -197,7 +218,16 @@ export class SymbolicRenderer {
     tileSize: number,
     mapSpec: MapSpec | null,
     worldDimension: number,
+    cameraDimension: number | null,
   ): number {
+    if (
+      typeof cameraDimension === "number" &&
+      Number.isFinite(cameraDimension) &&
+      cameraDimension > 0
+    ) {
+      return this.applyDimensionLimit(Math.floor(cameraDimension), axis);
+    }
+
     const explicit =
       axis === "width"
         ? this.options.symbolic?.cropWidth
@@ -220,6 +250,42 @@ export class SymbolicRenderer {
     }
 
     return this.applyDimensionLimit(Math.max(1, worldDimension), axis);
+  }
+
+  private resolveViewerCamera(
+    state: InterpreterState,
+    roleId: string | null,
+  ): Record<string, any> | null {
+    const byName =
+      state &&
+      state.cameras &&
+      typeof state.cameras === "object"
+        ? (state.cameras as Record<string, any>)
+        : null;
+
+    if (roleId && byName) {
+      for (const camera of Object.values(byName)) {
+        if (!camera || typeof camera !== "object") {
+          continue;
+        }
+        if (camera.role_id === roleId) {
+          return camera;
+        }
+      }
+    }
+
+    if (state && state.camera && typeof state.camera === "object") {
+      return state.camera as Record<string, any>;
+    }
+
+    if (byName) {
+      for (const camera of Object.values(byName)) {
+        if (camera && typeof camera === "object") {
+          return camera;
+        }
+      }
+    }
+    return null;
   }
 
   private drawTiles(

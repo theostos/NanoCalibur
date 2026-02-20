@@ -228,7 +228,9 @@ def test_headless_symbolic_crop_and_tile_palette(tmp_path):
           predicates: [],
           tools: [],
           rules: [],
-          camera: {{ mode: "fixed", x: 80, y: 16 }},
+          cameras: [
+            {{ name: "cam", role_id: "human_1", x: 80, y: 16 }}
+          ],
           map: {{
             width: 6,
             height: 4,
@@ -413,3 +415,84 @@ def test_headless_symbolic_default_crop_uses_default_screen_size(tmp_path):
     values = json.loads(proc.stdout.strip())
     assert values["width"] == 30
     assert values["height"] == 17
+
+
+def test_headless_symbolic_ai_without_camera_gets_empty_frame(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_dir = root / "nanocalibur" / "runtime"
+
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_dir / "headless_host.ts"),
+            str(runtime_dir / "runtime_core.ts"),
+            str(runtime_dir / "symbolic_renderer.ts"),
+            str(runtime_dir / "interpreter.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_path = compiled_dir / "interpreter.js"
+    headless_path = compiled_dir / "headless_host.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+
+        const spec = {{
+          actors: [
+            {{ type: "Player", uid: "hero", fields: {{ x: 16, y: 16, active: true }} }}
+          ],
+          globals: [],
+          predicates: [],
+          tools: [],
+          rules: [],
+          roles: [
+            {{ id: "dummy_1", kind: "ai", required: true, type: "Role", fields: {{}} }}
+          ],
+          cameras: [],
+          map: {{
+            width: 4,
+            height: 3,
+            tile_size: 16,
+            tile_grid: [
+              [0, 0, 0, 0],
+              [0, 0, 0, 0],
+              [0, 0, 0, 0]
+            ],
+            tile_defs: {{}}
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, {{}}, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        const frame = host.getSymbolicFrame({{ roleId: "dummy_1", roleKind: "ai" }});
+        console.log(JSON.stringify(frame));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    frame = json.loads(proc.stdout.strip())
+    assert frame["width"] == 0
+    assert frame["height"] == 0
+    assert frame["rows"] == []

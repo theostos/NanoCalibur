@@ -58,6 +58,7 @@ export interface InterpreterState {
   globals: Record<string, any>;
   actors: Record<string, any>[];
   roles: Record<string, any>;
+  cameras: Record<string, any>;
   camera: Record<string, any> | null;
   map: Record<string, any> | null;
   scene: InterpreterSceneState;
@@ -95,7 +96,8 @@ export class NanoCaliburInterpreter {
   private readonly globals: Record<string, any>;
   private readonly rules: Record<string, any>[];
   private readonly map: Record<string, any> | null;
-  private readonly cameraConfig: Record<string, any> | null;
+  private readonly camerasByName: Record<string, any>;
+  private readonly cameraOrder: string[];
   private readonly predicateMeta: Record<
     string,
     { actor_type: string | null; params: Array<Record<string, any>> | null }
@@ -123,15 +125,19 @@ export class NanoCaliburInterpreter {
     this.globals = this.initGlobals(this.spec.globals || []);
     this.rules = this.spec.rules || [];
     this.map = this.spec.map || null;
-    this.cameraConfig = this.spec.camera || null;
+    const cameraInit = this.initCameras(this.spec.cameras || []);
+    this.camerasByName = cameraInit.byName;
+    this.cameraOrder = cameraInit.order;
     this.predicateMeta = this.buildPredicateMeta(this.spec.predicates || []);
     this.maskedTiles = this.buildMaskedTileSet(this.map);
     this.sceneState = this.initSceneState(this.spec.scene || null);
     this.rolesById = this.initRoles(this.spec.roles || []);
     this.keyboardAliasLookup = this.buildKeyboardAliasLookup(this.spec.scene || null);
+    this.syncCameraFollowTargets();
   }
 
   tick(frame: NanoCaliburFrameInput = {}): void {
+    this.syncCameraFollowTargets();
     const fallbackPreviousPositions = this.captureActorPositions();
     const previousPositions = this.resolveParentPreviousPositions(
       frame.parentPreviousPositions,
@@ -156,6 +162,7 @@ export class NanoCaliburInterpreter {
       }
     }
     this.applyParentBindings(previousPositions);
+    this.syncCameraFollowTargets();
     this.sceneState.elapsed += 1;
   }
 
@@ -164,6 +171,7 @@ export class NanoCaliburInterpreter {
       globals: this.globals,
       actors: this.actors,
       roles: this.rolesById,
+      cameras: this.getCameraStates(),
       camera: this.getCameraState(),
       map: this.map,
       scene: {
@@ -220,26 +228,45 @@ export class NanoCaliburInterpreter {
   }
 
   getCameraState(): Record<string, any> | null {
-    if (!this.cameraConfig) {
+    const defaultName = this.cameraOrder.length > 0 ? this.cameraOrder[0] : null;
+    if (!defaultName) {
       return null;
     }
-    if (this.cameraConfig.mode === "fixed") {
-      return {
-        mode: "fixed",
-        x: this.cameraConfig.x,
-        y: this.cameraConfig.y,
-      };
+    return this.getResolvedCameraState(this.camerasByName[defaultName]);
+  }
+
+  getCameraStateForRole(roleId: string | null): Record<string, any> | null {
+    if (typeof roleId !== "string" || !roleId) {
+      return null;
     }
-    if (this.cameraConfig.mode === "follow") {
-      const actor = this.getActorByUid(this.cameraConfig.target_uid);
-      return {
-        mode: "follow",
-        target_uid: this.cameraConfig.target_uid,
-        x: actor && typeof actor.x === "number" ? actor.x : 0,
-        y: actor && typeof actor.y === "number" ? actor.y : 0,
-      };
+    const camera = this.getCameraForRole(roleId);
+    if (!camera) {
+      return null;
     }
-    return null;
+    return this.getResolvedCameraState(camera);
+  }
+
+  getCameraByName(name: string): Record<string, any> | null {
+    if (typeof name !== "string" || !name) {
+      return null;
+    }
+    const camera = this.camerasByName[name];
+    if (!camera || typeof camera !== "object") {
+      return null;
+    }
+    return camera;
+  }
+
+  getCameraStates(): Record<string, any> {
+    const out: Record<string, any> = {};
+    for (const name of this.cameraOrder) {
+      const camera = this.camerasByName[name];
+      if (!camera || typeof camera !== "object") {
+        continue;
+      }
+      out[name] = this.getResolvedCameraState(camera);
+    }
+    return out;
   }
 
   isSolidAtWorld(worldX: number, worldY: number): boolean {
@@ -259,6 +286,7 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      cameras: this.camerasByName,
       roles: this.rolesById,
       tick: 1,
       elapsed: this.sceneState.elapsed,
@@ -273,6 +301,7 @@ export class NanoCaliburInterpreter {
         }
         return this.getActorByUid(uid);
       },
+      getCameraByName: (name: string) => this.getCameraByName(name),
       getRoleById: (id: string) => this.getRoleById(id),
       playAnimation: this.runtimeHooks.playAnimation,
       destroyActor: (actor: Record<string, any>) => this.destroyActor(actor),
@@ -282,6 +311,11 @@ export class NanoCaliburInterpreter {
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
         nextTurn: () => this.nextTurn(),
         setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
+        followCamera: (camera: Record<string, any>, targetUid: string) =>
+          this.followCamera(camera, targetUid),
+        detachCamera: (camera: Record<string, any>) => this.detachCamera(camera),
+        translateCamera: (camera: Record<string, any>, dx: number, dy: number) =>
+          this.translateCamera(camera, dx, dy),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -298,6 +332,7 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      cameras: this.camerasByName,
       roles: this.rolesById,
       tick: 1,
       elapsed: this.sceneState.elapsed,
@@ -307,11 +342,17 @@ export class NanoCaliburInterpreter {
         }
         return this.getActorByUid(uid);
       },
+      getCameraByName: (name: string) => this.getCameraByName(name),
       getRoleById: (id: string) => this.getRoleById(id),
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        followCamera: (camera: Record<string, any>, targetUid: string) =>
+          this.followCamera(camera, targetUid),
+        detachCamera: (camera: Record<string, any>) => this.detachCamera(camera),
+        translateCamera: (camera: Record<string, any>, dx: number, dy: number) =>
+          this.translateCamera(camera, dx, dy),
         setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
         spawnActor: (
           actorType: string,
@@ -404,6 +445,146 @@ export class NanoCaliburInterpreter {
       };
     }
     return out;
+  }
+
+  private initCameras(
+    cameraSpecs: Record<string, any>[],
+  ): { byName: Record<string, any>; order: string[] } {
+    const byName: Record<string, any> = {};
+    const order: string[] = [];
+    if (!Array.isArray(cameraSpecs)) {
+      return { byName, order };
+    }
+    for (const raw of cameraSpecs) {
+      if (!raw || typeof raw !== "object") {
+        continue;
+      }
+      const name = typeof raw.name === "string" ? raw.name : "";
+      const roleId = typeof raw.role_id === "string" ? raw.role_id : "";
+      if (!name || !roleId || byName[name]) {
+        continue;
+      }
+      const width =
+        typeof raw.width === "number" && Number.isFinite(raw.width) && raw.width > 0
+          ? Math.floor(raw.width)
+          : null;
+      const height =
+        typeof raw.height === "number" && Number.isFinite(raw.height) && raw.height > 0
+          ? Math.floor(raw.height)
+          : null;
+      byName[name] = {
+        name,
+        role_id: roleId,
+        x: this.asFiniteNumber(raw.x, 0),
+        y: this.asFiniteNumber(raw.y, 0),
+        width,
+        height,
+        target_uid:
+          typeof raw.target_uid === "string" && raw.target_uid ? raw.target_uid : null,
+        offset_x: this.asFiniteNumber(raw.offset_x, 0),
+        offset_y: this.asFiniteNumber(raw.offset_y, 0),
+      };
+      order.push(name);
+    }
+    return { byName, order };
+  }
+
+  private getCameraForRole(roleId: string): Record<string, any> | null {
+    if (typeof roleId !== "string" || !roleId) {
+      return null;
+    }
+    for (const name of this.cameraOrder) {
+      const camera = this.camerasByName[name];
+      if (!camera || typeof camera !== "object") {
+        continue;
+      }
+      if (camera.role_id === roleId) {
+        return camera;
+      }
+    }
+    return null;
+  }
+
+  private getResolvedCameraState(camera: Record<string, any>): Record<string, any> {
+    const resolvedX = this.asFiniteNumber(camera.x, 0);
+    const resolvedY = this.asFiniteNumber(camera.y, 0);
+    return {
+      name: camera.name,
+      role_id: camera.role_id,
+      x: resolvedX,
+      y: resolvedY,
+      width:
+        typeof camera.width === "number" && Number.isFinite(camera.width) && camera.width > 0
+          ? Math.floor(camera.width)
+          : null,
+      height:
+        typeof camera.height === "number" && Number.isFinite(camera.height) && camera.height > 0
+          ? Math.floor(camera.height)
+          : null,
+      target_uid:
+        typeof camera.target_uid === "string" && camera.target_uid ? camera.target_uid : null,
+      offset_x: this.asFiniteNumber(camera.offset_x, 0),
+      offset_y: this.asFiniteNumber(camera.offset_y, 0),
+    };
+  }
+
+  private syncCameraFollowTargets(): void {
+    for (const name of this.cameraOrder) {
+      const camera = this.camerasByName[name];
+      if (!camera || typeof camera !== "object") {
+        continue;
+      }
+      if (typeof camera.target_uid !== "string" || !camera.target_uid) {
+        continue;
+      }
+      const target = this.getActorByUid(camera.target_uid);
+      if (!target) {
+        continue;
+      }
+      camera.x = this.asFiniteNumber(target.x, this.asFiniteNumber(camera.x, 0))
+        + this.asFiniteNumber(camera.offset_x, 0);
+      camera.y = this.asFiniteNumber(target.y, this.asFiniteNumber(camera.y, 0))
+        + this.asFiniteNumber(camera.offset_y, 0);
+    }
+  }
+
+  private followCamera(camera: Record<string, any>, targetUid: string): void {
+    if (!camera || typeof camera !== "object") {
+      return;
+    }
+    if (typeof targetUid !== "string" || !targetUid) {
+      return;
+    }
+    camera.target_uid = targetUid;
+    camera.offset_x = 0;
+    camera.offset_y = 0;
+    this.syncCameraFollowTargets();
+  }
+
+  private detachCamera(camera: Record<string, any>): void {
+    if (!camera || typeof camera !== "object") {
+      return;
+    }
+    this.syncCameraFollowTargets();
+    camera.target_uid = null;
+    camera.offset_x = 0;
+    camera.offset_y = 0;
+  }
+
+  private translateCamera(camera: Record<string, any>, dx: number, dy: number): void {
+    if (!camera || typeof camera !== "object") {
+      return;
+    }
+    const safeDx = this.asFiniteNumber(dx, 0);
+    const safeDy = this.asFiniteNumber(dy, 0);
+    if (typeof camera.target_uid === "string" && camera.target_uid) {
+      camera.offset_x = this.asFiniteNumber(camera.offset_x, 0) + safeDx;
+      camera.offset_y = this.asFiniteNumber(camera.offset_y, 0) + safeDy;
+      this.syncCameraFollowTargets();
+      return;
+    }
+    camera.x = this.asFiniteNumber(camera.x, 0) + safeDx;
+    camera.y = this.asFiniteNumber(camera.y, 0) + safeDy;
   }
 
   private getRoleById(id: string): Record<string, any> | null {
@@ -1217,6 +1398,10 @@ export class NanoCaliburInterpreter {
 
   private numberOrZero(value: unknown): number {
     return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  }
+
+  private asFiniteNumber(value: unknown, fallback: number): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : fallback;
   }
 
   private generateActorUid(actorType: string): string {

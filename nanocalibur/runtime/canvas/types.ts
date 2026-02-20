@@ -37,10 +37,15 @@ export interface MapSpec {
 }
 
 export interface CameraState {
-  mode: "fixed" | "follow";
+  name?: string;
+  role_id?: string;
   x?: number;
   y?: number;
+  width?: number | null;
+  height?: number | null;
   target_uid?: string;
+  offset_x?: number;
+  offset_y?: number;
 }
 
 export interface SceneState {

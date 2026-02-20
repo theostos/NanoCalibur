@@ -364,11 +364,14 @@ export class HeadlessHttpServer {
       const result = shouldTick
         ? this.sessionManager.tickSession(sessionId)
         : {
-            frame: this.sessionManager.getSessionFrame(sessionId),
+            frame: this.sessionManager.getSessionFrameForRole(
+              sessionId,
+              roleBinding.roleId,
+            ),
             state: this.sessionManager.getSessionState(sessionId),
           };
       this.respondJson(res, 200, {
-        frame: result.frame,
+        frame: this.sessionManager.getSessionFrameForRole(sessionId, roleBinding.roleId),
         state: this.scopeStateForViewer(result.state, {
           isAdmin: false,
           roleId: roleBinding.roleId,
@@ -387,7 +390,7 @@ export class HeadlessHttpServer {
       }
       this.respondJson(res, 200, {
         session_id: sessionId,
-        frame: this.sessionManager.getSessionFrame(sessionId),
+        frame: this.sessionManager.getSessionFrameForRole(sessionId, viewer.roleId),
       });
       return true;
     }
@@ -440,7 +443,7 @@ export class HeadlessHttpServer {
       res.setHeader("Connection", "keep-alive");
       this.writeSseEvent(res, "snapshot", {
         session_id: sessionId,
-        frame: this.sessionManager.getSessionFrame(sessionId),
+        frame: this.sessionManager.getSessionFrameForRole(sessionId, viewer.roleId),
         state: this.scopeStateForViewer(
           this.sessionManager.getSessionState(sessionId),
           viewer,
@@ -458,7 +461,7 @@ export class HeadlessHttpServer {
           const result = this.sessionManager!.tickSession(sessionId, stepSeconds);
           this.writeSseEvent(res, "snapshot", {
             session_id: sessionId,
-            frame: result.frame,
+            frame: this.sessionManager!.getSessionFrameForRole(sessionId, viewer.roleId),
             state: this.scopeStateForViewer(result.state, viewer),
           });
         } catch (_error) {
@@ -570,6 +573,25 @@ export class HeadlessHttpServer {
     state: Record<string, any>,
     viewer: SessionViewer,
   ): Record<string, any> {
+    const cameras =
+      state && state.cameras && typeof state.cameras === "object"
+        ? (state.cameras as Record<string, any>)
+        : {};
+    const resolveCameraForRole = (roleId: string | null): Record<string, any> | null => {
+      if (!roleId) {
+        return null;
+      }
+      for (const camera of Object.values(cameras)) {
+        if (!camera || typeof camera !== "object") {
+          continue;
+        }
+        if ((camera as Record<string, any>).role_id === roleId) {
+          return camera as Record<string, any>;
+        }
+      }
+      return null;
+    };
+
     const roles =
       state && state.roles && typeof state.roles === "object"
         ? (state.roles as Record<string, any>)
@@ -581,6 +603,7 @@ export class HeadlessHttpServer {
     if (viewer.isAdmin) {
       return {
         ...state,
+        camera: null,
         self: null,
       };
     }
@@ -596,6 +619,7 @@ export class HeadlessHttpServer {
     return {
       ...state,
       roles: selfRole && roleId ? { [roleId]: selfRole } : {},
+      camera: resolveCameraForRole(roleId) || null,
       self: selfRole,
     };
   }

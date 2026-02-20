@@ -28,6 +28,8 @@ def test_end_to_end_python_to_ts_runtime(tmp_path):
 
         game = Game()
         game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
         game.add_global("target_player", Player["main_character"])
         game.add_global("heal_amount", 2)
         game.add_global("is_dead", False)
@@ -38,7 +40,9 @@ def test_end_to_end_python_to_ts_runtime(tmp_path):
         game.add_rule(OnOverlap(Player["main_character"], Player), on_collision)
         game.add_rule(OnLogicalCondition(is_dead, Player), mark_dead)
 
-        game.set_camera(Camera.follow("main_character"))
+        follow_camera = Camera("main_camera", Role["human_1"])
+        follow_camera.follow("main_character")
+        scene.add_camera(follow_camera)
         game.set_map(
             TileMap(
                 tile_size=16,
@@ -160,7 +164,8 @@ def test_end_to_end_python_to_ts_runtime(tmp_path):
     result = json.loads(proc.stdout.strip())
     assert result["life"] == 0
     assert result["is_dead"] is True
-    assert result["camera"]["mode"] == "follow"
+    assert result["camera"]["name"] == "main_camera"
+    assert result["camera"]["target_uid"] == "main_character"
     assert result["camera"]["x"] == 5
     assert result["camera"]["y"] == 7
     assert result["solid_16_16"] is True

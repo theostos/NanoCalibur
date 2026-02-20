@@ -1,7 +1,7 @@
 import { InterpreterState, NanoCaliburInterpreter } from "./interpreter";
 import { CanvasHostOptions, SymbolicFrame } from "./canvas/types";
 import { RuntimeCore, RuntimeStepInput } from "./runtime_core";
-import { SymbolicRenderer } from "./symbolic_renderer";
+import { SymbolicRenderer, SymbolicViewer } from "./symbolic_renderer";
 
 export interface HeadlessStepInput extends RuntimeStepInput {
   dtSeconds?: number;
@@ -29,8 +29,8 @@ export class HeadlessHost {
     return this.core.getState();
   }
 
-  getSymbolicFrame(): SymbolicFrame {
-    return this.symbolicRenderer.render(this.core.getState(), this.core.getMap());
+  getSymbolicFrame(viewer: SymbolicViewer = {}): SymbolicFrame {
+    return this.symbolicRenderer.render(this.core.getState(), this.core.getMap(), viewer);
   }
 
   listTools(): Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> {
@@ -56,7 +56,14 @@ export class HeadlessHost {
             : undefined,
     });
 
-    return this.getSymbolicFrame();
+    return this.getSymbolicFrame({
+      roleId:
+        typeof input.roleId === "string"
+          ? input.roleId
+          : typeof input.role_id === "string"
+            ? input.role_id
+            : null,
+    });
   }
 
   callTool(name: string, payload: Record<string, any> = {}): SymbolicFrame {

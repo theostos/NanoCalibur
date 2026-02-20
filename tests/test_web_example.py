@@ -32,7 +32,9 @@ def _write_scene(path: Path) -> None:
             game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
             scene.add_actor(Player(uid="main_character", x=10, y=20, speed=2))
             scene.add_rule(KeyboardCondition.on_press("ArrowRight", id="human_1"), move_right)
-            scene.set_camera(Camera.follow("main_character"))
+            camera_h1 = Camera("camera_h1", Role["human_1"])
+            camera_h1.follow("main_character")
+            scene.add_camera(camera_h1)
 
             CodeBlock.end("main_game")
             """
@@ -84,7 +86,7 @@ def test_build_game_generates_excalibur_input_bundle(tmp_path):
     assert (output_dir / "README.generated.md").exists()
 
     spec = json.loads((generated_dir / "game_spec.json").read_text(encoding="utf-8"))
-    assert spec["camera"]["mode"] == "follow"
+    assert spec["cameras"][0]["target_uid"] == "main_character"
     assert spec["rules"][0]["condition"]["kind"] == "keyboard"
 
     bridge_code = (generated_dir / "bridge.ts").read_text(encoding="utf-8")

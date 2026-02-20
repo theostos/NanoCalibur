@@ -399,6 +399,19 @@ export class SessionManager {
     return session.runtime.getHost().getSymbolicFrame();
   }
 
+  getSessionFrameForRole(sessionId: string, roleId: string | null): SymbolicFrame {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Unknown session '${sessionId}'.`);
+    }
+    const role =
+      typeof roleId === "string" && roleId ? session.roles.get(roleId) || null : null;
+    return session.runtime.getHost().getSymbolicFrame({
+      roleId,
+      roleKind: role ? role.kind : null,
+    });
+  }
+
   getSessionTools(sessionId: string): Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> {
     const session = this.sessions.get(sessionId);
     if (!session) {
