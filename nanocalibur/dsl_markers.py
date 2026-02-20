@@ -125,7 +125,7 @@ class Actor:
         """Request destruction/despawn of this actor."""
         return None
 
-    def attached_to(self, _parent: "str | type[Actor]"):
+    def attached_to(self, _parent: "str | Actor"):
         """Attach this actor to a parent actor (or parent uid)."""
         return None
 
@@ -178,7 +178,7 @@ class Scene:
     def set_interface(
         self,
         _html: str,
-        _role: "str | type[Role] | None" = None,
+        _role: "str | Role | type[Role] | None" = None,
     ):
         """Configure an HTML overlay for one role (or role subclass selector)."""
         return None
@@ -485,7 +485,7 @@ class MouseCondition:
 
     @staticmethod
     def begin_click(
-        _button: str = "left",
+        _button: "str | type[Role]" = "left",
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
@@ -499,7 +499,7 @@ class MouseCondition:
 
     @staticmethod
     def on_click(
-        _button: str = "left",
+        _button: "str | type[Role]" = "left",
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
@@ -513,7 +513,7 @@ class MouseCondition:
 
     @staticmethod
     def end_click(
-        _button: str = "left",
+        _button: "str | type[Role]" = "left",
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
@@ -619,7 +619,7 @@ class Tile:
         *,
         block_mask: int | None = None,
         color: Color | None = None,
-        sprite: "str | Sprite | type[Sprite] | None" = None,
+        sprite: "str | type[Sprite] | None" = None,
     ):
         return None
 
