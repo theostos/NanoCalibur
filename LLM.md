@@ -88,13 +88,28 @@ Compiler warns and ignores illegal additions.
 
 ### 5.3 Safety decorators are explicit
 
-`@condition(...)` is removed.
-Use only:
-
+Use
 - `@safe_condition(...)` for authoritative server-evaluated conditions.
 - `@unsafe_condition(...)` for client-originated triggers.
 
 Mismatch between decorator and condition kind is a compile error.
+
+### 5.4 Function declarations: use `def`, not `lambda`
+
+For DSL logic, use named functions with decorators:
+
+- actions: `@safe_condition(...)` or `@unsafe_condition(...)`
+- helper callables: `@callable`
+
+`lambda` is not supported for DSL rule/callable declarations. Write a normal `def`.
+
+### 5.5 Undecorated top-level functions are ignored
+
+A top-level function with no DSL decorator is ignored by the compiler (warning emitted).
+If you want it compiled, decorate it with:
+
+- `@safe_condition(...)` or `@unsafe_condition(...)` for rules
+- `@callable` for helper callable functions
 
 ## 6) Game Structure: Game + Scene
 
@@ -457,6 +472,37 @@ CodeBlock.end("player_controls")
 ```
 
 ### 19.2 AbstractCodeBlock
+
+`AbstractCodeBlock` is a compile-time template system.
+Think of it as a macro with typed placeholders (`role=Role`, `hero=Player`, `key_up=str`, ...).
+`instantiate(...)` duplicates the template logic with constant substitutions.
+
+Small example:
+
+```python
+controls = AbstractCodeBlock.begin(
+    "controls_template",
+    role=Role,
+    hero=Player,
+    key_right=str,
+)
+"""Reusable right-move control block."""
+
+@unsafe_condition(KeyboardCondition.on_press(controls.key_right, controls.role))
+def move_right(player: controls.hero):
+    player.vx = player.speed
+
+AbstractCodeBlock.end("controls_template")
+
+AbstractCodeBlock.instantiate(
+    "controls_template",
+    role=Role["human_1"],
+    hero=Player["hero_1"],
+    key_right="d",
+)
+```
+
+After instantiation, this behaves as if you wrote a concrete `move_right` rule for `human_1`/`hero_1`.
 
 ```python
 controls = AbstractCodeBlock.begin(
