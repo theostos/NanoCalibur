@@ -2232,6 +2232,51 @@ def test_abstract_code_block_supports_selector_macro_values():
     assert project.rules[0].condition.role_id == "human_1"  # type: ignore[attr-defined]
 
 
+def test_abstract_code_block_supports_attribute_style_macro_values():
+    project = compile_project(
+        """
+        controls = AbstractCodeBlock.begin(
+            "player_controls",
+            role=Role,
+            hero=Player,
+            key_right=str,
+        )
+        \"\"\"keyboard movement\"\"\"
+
+        @unsafe_condition(KeyboardCondition.on_press(controls.key_right, controls.role))
+        def move_right(player: controls.hero):
+            player.x = player.x + 1
+
+        controls.end()
+
+        controls.instantiate(
+            role=Role["human_1"],
+            hero=Player["hero_1"],
+            key_right="d",
+        )
+
+        CodeBlock.begin("main")
+        \"\"\"main\"\"\"
+
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene.add_actor(Player(uid="hero_1", x=0, y=0))
+
+        CodeBlock.end("main")
+        """,
+        require_code_blocks=True,
+    )
+
+    assert len(project.rules) == 1
+    assert isinstance(project.rules[0].condition, KeyboardConditionSpec)
+    assert project.rules[0].condition.role_id == "human_1"  # type: ignore[attr-defined]
+
+
 def test_abstract_code_block_warns_when_not_instantiated():
     with pytest.warns(UserWarning, match="never instantiated"):
         compile_project(

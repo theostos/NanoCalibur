@@ -62,7 +62,7 @@ def preprocess_code_blocks(
             active = begin
             continue
 
-        end_call = _parse_end_call(stmt, abstract_var_to_id)
+        end_call = _parse_end_call(stmt, abstract_var_to_id, active=active)
         if end_call is not None:
             if active is None:
                 raise DSLValidationError("CodeBlock.end(...) without matching begin(...).", node=stmt)
@@ -333,6 +333,8 @@ def _parse_begin(stmt: ast.stmt) -> Optional[_ActiveBlock]:
 def _parse_end_call(
     stmt: ast.stmt,
     abstract_var_to_id: Dict[str, str],
+    *,
+    active: _ActiveBlock | None = None,
 ) -> Optional[Dict[str, Optional[str]]]:
     if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
         return None
@@ -375,6 +377,22 @@ def _parse_end_call(
             return {
                 "kind": "abstract",
                 "block_id": abstract_var_to_id[owner],
+            }
+        if (
+            call.func.attr == "end"
+            and active is not None
+            and active.kind == "abstract"
+            and active.var_name is not None
+            and owner == active.var_name
+        ):
+            if call.args or call.keywords:
+                raise DSLValidationError(
+                    f"{owner}.end(...) does not accept arguments.",
+                    node=stmt,
+                )
+            return {
+                "kind": "abstract",
+                "block_id": active.block_id,
             }
     return None
 
@@ -503,7 +521,11 @@ def _instantiate_template(
                 f"{stmt.target.id}__{template.block_id}_{instance_index}"
             )
 
-    replacer = _TemplateReplacer(macro_values_ast=macro_values_ast, name_map=name_map)
+    replacer = _TemplateReplacer(
+        macro_values_ast=macro_values_ast,
+        name_map=name_map,
+        template_var_name=template.var_name,
+    )
     out: List[ast.stmt] = []
     for stmt in template.body:
         cloned = copy.deepcopy(stmt)
@@ -514,9 +536,16 @@ def _instantiate_template(
 
 
 class _TemplateReplacer(ast.NodeTransformer):
-    def __init__(self, *, macro_values_ast: Dict[str, ast.AST], name_map: Dict[str, str]) -> None:
+    def __init__(
+        self,
+        *,
+        macro_values_ast: Dict[str, ast.AST],
+        name_map: Dict[str, str],
+        template_var_name: str | None,
+    ) -> None:
         self._macro_values_ast = macro_values_ast
         self._name_map = name_map
+        self._template_var_name = template_var_name
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         node = self.generic_visit(node)
@@ -545,6 +574,18 @@ class _TemplateReplacer(ast.NodeTransformer):
         elif isinstance(node.ctx, ast.Store):
             if node.id in self._name_map:
                 node.id = self._name_map[node.id]
+        return node
+
+    def visit_Attribute(self, node: ast.Attribute):
+        node = self.generic_visit(node)
+        if (
+            isinstance(node.ctx, ast.Load)
+            and self._template_var_name is not None
+            and isinstance(node.value, ast.Name)
+            and node.value.id == self._template_var_name
+            and node.attr in self._macro_values_ast
+        ):
+            return copy.deepcopy(self._macro_values_ast[node.attr])
         return node
 
 

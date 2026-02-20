@@ -376,6 +376,14 @@ class CodeBlock:
 class AbstractCodeBlock(CodeBlock):
     """Template block marker that requires explicit ``instantiate(...)`` calls."""
 
+    def __getattr__(self, _name: str) -> Any:
+        """Expose template parameters through attribute placeholders.
+
+        This keeps editors/type-checkers happy for patterns like
+        ``template.role`` / ``template.hero`` inside abstract blocks.
+        """
+        return None
+
     @staticmethod
     def begin(_id: str, **_params):
         """Start an abstract code block template.
@@ -394,7 +402,7 @@ class AbstractCodeBlock(CodeBlock):
         return None
 
     @staticmethod
-    def instantiate(_id: str, **_values):
+    def instantiate(_id: str | None = None, **_values):
         """Instantiate an abstract block by id with constant values."""
         return None
 
