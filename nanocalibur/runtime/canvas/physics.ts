@@ -90,6 +90,10 @@ export class PhysicsSystem {
       body.h = actorHeight(actor);
       body.blockMask = this.resolveActorMask(actor);
       body.active = actor.active !== false;
+      body.parentUid =
+        typeof actor.parent === "string" && actor.parent.trim().length > 0
+          ? actor.parent
+          : undefined;
       body.x = actorCenterX(actor);
       body.y = actorCenterY(actor);
 
@@ -326,6 +330,10 @@ export class PhysicsSystem {
     const config = this.resolveBodyConfig(actor);
     const body: PhysicsBodyRuntime = {
       uid: actor.uid,
+      parentUid:
+        typeof actor.parent === "string" && actor.parent.trim().length > 0
+          ? actor.parent
+          : undefined,
       x: actorCenterX(actor),
       y: actorCenterY(actor),
       w: actorWidth(actor),
@@ -520,6 +528,7 @@ export class PhysicsSystem {
       body.active &&
       body.config.enabled &&
       body.config.collidable &&
+      !body.parentUid &&
       body.blockMask !== null
     );
   }
@@ -559,8 +568,16 @@ export class PhysicsSystem {
     let moveA = 0;
     let moveB = 0;
     if (a.config.dynamic && b.config.dynamic) {
-      moveA = overlap / 2;
-      moveB = overlap - moveA;
+      const aMoved = this.bodyMovedAlongAxis(a, onX);
+      const bMoved = this.bodyMovedAlongAxis(b, onX);
+      if (aMoved && !bMoved) {
+        moveA = overlap;
+      } else if (!aMoved && bMoved) {
+        moveB = overlap;
+      } else {
+        moveA = overlap / 2;
+        moveB = overlap - moveA;
+      }
     } else if (a.config.dynamic) {
       moveA = overlap;
     } else if (b.config.dynamic) {
@@ -596,6 +613,13 @@ export class PhysicsSystem {
       this.clampBodyToWorld(b);
     }
     return true;
+  }
+
+  private bodyMovedAlongAxis(body: PhysicsBodyRuntime, onX: boolean): boolean {
+    const current = onX ? body.x : body.y;
+    const previous = onX ? body.prevX : body.prevY;
+    const velocity = onX ? body.vx : body.vy;
+    return Math.abs(current - previous) > EPSILON || Math.abs(velocity) > EPSILON;
   }
 
   private resolveActorMask(actor: ActorState): number | null {

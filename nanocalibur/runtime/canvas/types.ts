@@ -159,6 +159,7 @@ export interface ResolvedBodyConfig {
 
 export interface PhysicsBodyRuntime {
   uid: string;
+  parentUid?: string;
   x: number;
   y: number;
   w: number;
