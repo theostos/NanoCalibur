@@ -1,4 +1,4 @@
-from nanocalibur.dsl_markers import CodeBlock, Game, Multiplayer, Role, Scene
+from nanocalibur.dsl_markers import CodeBlock, Game, Interface, Multiplayer, Role, Scene
 
 
 CodeBlock.begin("shared_context")
@@ -29,14 +29,7 @@ game.set_multiplayer(
 
 game.add_global("score", 0)
 
-scene.set_interface(
-    """
-<div style="position:absolute;left:12px;top:12px;padding:8px 10px;background:rgba(8,10,14,0.62);color:#f2f5fa;border-radius:8px;font-family:monospace;">
-  <div>Actors: {{__actors_count}}</div>
-  <div>Score: {{score}}</div>
-</div>
-""",
-    Role["human_1"],
-)
+human_1_hud = Interface("ui/hud_human_1.html", Role["human_1"])
+scene.set_interface(human_1_hud)
 
 CodeBlock.end("shared_context")

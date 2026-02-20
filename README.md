@@ -186,9 +186,12 @@ Rules:
 `scene.set_interface(...)` is optional. If omitted, no HTML overlay is created.
 
 ```python
-scene.set_interface(
-    "<div>Score: {{score}}</div><div>Actors: {{__actors_count}}</div>"
-)
+# Inline HTML
+scene.set_interface("<div>Score: {{score}}</div><div>Actors: {{__actors_count}}</div>")
+
+# File-backed and role-scoped
+hud_h1 = Interface("ui/hud_human_1.html", Role["human_1"])
+scene.set_interface(hud_h1)
 ```
 
 Use `OnButton("spawn_bonus")` conditions only when your interface includes a matching `data-button` entry.
@@ -196,6 +199,7 @@ You can update the overlay at runtime from an action with `scene.set_interface(.
 Built-in dynamic placeholders available in interface HTML:
 - `{{__actors_count}}`
 - `{{__scene_elapsed}}`
+- `{{self.<field>}}` for role-scoped values (for example `{{self.personal_score}}`)
 
 ### Code Blocks (Vibe Coding Workflow)
 

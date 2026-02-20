@@ -10,7 +10,7 @@ from nanocalibur.dsl_markers import (
 from .scene_entities import Player
 
 
-AbstractCodeBlock.begin(
+human_controls = AbstractCodeBlock.begin(
     "human_player_controls",
     role=Role,
     hero=Player,
@@ -22,49 +22,58 @@ AbstractCodeBlock.begin(
 """Reusable movement block for one human role/hero binding."""
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_right, role))
-def move_right(player: hero):
+@unsafe_condition(KeyboardCondition.on_press(human_controls.key_right, human_controls.role))
+def move_right(player: human_controls.hero):
     player.vx = player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_left, role))
-def move_left(player: hero):
+@unsafe_condition(KeyboardCondition.on_press(human_controls.key_left, human_controls.role))
+def move_left(player: human_controls.hero):
     player.vx = -player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_up, role))
-def move_up(player: hero):
+@unsafe_condition(KeyboardCondition.on_press(human_controls.key_up, human_controls.role))
+def move_up(player: human_controls.hero):
     player.vy = -player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_down, role))
-def move_down(player: hero):
+@unsafe_condition(KeyboardCondition.on_press(human_controls.key_down, human_controls.role))
+def move_down(player: human_controls.hero):
     player.vy = player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.end_press([key_left, key_right], role))
-def stop_horizontal(player: hero):
+@unsafe_condition(
+    KeyboardCondition.end_press(
+        [human_controls.key_left, human_controls.key_right],
+        human_controls.role,
+    )
+)
+def stop_horizontal(player: human_controls.hero):
     player.vx = 0
     if player.vy == 0:
         player.play("idle")
 
 
-@unsafe_condition(KeyboardCondition.end_press([key_up, key_down], role))
-def stop_vertical(player: hero):
+@unsafe_condition(
+    KeyboardCondition.end_press(
+        [human_controls.key_up, human_controls.key_down],
+        human_controls.role,
+    )
+)
+def stop_vertical(player: human_controls.hero):
     player.vy = 0
     if player.vx == 0:
         player.play("idle")
 
 
-AbstractCodeBlock.end("human_player_controls")
+human_controls.end()
 
 
-AbstractCodeBlock.instantiate(
-    "human_player_controls",
+human_controls.instantiate(
     role=Role["human_1"],
     hero=Player["hero_1"],
     key_up="z",
@@ -72,8 +81,7 @@ AbstractCodeBlock.instantiate(
     key_down="s",
     key_right="d",
 )
-AbstractCodeBlock.instantiate(
-    "human_player_controls",
+human_controls.instantiate(
     role=Role["human_2"],
     hero=Player["hero_2"],
     key_up="i",
@@ -81,8 +89,7 @@ AbstractCodeBlock.instantiate(
     key_down="k",
     key_right="l",
 )
-AbstractCodeBlock.instantiate(
-    "human_player_controls",
+human_controls.instantiate(
     role=Role["human_3"],
     hero=Player["hero_3"],
     key_up="ArrowUp",
@@ -90,8 +97,7 @@ AbstractCodeBlock.instantiate(
     key_down="ArrowDown",
     key_right="ArrowRight",
 )
-AbstractCodeBlock.instantiate(
-    "human_player_controls",
+human_controls.instantiate(
     role=Role["human_4"],
     hero=Player["hero_4"],
     key_up="t",
