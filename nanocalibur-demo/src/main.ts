@@ -348,7 +348,7 @@ class SessionSnapshotRenderer {
     const nowMs = performance.now();
     const elapsedSeconds = Math.max(
       0,
-      Math.min(0.08, (nowMs - this.latestSnapshotAtMs) / 1000),
+      Math.min(0.2, (nowMs - this.latestSnapshotAtMs) / 1000),
     );
     const renderDeltaMs =
       this.lastRenderAtMs > 0
@@ -768,7 +768,17 @@ async function startSessionBrowserClient(
   let latestSnapshot: SessionSnapshot | null = null;
   let sessionWarning: string | null = null;
   let lastSymbolicRenderAtMs = 0;
-  let lastSnapshotAtMs = 0;
+  const multiplayerSpec =
+    sessionSpec &&
+    typeof sessionSpec === 'object' &&
+    sessionSpec.multiplayer &&
+    typeof sessionSpec.multiplayer === 'object'
+      ? (sessionSpec.multiplayer as Record<string, any>)
+      : null;
+  const configuredTickRate = multiplayerSpec && typeof multiplayerSpec.tick_rate === 'number'
+    ? multiplayerSpec.tick_rate
+    : 30;
+  const normalizedTickRate = Math.max(1, Math.floor(configuredTickRate));
 
   const renderPanel = (): void => {
     const nowMs = performance.now();
@@ -794,7 +804,6 @@ async function startSessionBrowserClient(
 
   const renderSnapshot = (snapshot: SessionSnapshot): void => {
     latestSnapshot = snapshot;
-    lastSnapshotAtMs = performance.now();
     renderPanel();
   };
 
@@ -823,11 +832,9 @@ async function startSessionBrowserClient(
 
   let snapshotPollInFlight = false;
   let snapshotPollFailureCount = 0;
+  const snapshotPollMs = Math.max(20, Math.round(1000 / normalizedTickRate));
   const snapshotPollHandle = window.setInterval(() => {
     if (snapshotPollInFlight) {
-      return;
-    }
-    if (performance.now() - lastSnapshotAtMs < 250) {
       return;
     }
     snapshotPollInFlight = true;
@@ -859,7 +866,7 @@ async function startSessionBrowserClient(
     }).finally(() => {
       snapshotPollInFlight = false;
     });
-  }, 120);
+  }, snapshotPollMs);
 
   const sendCommand = async (command: Record<string, any>): Promise<void> => {
     try {
@@ -1034,19 +1041,9 @@ async function startSessionBrowserClient(
   window.addEventListener('blur', sendReleaseForAllPressedKeys);
   document.addEventListener('visibilitychange', handleVisibilityChange);
 
-  const multiplayerSpec =
-    sessionSpec &&
-    typeof sessionSpec === 'object' &&
-    sessionSpec.multiplayer &&
-    typeof sessionSpec.multiplayer === 'object'
-      ? (sessionSpec.multiplayer as Record<string, any>)
-      : null;
-  const configuredTickRate = multiplayerSpec && typeof multiplayerSpec.tick_rate === 'number'
-    ? multiplayerSpec.tick_rate
-    : 30;
   const inputPulseMs = Math.max(
     20,
-    Math.round(1000 / Math.max(1, Math.floor(configuredTickRate))),
+    Math.round(1000 / normalizedTickRate),
   );
   const inputPulseHandle = window.setInterval(() => {
     const onTokens = activeInputTokens();
