@@ -886,6 +886,118 @@ def test_parented_actor_blocks_non_parent_actor(tmp_path):
     assert values["otherX"] != 138
 
 
+def test_parented_actor_motion_does_not_push_unrelated_actor(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        const physics = new PhysicsSystem({{}});
+        physics.setMap({{
+          width: 20,
+          height: 20,
+          tile_size: 32,
+          tile_grid: Array.from({{ length: 20 }}, () => Array.from({{ length: 20 }}, () => 0)),
+          tile_defs: {{}}
+        }});
+
+        const actors = [
+          {{
+            uid: "hero_parent",
+            type: "Player",
+            x: 100,
+            y: 100,
+            w: 32,
+            h: 32,
+            vx: 100,
+            vy: 0,
+            active: true,
+            block_mask: 1
+          }},
+          {{
+            uid: "coin_pet",
+            type: "Coin",
+            x: 124,
+            y: 100,
+            w: 16,
+            h: 16,
+            vx: 0,
+            vy: 0,
+            active: true,
+            block_mask: 1,
+            parent: "hero_parent"
+          }},
+          {{
+            uid: "hero_other",
+            type: "Player",
+            x: 150,
+            y: 100,
+            w: 32,
+            h: 32,
+            vx: 0,
+            vy: 0,
+            active: true,
+            block_mask: 1
+          }}
+        ];
+
+        // Frame start: integrate parent movement.
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0.1);
+        physics.writeBodiesToActors(actors);
+
+        // Simulate interpreter parent-binding move for child in post-action phase.
+        actors[1].x += 10;
+        physics.syncBodiesFromActors(actors, true);
+        physics.resolvePostActionSolidCollisions();
+        physics.writeBodiesToActors(actors);
+
+        console.log(JSON.stringify({{
+          heroParentX: actors[0].x,
+          heroParentVx: actors[0].vx,
+          petX: actors[1].x,
+          otherX: actors[2].x
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["heroParentX"] == 100
+    assert values["heroParentVx"] == 0
+    assert values["petX"] == 124
+    assert values["otherX"] == 150
+
+
 def test_blocked_parented_child_rolls_back_parent_motion(tmp_path):
     root = Path(__file__).resolve().parent.parent
     physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"

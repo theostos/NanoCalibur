@@ -197,6 +197,16 @@ export class PhysicsSystem {
 
           const resolveOnX = overlapX <= overlapY;
           const overlap = (resolveOnX ? overlapX : overlapY) + EPSILON;
+          const attachmentConstraintRoot = this.resolveAttachmentConstraintRoot(
+            a,
+            b,
+            resolveOnX,
+          );
+          if (attachmentConstraintRoot) {
+            this.rollbackAttachmentTreeToPrevious(attachmentConstraintRoot);
+            moved = true;
+            continue;
+          }
           const direction = this.resolveSeparationDirection(a, b, resolveOnX);
           if (!this.separateBodiesAlongAxis(a, b, overlap, resolveOnX, direction)) {
             continue;
@@ -637,6 +647,64 @@ export class PhysicsSystem {
       this.clampBodyToWorld(b);
     }
     return true;
+  }
+
+  private resolveAttachmentConstraintRoot(
+    a: PhysicsBodyRuntime,
+    b: PhysicsBodyRuntime,
+    onX: boolean,
+  ): string | null {
+    const aConstraintRoot = this.resolveAttachmentConstraintRootForPairMember(a, b, onX);
+    if (aConstraintRoot) {
+      return aConstraintRoot;
+    }
+    return this.resolveAttachmentConstraintRootForPairMember(b, a, onX);
+  }
+
+  private resolveAttachmentConstraintRootForPairMember(
+    attachedCandidate: PhysicsBodyRuntime,
+    other: PhysicsBodyRuntime,
+    onX: boolean,
+  ): string | null {
+    if (!attachedCandidate.parentUid) {
+      return null;
+    }
+
+    const rootUid = this.findAttachmentRootUid(attachedCandidate.uid);
+    if (!rootUid) {
+      return null;
+    }
+    if (this.findAttachmentRootUid(other.uid) === rootUid) {
+      return null;
+    }
+
+    const rootBody = this.bodies.get(rootUid);
+    if (!rootBody || !this.bodyMovedAlongAxis(rootBody, onX)) {
+      return null;
+    }
+    return rootUid;
+  }
+
+  private findAttachmentRootUid(uid: string): string | null {
+    const visited = new Set<string>();
+    let currentUid: string | undefined = uid;
+
+    while (currentUid) {
+      if (visited.has(currentUid)) {
+        return null;
+      }
+      visited.add(currentUid);
+      const current = this.bodies.get(currentUid);
+      if (!current) {
+        return null;
+      }
+      if (!current.parentUid) {
+        return currentUid;
+      }
+      currentUid = current.parentUid;
+    }
+
+    return null;
   }
 
   private bodyMovedAlongAxis(body: PhysicsBodyRuntime, onX: boolean): boolean {
