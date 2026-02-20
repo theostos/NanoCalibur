@@ -1,6 +1,6 @@
 from nanocalibur.dsl_markers import Camera, CodeBlock, Color, Role, Tile, TileMap
 
-from .scene_shared import scene
+from .shared import scene
 
 
 CodeBlock.begin("world_layout")
@@ -12,7 +12,7 @@ scene.add_camera(main_camera)
 scene.set_map(
     TileMap(
         tile_size=32,
-        grid="../nanocalibur-demo/grid/level.txt",
+        grid="../../nanocalibur-demo/grid/level.txt",
         tiles={
             1: Tile(
                 block_mask=2,

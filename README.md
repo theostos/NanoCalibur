@@ -59,7 +59,8 @@ nanocalibur-build-game ./main.py --project ./nanocalibur-demo
 - API reference: `docs/api.md`
 - LLM guide: `LLM.md`
 - Agent maintenance guide: `agent.md`
-- Multi-file example: `examples/scene.py` + `examples/scene_*.py`
+- Multi-file scene example: `examples/scene/main.py`
+- Monolithic scene example: `examples/scene/monolithic.py`
 - Tiny runnable examples: `examples/tiny/`
 
 ## Repository Structure
@@ -78,7 +79,9 @@ nanocalibur/
   build_game.py        # Python main.py + local imports -> web bundle generator
   templates/web_bundle # bridge/index/readme templates used by build_game
 examples/
-  scene.py             # End-to-end DSL scene example
+  scene/
+    main.py            # End-to-end DSL scene example (multi-file entrypoint)
+    monolithic.py      # Same example in one file / one CodeBlock
 tests/
   ...                  # Unit and end-to-end tests
 ```
@@ -371,7 +374,13 @@ Generated files:
 Use `nanocalibur-build-game` (installed CLI) to compile a Python game entry file and generate a browser-ready TypeScript bundle.
 
 ```bash
-nanocalibur-build-game examples/scene.py --project ./my-web-game
+nanocalibur-build-game examples/scene/main.py --project ./my-web-game
+```
+
+Monolithic variant:
+
+```bash
+nanocalibur-build-game examples/scene/monolithic.py --project ./my-web-game
 ```
 
 This generates a bundle (default `build/nanocalibur_generated/src/nanocalibur_generated`) and, with `--project`, copies it to:

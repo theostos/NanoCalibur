@@ -23,7 +23,7 @@ pip install -e ".[docs]"
 Build a game bundle from a Python entrypoint:
 
 ```bash
-nanocalibur-build-game ./examples/scene.py --project ./nanocalibur-demo
+nanocalibur-build-game ./examples/scene/main.py --project ./nanocalibur-demo
 ```
 
 The generated files are copied to:

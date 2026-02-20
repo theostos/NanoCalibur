@@ -7,7 +7,7 @@ from nanocalibur.dsl_markers import (
     unsafe_condition,
 )
 
-from .scene_entities import Player
+from .entities import Player
 
 
 human_controls = AbstractCodeBlock.begin(

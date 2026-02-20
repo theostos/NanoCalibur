@@ -89,7 +89,7 @@ npm run build
 For generated code refresh:
 
 ```bash
-nanocalibur-build-game ./examples/scene.py --project ./nanocalibur-demo
+nanocalibur-build-game ./examples/scene/main.py --project ./nanocalibur-demo
 ```
 
 For docs:

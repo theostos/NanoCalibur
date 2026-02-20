@@ -1,6 +1,6 @@
 from nanocalibur.dsl_markers import CodeBlock, Resource, Sprite
 
-from .scene_shared import game
+from .shared import game
 
 
 CodeBlock.begin("resources_and_sprites")

@@ -1,6 +1,6 @@
 from nanocalibur.dsl_markers import Actor, CodeBlock, Sprite
 
-from .scene_shared import scene
+from .shared import scene
 
 
 CodeBlock.begin("actors_and_spawn")

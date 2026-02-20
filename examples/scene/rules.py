@@ -10,8 +10,8 @@ from nanocalibur.dsl_markers import (
     unsafe_condition,
 )
 
-from .scene_entities import Coin, Player
-from .scene_roles import HeroRole
+from .entities import Coin, Player
+from .roles import HeroRole
 
 
 CodeBlock.begin("gameplay_rules")
@@ -56,6 +56,18 @@ def collect_coin_for_player_3(
         role.score = role.score + 1
         global_score = global_score + 1
 
+
+@safe_condition(OnOverlap(Player["llm_dummy"], Coin))
+def collect_coin_for_dummy(
+    hero: Player,
+    coin: Coin,
+    role: HeroRole["dummy_1"],
+    global_score: Global["global_score", int],
+):
+    if coin.active and coin.uid != "coin_pet":
+        coin.destroy()
+        role.score = role.score + 1
+        global_score = global_score + 1
 
 @safe_condition(OnOverlap(Player["hero_4"], Coin))
 def collect_coin_for_player_4(
