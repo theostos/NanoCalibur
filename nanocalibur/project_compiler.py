@@ -134,6 +134,27 @@ COLLISION_RIGHT_BINDING_UID = "__nanocalibur_collision_right__"
 LOGICAL_TARGET_BINDING_UID = "__nanocalibur_logical_target__"
 LEGACY_CONDITION_DECORATOR = "condition"
 CONDITION_DECORATOR_NAMES = {"safe_condition", "unsafe_condition"}
+IMMUTABLE_DSL_CLASS_NAMES = {
+    "Actor",
+    "ActorModel",
+    "Role",
+    "Scene",
+    "Game",
+    "Sprite",
+    "Resource",
+    "Interface",
+    "Camera",
+    "Tile",
+    "TileMap",
+    "Color",
+    "Global",
+    "GlobalVariable",
+    "KeyboardCondition",
+    "MouseCondition",
+    "Random",
+    "CodeBlock",
+    "AbstractCodeBlock",
+}
 
 
 class ProjectCompiler:
@@ -166,6 +187,7 @@ class ProjectCompiler:
             except SyntaxError as exc:
                 raise DSLValidationError(_format_syntax_error(exc, preprocessed_source)) from exc
             module = self._expand_top_level_static_control_flow(module)
+            self._warn_immutable_dsl_edits(module)
 
             compiler = DSLCompiler()
 
@@ -473,7 +495,210 @@ class ProjectCompiler:
         for node in module.body:
             with dsl_node_context(node):
                 if isinstance(node, ast.ClassDef):
+                    if node.name in IMMUTABLE_DSL_CLASS_NAMES:
+                        continue
                     compiler._register_actor_schema(node)
+
+    def _warn_immutable_dsl_edits(self, module: ast.Module) -> None:
+        top_level_functions = {
+            node.name for node in module.body if isinstance(node, ast.FunctionDef)
+        }
+
+        for node in module.body:
+            with dsl_node_context(node):
+                if isinstance(node, ast.ClassDef) and node.name in IMMUTABLE_DSL_CLASS_NAMES:
+                    warnings.warn(
+                        format_dsl_diagnostic(
+                            f"Ignoring class definition '{node.name}'. "
+                            "Engine DSL classes are non-editable.",
+                            node=node,
+                        ),
+                        stacklevel=2,
+                    )
+                    self._warn_immutable_class_body_edits(node)
+                    continue
+
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        self._warn_immutable_target_assignment(
+                            target=target,
+                            value=node.value,
+                            function_names=top_level_functions,
+                        )
+                    continue
+
+                if isinstance(node, ast.AnnAssign):
+                    self._warn_immutable_target_assignment(
+                        target=node.target,
+                        value=node.value,
+                        function_names=top_level_functions,
+                    )
+                    continue
+
+                if isinstance(node, ast.AugAssign):
+                    self._warn_immutable_target_assignment(
+                        target=node.target,
+                        value=None,
+                        function_names=top_level_functions,
+                    )
+                    continue
+
+                if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                    self._warn_immutable_setattr_call(
+                        call=node.value,
+                        function_names=top_level_functions,
+                    )
+
+    def _warn_immutable_class_body_edits(self, node: ast.ClassDef) -> None:
+        class_name = node.name
+        for stmt in node.body:
+            with dsl_node_context(stmt):
+                if isinstance(stmt, ast.Pass):
+                    continue
+                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(
+                    stmt.value.value, str
+                ):
+                    continue
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    warnings.warn(
+                        format_dsl_diagnostic(
+                            f"Ignoring method '{stmt.name}' added to immutable DSL class "
+                            f"'{class_name}'. Methods cannot be added to engine classes.",
+                            node=stmt,
+                        ),
+                        stacklevel=2,
+                    )
+                    continue
+                if isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                    attr_name: Optional[str] = None
+                    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                        attr_name = stmt.target.id
+                    elif isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
+                        attr_name = stmt.target.id
+                    elif isinstance(stmt, ast.Assign):
+                        for target in stmt.targets:
+                            if isinstance(target, ast.Name):
+                                attr_name = target.id
+                                break
+                    if attr_name:
+                        warnings.warn(
+                            format_dsl_diagnostic(
+                                f"Ignoring attribute '{attr_name}' added to immutable DSL class "
+                                f"'{class_name}'. Define a subclass instead and add fields there.",
+                                node=stmt,
+                            ),
+                            stacklevel=2,
+                        )
+                        continue
+                warnings.warn(
+                    format_dsl_diagnostic(
+                        f"Ignoring statement inside immutable DSL class '{class_name}'.",
+                        node=stmt,
+                    ),
+                    stacklevel=2,
+                )
+
+    def _warn_immutable_target_assignment(
+        self,
+        *,
+        target: ast.AST,
+        value: ast.AST | None,
+        function_names: set[str],
+    ) -> None:
+        if not isinstance(target, ast.Attribute) or not isinstance(target.value, ast.Name):
+            return
+        owner = target.value.id
+        if owner not in IMMUTABLE_DSL_CLASS_NAMES:
+            return
+        attr_name = target.attr
+        if self._looks_like_function_assignment(value, function_names):
+            warnings.warn(
+                format_dsl_diagnostic(
+                    f"Ignoring method '{attr_name}' added to immutable DSL class '{owner}'. "
+                    "Methods cannot be added to engine classes.",
+                    node=target,
+                ),
+                stacklevel=2,
+            )
+            return
+        warnings.warn(
+            format_dsl_diagnostic(
+                f"Ignoring attribute '{attr_name}' added to immutable DSL class '{owner}'. "
+                "Define a subclass instead and add fields there.",
+                node=target,
+            ),
+            stacklevel=2,
+        )
+
+    def _warn_immutable_setattr_call(
+        self,
+        *,
+        call: ast.Call,
+        function_names: set[str],
+    ) -> None:
+        if not isinstance(call.func, ast.Name) or call.func.id not in {"setattr", "delattr"}:
+            return
+        if len(call.args) < 2:
+            return
+        owner_node = call.args[0]
+        attr_node = call.args[1]
+        if not isinstance(owner_node, ast.Name) or owner_node.id not in IMMUTABLE_DSL_CLASS_NAMES:
+            return
+        if not isinstance(attr_node, ast.Constant) or not isinstance(attr_node.value, str):
+            return
+        owner = owner_node.id
+        attr_name = attr_node.value
+        if call.func.id == "setattr":
+            value_node = call.args[2] if len(call.args) >= 3 else None
+            if self._looks_like_function_assignment(value_node, function_names):
+                warnings.warn(
+                    format_dsl_diagnostic(
+                        f"Ignoring method '{attr_name}' added to immutable DSL class '{owner}'. "
+                        "Methods cannot be added to engine classes.",
+                        node=call,
+                    ),
+                    stacklevel=2,
+                )
+                return
+            warnings.warn(
+                format_dsl_diagnostic(
+                    f"Ignoring attribute '{attr_name}' added to immutable DSL class '{owner}'. "
+                    "Define a subclass instead and add fields there.",
+                    node=call,
+                ),
+                stacklevel=2,
+            )
+            return
+
+        warnings.warn(
+            format_dsl_diagnostic(
+                f"Ignoring attribute '{attr_name}' mutation on immutable DSL class '{owner}'.",
+                node=call,
+            ),
+            stacklevel=2,
+        )
+
+    def _looks_like_function_assignment(
+        self,
+        value: ast.AST | None,
+        function_names: set[str],
+    ) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, ast.Name) and value.id in function_names:
+            return True
+        if isinstance(value, ast.Lambda):
+            return True
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id in {"staticmethod", "classmethod"}
+            and len(value.args) == 1
+            and isinstance(value.args[0], ast.Name)
+            and value.args[0].id in function_names
+        ):
+            return True
+        return False
 
     def _collect_globals(
         self,

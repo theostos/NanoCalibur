@@ -1827,6 +1827,54 @@ def test_scene_set_interface_rejects_duplicate_role_in_interface_and_call():
         )
 
 
+def test_warns_when_editing_immutable_dsl_class_definition():
+    with pytest.warns(UserWarning) as records:
+        compile_project(
+            """
+            class Actor:
+                hp: int
+
+                def jump(self):
+                    pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            """
+        )
+
+    messages = "\n".join(str(record.message) for record in records)
+    assert "Ignoring class definition 'Actor'" in messages
+    assert "Ignoring attribute 'hp' added to immutable DSL class 'Actor'" in messages
+    assert "Define a subclass instead" in messages
+    assert "Ignoring method 'jump' added to immutable DSL class 'Actor'" in messages
+
+
+def test_warns_when_monkey_patching_immutable_dsl_class():
+    with pytest.warns(UserWarning) as records:
+        compile_project(
+            """
+            def helper(self):
+                return None
+
+            Actor.debug_flag = True
+            Scene.recenter = helper
+            setattr(Game, "hot_reload", True)
+            setattr(Sprite, "swap", helper)
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            """
+        )
+
+    messages = "\n".join(str(record.message) for record in records)
+    assert "Ignoring attribute 'debug_flag' added to immutable DSL class 'Actor'" in messages
+    assert "Ignoring method 'recenter' added to immutable DSL class 'Scene'" in messages
+    assert "Ignoring attribute 'hot_reload' added to immutable DSL class 'Game'" in messages
+    assert "Ignoring method 'swap' added to immutable DSL class 'Sprite'" in messages
+
+
 def test_scene_set_interface_rejects_unknown_role_selector():
     with pytest.raises(DSLValidationError, match="unknown role id 'human_9'"):
         compile_project(
