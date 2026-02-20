@@ -132,7 +132,6 @@ from nanocalibur.project_compiler_values import (
 COLLISION_LEFT_BINDING_UID = "__nanocalibur_collision_left__"
 COLLISION_RIGHT_BINDING_UID = "__nanocalibur_collision_right__"
 LOGICAL_TARGET_BINDING_UID = "__nanocalibur_logical_target__"
-LEGACY_CONDITION_DECORATOR = "condition"
 CONDITION_DECORATOR_NAMES = {"safe_condition", "unsafe_condition"}
 IMMUTABLE_DSL_CLASS_NAMES = {
     "Actor",
@@ -933,7 +932,7 @@ class ProjectCompiler:
                     if self._has_condition_decorator(node):
                         raise DSLValidationError(
                             f"Function '{node.name}' cannot use both @callable and "
-                            "@safe_condition/@unsafe_condition (or legacy @condition) decorators."
+                            "@safe_condition/@unsafe_condition decorators."
                         )
                     normalized = self._normalize_callable_function(node, compiler)
                     normalized = self._strip_function_docstring(normalized)
@@ -2657,8 +2656,7 @@ class ProjectCompiler:
                 continue
             if (
                 isinstance(decorator.func, ast.Name)
-                and decorator.func.id
-                in CONDITION_DECORATOR_NAMES.union({LEGACY_CONDITION_DECORATOR})
+                and decorator.func.id in CONDITION_DECORATOR_NAMES
             ):
                 return True
         return False
@@ -2717,8 +2715,7 @@ class ProjectCompiler:
                 continue
             if (
                 isinstance(decorator.func, ast.Name)
-                and decorator.func.id
-                in CONDITION_DECORATOR_NAMES.union({LEGACY_CONDITION_DECORATOR})
+                and decorator.func.id in CONDITION_DECORATOR_NAMES
             ):
                 removed = True
                 continue
@@ -2760,16 +2757,6 @@ class ProjectCompiler:
                     raise DSLValidationError(
                         f"Unsupported decorator on action '{node.name}'. "
                         "Use @safe_condition(...) or @unsafe_condition(...)."
-                    )
-                if (
-                    isinstance(decorator.func, ast.Name)
-                    and decorator.func.id == LEGACY_CONDITION_DECORATOR
-                ):
-                    raise DSLValidationError(
-                        "The @condition(...) decorator is no longer supported. "
-                        "Use @unsafe_condition(...) for KeyboardCondition/MouseCondition/"
-                        "OnToolCall/OnButton, and use @safe_condition(...) for "
-                        "OnOverlap/OnContact/OnLogicalCondition."
                     )
                 if (
                     isinstance(decorator.func, ast.Name)

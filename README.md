@@ -169,7 +169,6 @@ Rule declaration styles:
 - `@unsafe_condition(condition_expr)` marker for client-input-driven conditions (`KeyboardCondition`/`MouseCondition`/`OnToolCall`/`OnButton`)
 - `@callable` decorator on helper functions that can be called inside action/predicate expressions
 
-`@condition(...)` is no longer supported.
 `@safe_condition` and `@unsafe_condition` do not change runtime translation; they add intent metadata and compiler errors on mismatches.
 
 Examples:

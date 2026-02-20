@@ -38,7 +38,7 @@ Keep NanoCalibur small, deterministic, and LLM-friendly:
 ## Current Product Invariants
 
 - DSL is explicit; no compatibility legacy is required for removed APIs.
-- `@condition` is removed; use `@safe_condition` / `@unsafe_condition`.
+- Conditions must use `@safe_condition` / `@unsafe_condition`.
 - Input/tool conditions are role-scoped and require declared role ids.
 - Camera model is explicit and role-bound (`Camera(..., Role["id"]) + scene.add_camera`).
 - `Local[...]` role fields are client-owned, never server-authoritative.

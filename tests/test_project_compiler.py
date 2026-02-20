@@ -1499,14 +1499,14 @@ def test_unsafe_condition_errors_when_used_with_safe_condition_kind():
         )
 
 
-def test_condition_decorator_is_no_longer_supported():
+def test_unknown_condition_decorator_is_rejected():
     with pytest.raises(
         DSLValidationError,
-        match="The @condition\\(\\.\\.\\.\\) decorator is no longer supported",
+        match="Decorators are not allowed on actions",
     ):
         compile_project(
             """
-            @condition(KeyboardCondition.begin_press("g", id="human_1"))
+            @legacy_condition(KeyboardCondition.begin_press("g", id="human_1"))
             def enable_gravity(scene: Scene):
                 Scene.enable_gravity(scene)
 
