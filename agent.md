@@ -26,7 +26,8 @@ Primary goal: keep the engine minimal, explicit, and easy for LLMs to both gener
 The project must make LLM interaction first-class, not an afterthought.
 
 ### Tool-driven actions
-- DSL supports `OnToolCall(name, tool_docstring, id="role_id")` conditions.
+- DSL supports `OnToolCall(name, id="role_id")` conditions.
+- Informal tool descriptions come from the bound action function docstring.
 - Exported spec includes tool metadata.
 - Headless runtime exposes tool calls via `HeadlessHost.callTool(...)`.
 - HTTP runtime exposes tool calls for remote clients (`POST /tools/call`).
@@ -55,6 +56,14 @@ The project must make LLM interaction first-class, not an afterthought.
 - Collision conditions are split by intent: `OnOverlap(...)` and `OnContact(...)`.
 - Logical and tool conditions use `OnLogicalCondition(...)` and `OnToolCall(..., id="role_id")`.
 - `KeyboardCondition`, `MouseCondition`, and `OnToolCall` require `id=...` and the id must match a declared `Role`.
+- Camera scoping is role-bound and mandatory by design:
+  - Create cameras via `Camera("camera_name", Role["role_id"], ...)`.
+  - Register cameras via `scene.add_camera(camera)`.
+  - `scene.set_camera(...)` / `game.set_camera(...)` are removed.
+  - Camera bindings in actions/predicates use `Camera["camera_name"]`.
+  - Camera runtime controls use instance methods: `follow(uid)`, `detach()`, `translate(dx, dy)`.
+- Human roles without a camera should trigger a compiler warning.
+- AI role frame requests without a camera should return an empty symbolic grid.
 - Reusable helper functions use the `@callable` decorator.
 - Keep condition/action semantics deterministic and statically checkable where possible.
 

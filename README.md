@@ -266,7 +266,9 @@ game.set_scene(scene)
 game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
 scene.add_actor(Player(uid="hero", x=100, y=100, speed=4))
 scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move_right)
-scene.set_camera(Camera.follow("hero"))
+main_camera = Camera("main_camera", Role["human_1"], width=30, height=18)
+main_camera.follow("hero")
+scene.add_camera(main_camera)
 """
 
 export_project(source, "build")
