@@ -11,6 +11,9 @@ Included files:
 - `canvas_host.ts`
 - `headless_host.ts`
 - `headless_http_server.ts`
+- `session_runtime.ts`
+- `session_manager.ts`
+- `replay_store_sqlite.ts`
 - `symbolic_renderer.ts`
 - `bridge.ts`
 - `index.ts`
@@ -43,3 +46,79 @@ Notes:
 - Browser apps should import from `index.ts`; Node-only HTTP helpers are isolated in `node.ts`.
 - Basic physics, sprite animation, and image preloading are configurable through `CanvasHostOptions`.
 - Runtime logic is driven by `game_spec.json` + `game_logic.ts`.
+
+## Headless Session Server + Dummy Client
+
+`nanocalibur-demo/package.json` includes helper scripts:
+
+- `npm run headless:server`
+  Compiles generated TypeScript to `.nanocalibur_headless/` and starts a session-aware HTTP server on `http://127.0.0.1:7070` by default.
+- `npm run dummy:random`
+  Starts a random dummy client that joins a role and sends `llm_dummy_*` tool commands. Requires `NC_INVITE_TOKEN`.
+- `npm run human:play`
+  Starts the browser-rendered human client (webpack dev server) in session mode. Requires `NC_INVITE_TOKEN`.
+- `npm run human:cli`
+  Starts the terminal human client (symbolic stream mode).
+- `npm run session:auto`
+  One-command orchestrator: starts headless server, creates a session, launches dummy + human clients, waits for required roles, then starts the session.
+
+Quick one-row startup:
+
+```bash
+npm run session:auto -- 9020
+```
+
+The optional trailing argument is the preferred human web port.
+
+Typical flow (human + dummy in one shared session):
+
+1. Start server:
+
+```bash
+npm run headless:server
+```
+
+2. Create a session (roles/loop mode are derived from game DSL role + multiplayer config):
+
+```bash
+curl -sS -X POST http://127.0.0.1:7070/sessions \
+  -H 'content-type: application/json' \
+  -d '{}'
+```
+
+The response returns `session_id`, `loop_mode`, `roles`, and role `invites`.
+
+You can list active sessions with:
+
+```bash
+curl -sS http://127.0.0.1:7070/sessions
+```
+
+3. Start human client with returned human invite token:
+
+```bash
+NC_BASE_URL=http://127.0.0.1:7070 \
+NC_INVITE_TOKEN=<human_invite_token> \
+npm run human:play
+```
+
+4. Start dummy with returned dummy invite token:
+
+```bash
+NC_BASE_URL=http://127.0.0.1:7070 \
+NC_INVITE_TOKEN=<dummy_invite_token> \
+npm run dummy:random
+```
+
+5. Start session with returned admin token:
+
+```bash
+curl -sS -X POST http://127.0.0.1:7070/sessions/<session_id>/start \
+  -H 'content-type: application/json' \
+  -d '{"admin_token":"<admin_token>"}'
+```
+
+`human:play` controls:
+- movement: `zqsd`, `wasd`, or arrow keys
+- `e`: call `spawn_bonus`
+- `n`: call `llm_dummy_next_turn`

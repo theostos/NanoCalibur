@@ -27,13 +27,14 @@ def test_end_to_end_python_to_ts_runtime(tmp_path):
             return player.life <= 0
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.add_global("target_player", Player["main_character"])
         game.add_global("heal_amount", 2)
         game.add_global("is_dead", False)
         game.add_actor(Player, "main_character", life=1, x=5, y=7)
         game.add_actor(Player, "enemy_1", life=2, x=0, y=0)
 
-        game.add_rule(KeyboardCondition.begin_press("A"), heal)
+        game.add_rule(KeyboardCondition.begin_press("A", id="human_1"), heal)
         game.add_rule(OnOverlap(Player["main_character"], Player), on_collision)
         game.add_rule(OnLogicalCondition(is_dead, Player), mark_dead)
 
@@ -122,14 +123,17 @@ def test_end_to_end_python_to_ts_runtime(tmp_path):
             const interpreter = new NanoCaliburInterpreter(spec, actions, predicates);
 
             interpreter.tick({{
+              roleId: "human_1",
               keyboard: {{ begin: ["A"], on: ["A"], end: [] }},
               collisions: [{{ aUid: "main_character", bUid: "enemy_1" }}]
             }});
             interpreter.tick({{
+              roleId: "human_1",
               keyboard: {{ begin: [], on: ["A"], end: [] }},
               collisions: [{{ aUid: "main_character", bUid: "enemy_1" }}]
             }});
             interpreter.tick({{
+              roleId: "human_1",
               keyboard: {{ begin: [], on: [], end: ["A"] }},
               collisions: [{{ aUid: "main_character", bUid: "enemy_1" }}]
             }});
@@ -293,11 +297,12 @@ def test_generator_actor_binding_rebinds_after_yield(tmp_path):
                 last_coin.destroy()
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Coin(uid="coin_1", x=10, y=0, active=True))
-        scene.add_rule(KeyboardCondition.begin_press("E"), spawn_after_wait)
-        scene.add_rule(KeyboardCondition.begin_press("D"), remove_last)
+        scene.add_rule(KeyboardCondition.begin_press("E", id="human_1"), spawn_after_wait)
+        scene.add_rule(KeyboardCondition.begin_press("D", id="human_1"), remove_last)
         """
     )
 
@@ -365,14 +370,17 @@ def test_generator_actor_binding_rebinds_after_yield(tmp_path):
 
             // Start generator (captures Coin[-1] binding, then yields).
             interpreter.tick({{
+              roleId: "human_1",
               keyboard: {{ begin: ["E"], on: ["E"], end: [] }}
             }});
             // Advance generator one step, then remove the coin in the same frame.
             interpreter.tick({{
+              roleId: "human_1",
               keyboard: {{ begin: ["D"], on: ["D"], end: [] }}
             }});
             // Resume generator after removal. With rebind, no spawn should happen.
             interpreter.tick({{
+              roleId: "human_1",
               keyboard: {{ begin: [], on: [], end: [] }}
             }});
 

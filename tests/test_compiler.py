@@ -310,6 +310,41 @@ def test_accept_plain_typed_actor_binding():
     assert heal.params[0].actor_selector.uid == "Player"
 
 
+def test_accept_role_binding_with_explicit_id_and_field_access():
+    actions = compile_source(
+        """
+        class HumanRole(Role):
+            score: int
+
+        def increment(self_role: HumanRole["human_1"]):
+            self_role.score = self_role.score + 1
+        """
+    )
+
+    increment = actions[0]
+    assert increment.params[0].kind == BindingKind.ROLE
+    assert increment.params[0].role_type == "HumanRole"
+    assert increment.params[0].role_selector is not None
+    assert increment.params[0].role_selector.id == "human_1"
+    assign = increment.body[0]
+    assert isinstance(assign, Assign)
+    assert isinstance(assign.target, Attr)
+    assert assign.target.field == "score"
+
+
+def test_reject_role_binding_index_selector():
+    with pytest.raises(DSLValidationError, match="does not support index selectors"):
+        compile_source(
+            """
+            class HumanRole(Role):
+                score: int
+
+            def bad(self_role: HumanRole[-1]):
+                self_role.score = self_role.score + 1
+            """
+        )
+
+
 def test_accept_actor_base_schema_and_builtin_fields():
     actions = compile_source(
         """
@@ -364,6 +399,22 @@ def test_accept_scene_instance_calls():
     assert isinstance(spawn_bonus.body[1], CallStmt)
     assert spawn_bonus.body[0].name == "scene_set_gravity"
     assert spawn_bonus.body[1].name == "scene_spawn_actor"
+
+
+def test_accept_scene_set_interface_calls():
+    actions = compile_source(
+        """
+        def set_ui(scene: Scene):
+            scene.set_interface("<div>hello</div>")
+            Scene.set_interface(scene, "<div>world</div>")
+        """
+    )
+
+    set_ui = actions[0]
+    assert isinstance(set_ui.body[0], CallStmt)
+    assert isinstance(set_ui.body[1], CallStmt)
+    assert set_ui.body[0].name == "scene_set_interface"
+    assert set_ui.body[1].name == "scene_set_interface"
 
 
 def test_accept_scene_elapsed_read_access():
@@ -747,6 +798,67 @@ def test_accept_list_literals_and_subscript_expressions():
     assert isinstance(first_assign.value, SubscriptExpr)
     assert isinstance(second_assign, Assign)
     assert isinstance(second_assign.value, ListExpr)
+
+
+def test_accept_dict_field_types_and_collection_methods():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            inventory: Dict[str, int]
+
+        def mutate(
+            player: Player["hero"],
+            values: Global["values", List[int]],
+            inventory: Global["inventory", Dict[str, int]],
+        ):
+            values.append(3)
+            last = values.pop()
+            values = values.concat([last])
+            inventory["coins"] = last
+            current = inventory.get("coins", 0)
+            labels = inventory.keys()
+            amounts = inventory.values()
+            pairs = inventory.items()
+            merged = inventory.concat({"bonus": 1})
+        """
+    )
+
+    mutate = actions[0]
+    assert isinstance(mutate.body[0], CallStmt)
+    assert mutate.body[0].name == "list_append"
+    assert isinstance(mutate.body[1], Assign)
+    assert isinstance(mutate.body[1].value, CallExpr)
+    assert mutate.body[1].value.name == "collection_pop"
+    assert isinstance(mutate.body[2], Assign)
+    assert isinstance(mutate.body[2].value, CallExpr)
+    assert mutate.body[2].value.name == "collection_concat"
+    assert isinstance(mutate.body[3], Assign)
+    assert isinstance(mutate.body[3].target, SubscriptExpr)
+    assert isinstance(mutate.body[4], Assign)
+    assert isinstance(mutate.body[4].value, CallExpr)
+    assert mutate.body[4].value.name == "dict_get"
+    assert isinstance(mutate.body[5], Assign)
+    assert isinstance(mutate.body[5].value, CallExpr)
+    assert mutate.body[5].value.name == "dict_keys"
+    assert isinstance(mutate.body[6], Assign)
+    assert isinstance(mutate.body[6].value, CallExpr)
+    assert mutate.body[6].value.name == "dict_values"
+    assert isinstance(mutate.body[7], Assign)
+    assert isinstance(mutate.body[7].value, CallExpr)
+    assert mutate.body[7].value.name == "dict_items"
+    assert isinstance(mutate.body[8], Assign)
+    assert isinstance(mutate.body[8].value, CallExpr)
+    assert mutate.body[8].value.name == "collection_concat"
+
+
+def test_reject_unsupported_collection_method_calls():
+    with pytest.raises(DSLValidationError, match="Unsupported call statement 'values.extend"):
+        compile_source(
+            """
+            def bad(values: Global["values", List[int]]):
+                values.extend([1, 2, 3])
+            """
+        )
 
 
 def test_accept_tick_elapsed_read_access():

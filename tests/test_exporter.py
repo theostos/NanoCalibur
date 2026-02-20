@@ -18,14 +18,15 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
         def is_dead(player: Player) -> bool:
             return player.life <= 0
 
-        @condition(OnToolCall("boost_heal", "Increase heal amount by one"))
+        @condition(OnToolCall("boost_heal", "Increase heal amount by one", id="human_1"))
         def boost_heal(amount: Global["heal"]):
             amount = amount + 1
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         game.add_global("heal", 2)
         game.add_actor(Player, "main_character", life=1, x=5, y=6)
-        game.add_rule(KeyboardCondition.on_press("A"), heal)
+        game.add_rule(KeyboardCondition.on_press("A", id="human_1"), heal)
         game.add_rule(OnLogicalCondition(is_dead, Player), heal)
         game.set_map(
             TileMap(
@@ -64,6 +65,7 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
     assert any(tool["name"] == "boost_heal" for tool in spec["tools"])
     assert spec["predicates"][0]["name"] == "is_dead"
     assert spec["predicates"][0]["params"][0]["kind"] == "actor"
+    assert spec["contains_next_turn_call"] is False
 
     ir_data = json.loads(ir_path.read_text(encoding="utf-8"))
     assert ir_data["actions"][0]["name"] == "heal"
@@ -110,6 +112,33 @@ def test_export_project_serializes_tile_grid_and_tile_defs(tmp_path):
     assert tile_map["tile_defs"]["2"]["sprite"] == "coin"
 
 
+def test_export_project_serializes_scene_keyboard_aliases(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(
+            gravity=False,
+            keyboard_aliases={
+                "z": ["w", "ArrowUp"],
+                "q": "a",
+            },
+        )
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=16, y=16))
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["scene"]["keyboard_aliases"] == {
+        "z": ["w", "ArrowUp"],
+        "q": ["a"],
+    }
+
+
 def test_export_project_resolves_grid_file_relative_to_source_path(tmp_path):
     scene_dir = tmp_path / "scene_src"
     maps_dir = tmp_path / "maps"
@@ -148,7 +177,7 @@ def test_export_project_resolves_grid_file_relative_to_source_path(tmp_path):
     assert spec["map"]["tile_grid"] == [[0, 1, 0], [1, 0, 0]]
 
 
-def test_export_project_serializes_interface_html_and_button_condition(tmp_path):
+def test_export_project_serializes_scene_interface_html_and_button_condition(tmp_path):
     source = textwrap.dedent(
         '''
         @condition(OnButton("spawn_bonus"))
@@ -158,7 +187,7 @@ def test_export_project_serializes_interface_html_and_button_condition(tmp_path)
         game = Game()
         scene = Scene(gravity=False)
         game.set_scene(scene)
-        game.set_interface("<div>Score: {{score}}</div><button data-button=\\"spawn_bonus\\">Spawn</button>")
+        scene.set_interface("<div>Score: {{score}}</div><button data-button=\\"spawn_bonus\\">Spawn</button>")
         '''
     )
 
@@ -213,12 +242,13 @@ def test_export_project_serializes_sprite_bindings_resources_and_callables(tmp_p
         def next_speed(speed: int) -> int:
             return speed + 1
 
-        @condition(KeyboardCondition.on_press("d"))
+        @condition(KeyboardCondition.on_press("d", id="human_1"))
         def boost(player: Player["hero"]):
             player.speed = next_speed(player.speed)
             player.play("run")
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0, speed=1, sprite="hero"))
@@ -247,3 +277,139 @@ def test_export_project_serializes_sprite_bindings_resources_and_callables(tmp_p
     assert spec["sprites"]["by_name"]["hero"]["description"] == "hero sprite"
     assert spec["sprites"]["by_name"]["hero"]["clips"]["run"]["frames"] == [2, 3]
     assert spec["callables"] == ["next_speed"]
+
+
+def test_export_project_serializes_multiplayer_and_next_turn_metadata(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            pass
+
+        def advance(scene: Scene, player: Player["hero"]):
+            player.x = player.x + 1
+            scene.next_turn()
+
+        game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("A", id="human_1"), advance)
+        game.set_multiplayer(
+            Multiplayer(
+                default_loop="hybrid",
+                allowed_loops=["turn_based", "hybrid"],
+                default_visibility="role_filtered",
+                tick_rate=15,
+                turn_timeout_ms=25000,
+                hybrid_window_ms=1200,
+                game_time_scale=0.75,
+                max_catchup_steps=3,
+            )
+        )
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    assert spec["contains_next_turn_call"] is True
+    assert spec["multiplayer"] is not None
+    assert spec["multiplayer"]["default_loop"] == "hybrid"
+    assert spec["multiplayer"]["allowed_loops"] == ["turn_based", "hybrid"]
+    assert spec["multiplayer"]["default_visibility"] == "role_filtered"
+    assert spec["multiplayer"]["tick_rate"] == 15
+    assert spec["multiplayer"]["turn_timeout_ms"] == 25000
+    assert spec["multiplayer"]["hybrid_window_ms"] == 1200
+    assert spec["multiplayer"]["game_time_scale"] == 0.75
+    assert spec["multiplayer"]["max_catchup_steps"] == 3
+
+
+def test_export_project_serializes_roles_and_role_scoped_conditions(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            pass
+
+        def move(player: Player["hero"]):
+            player.x = player.x + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", kind=RoleKind.HUMAN))
+        game.add_role(Role(id="ai_1", kind=RoleKind.AI, required=False))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move)
+        scene.add_rule(OnToolCall("bot_move", "move bot", id="ai_1"), move)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    assert spec["roles"] == [
+        {"id": "human_1", "kind": "human", "required": True, "type": "Role", "fields": {}},
+        {"id": "ai_1", "kind": "ai", "required": False, "type": "Role", "fields": {}},
+    ]
+    assert spec["rules"][0]["condition"]["role_id"] == "human_1"
+    assert spec["rules"][1]["condition"]["role_id"] == "ai_1"
+    assert spec["tools"][0]["role_id"] == "ai_1"
+
+
+def test_export_project_serializes_role_schemas_and_fields(tmp_path):
+    source = textwrap.dedent(
+        """
+        class HumanRole(Role):
+            score: int
+            cards: List[str]
+
+        class Player(Actor):
+            pass
+
+        def move(player: Player["hero"], self_role: HumanRole["human_1"]):
+            if self_role.score > 0:
+                player.x = player.x + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=2))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["role_schemas"]["HumanRole"]["score"] == "int"
+    assert spec["role_schemas"]["HumanRole"]["cards"] == "list[str]"
+    assert spec["roles"][0]["type"] == "HumanRole"
+    assert spec["roles"][0]["fields"] == {"score": 2, "cards": []}
+
+
+def test_export_project_serializes_dict_types_and_values(tmp_path):
+    source = textwrap.dedent(
+        """
+        class HumanRole(Role):
+            score_by_mode: Dict[str, int]
+
+        class Player(Actor):
+            inventory: Dict[str, List[int]]
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_global("score_by_mode", {"solo": 1} + {"duo": 2})
+        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score_by_mode={"solo": 4}))
+        scene.add_actor(Player(uid="hero", inventory={"coins": [1, 2]}))
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["schemas"]["Player"]["inventory"] == "dict[str, list[int]]"
+    assert spec["role_schemas"]["HumanRole"]["score_by_mode"] == "dict[str, int]"
+    globals_by_name = {entry["name"]: entry for entry in spec["globals"]}
+    assert globals_by_name["score_by_mode"]["kind"] == "dict"
+    assert globals_by_name["score_by_mode"]["value"] == {"solo": 1, "duo": 2}

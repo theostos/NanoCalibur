@@ -52,15 +52,20 @@ export interface RuntimeSceneContext {
   gravityEnabled?: boolean;
   elapsed?: number;
   setGravityEnabled?: (enabled: boolean) => void;
+  setInterfaceHtml?: (html: string) => void;
   spawnActor?: (actorType: string, uid: string, fields?: Record<string, any>) => any;
+  nextTurn?: () => void;
 }
 
 export interface GameContext {
   globals: Record<string, any>;
   actors: any[];
+  roles?: Record<string, any>;
+  self?: any;
   tick: number;
   elapsed?: number;
   getActorByUid?: (uid: string) => any;
+  getRoleById?: (id: string) => any;
   playAnimation?: (actor: any, clipName: string) => void;
   destroyActor?: (actor: any) => void;
   scene?: RuntimeSceneContext;
@@ -110,6 +115,99 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
   }
   const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
   return mean + z * stddev;
+}
+
+function __nc_is_plain_object(value: any): boolean {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function __nc_add(left: any, right: any): any {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return [...left, ...right];
+  }
+  if (__nc_is_plain_object(left) && __nc_is_plain_object(right)) {
+    return { ...left, ...right };
+  }
+  return left + right;
+}
+
+function __nc_collection_concat(base: any, other: any): any {
+  return __nc_add(base, other);
+}
+
+function __nc_collection_pop(base: any, index: any = null): any {
+  if (Array.isArray(base)) {
+    if (index == null) {
+      return base.pop();
+    }
+    const numericIndex = Number(index);
+    if (!Number.isFinite(numericIndex)) {
+      return null;
+    }
+    let normalized = Math.trunc(numericIndex);
+    if (normalized < 0) {
+      normalized = base.length + normalized;
+    }
+    if (normalized < 0 || normalized >= base.length) {
+      return null;
+    }
+    const removed = base.splice(normalized, 1);
+    return removed.length > 0 ? removed[0] : null;
+  }
+  if (__nc_is_plain_object(base)) {
+    const key = String(index);
+    const value = base[key];
+    delete base[key];
+    return value;
+  }
+  return null;
+}
+
+function __nc_list_append(base: any, value: any): void {
+  if (Array.isArray(base)) {
+    base.push(value);
+  }
+}
+
+function __nc_dict_update(base: any, value: any): void {
+  if (!__nc_is_plain_object(base) || !__nc_is_plain_object(value)) {
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    base[key] = item;
+  }
+}
+
+function __nc_dict_get(base: any, key: any, defaultValue: any = null): any {
+  if (!__nc_is_plain_object(base)) {
+    return defaultValue;
+  }
+  const normalizedKey = String(key);
+  if (Object.prototype.hasOwnProperty.call(base, normalizedKey)) {
+    return base[normalizedKey];
+  }
+  return defaultValue;
+}
+
+function __nc_dict_keys(base: any): any[] {
+  if (!__nc_is_plain_object(base)) {
+    return [];
+  }
+  return Object.keys(base);
+}
+
+function __nc_dict_values(base: any): any[] {
+  if (!__nc_is_plain_object(base)) {
+    return [];
+  }
+  return Object.values(base);
+}
+
+function __nc_dict_items(base: any): any[] {
+  if (!__nc_is_plain_object(base)) {
+    return [];
+  }
+  return Object.entries(base);
 }
 """
 
@@ -180,6 +278,21 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                         f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
                     )
                     global_bindings.append((param.name, param.global_name))
+                    continue
+
+                if param.kind == BindingKind.ROLE:
+                    selector = param.role_selector
+                    if selector is None:
+                        raise DSLValidationError(
+                            f"Role binding missing selector for '{param.name}'."
+                        )
+                    lines.extend(
+                        self._emit_role_binding_lines(
+                            param_name=param.name,
+                            role_id=selector.id,
+                            role_type=param.role_type,
+                        )
+                    )
                     continue
 
                 if param.kind == BindingKind.ACTOR_LIST:
@@ -301,6 +414,21 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
 
         raise DSLValidationError(f"Unsupported actor selector for '{param.name}'.")
 
+    def _emit_role_binding_lines(
+        self,
+        param_name: str,
+        role_id: str,
+        role_type: str | None,
+    ) -> list[str]:
+        escaped_id = json.dumps(role_id)
+        out = [f"  let {param_name} = (ctx.getRoleById ? ctx.getRoleById({escaped_id}) : null);"]
+        if role_type is not None:
+            escaped_type = json.dumps(role_type)
+            out.append(
+                f"  if ({param_name} && {param_name}.type !== {escaped_type}) {{ {param_name} = null; }}"
+            )
+        return out
+
     def _emit_predicate(self, predicate: PredicateIR, typed: bool, exported: bool):
         previous_tick_vars = getattr(self, "_tick_vars", set())
         previous_scene_vars = getattr(self, "_scene_vars", set())
@@ -330,6 +458,21 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                 if param.kind == BindingKind.GLOBAL:
                     lines.append(
                         f'  let {param.name} = ctx.globals[{json.dumps(param.global_name)}];'
+                    )
+                    continue
+
+                if param.kind == BindingKind.ROLE:
+                    selector = param.role_selector
+                    if selector is None:
+                        raise DSLValidationError(
+                            f"Role binding missing selector for '{param.name}'."
+                        )
+                    lines.extend(
+                        self._emit_role_binding_lines(
+                            param_name=param.name,
+                            role_id=selector.id,
+                            role_type=param.role_type,
+                        )
                     )
                     continue
 
@@ -402,6 +545,17 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                     pad + f"  ctx.scene.setGravityEnabled(Boolean({enabled_expr}));",
                     pad + "}",
                 ]
+            if stmt.name == "scene_set_interface":
+                if len(stmt.args) != 1:
+                    raise DSLValidationError(
+                        "scene_set_interface call must have exactly 1 argument."
+                    )
+                html_expr = self._emit_expr(stmt.args[0])
+                return [
+                    pad + "if (ctx.scene && ctx.scene.setInterfaceHtml) {",
+                    pad + f"  ctx.scene.setInterfaceHtml(String({html_expr}));",
+                    pad + "}",
+                ]
             if stmt.name == "scene_spawn_actor":
                 if len(stmt.args) != 3:
                     raise DSLValidationError(
@@ -416,6 +570,40 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                     + f"  ctx.scene.spawnActor({actor_type_expr}, {uid_expr}, {fields_expr});",
                     pad + "}",
                 ]
+            if stmt.name == "scene_next_turn":
+                if stmt.args:
+                    raise DSLValidationError(
+                        "scene_next_turn call must not have arguments."
+                    )
+                return [
+                    pad + "if (ctx.scene && ctx.scene.nextTurn) {",
+                    pad + "  ctx.scene.nextTurn();",
+                    pad + "}",
+                ]
+            if stmt.name == "list_append":
+                if len(stmt.args) != 2:
+                    raise DSLValidationError(
+                        "list_append call must have exactly 2 arguments."
+                    )
+                list_expr = self._emit_expr(stmt.args[0])
+                value_expr = self._emit_expr(stmt.args[1])
+                return [pad + f"__nc_list_append({list_expr}, {value_expr});"]
+            if stmt.name == "dict_update":
+                if len(stmt.args) != 2:
+                    raise DSLValidationError(
+                        "dict_update call must have exactly 2 arguments."
+                    )
+                dict_expr = self._emit_expr(stmt.args[0])
+                value_expr = self._emit_expr(stmt.args[1])
+                return [pad + f"__nc_dict_update({dict_expr}, {value_expr});"]
+            if stmt.name == "collection_pop_discard":
+                if len(stmt.args) != 2:
+                    raise DSLValidationError(
+                        "collection_pop_discard call must have exactly 2 arguments."
+                    )
+                base_expr = self._emit_expr(stmt.args[0])
+                index_expr = self._emit_expr(stmt.args[1])
+                return [pad + f"__nc_collection_pop({base_expr}, {index_expr});"]
             raise DSLValidationError(f"Unsupported call statement: {stmt.name}")
 
         if isinstance(stmt, If):
@@ -600,6 +788,8 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
             return f"{expr.obj}.{expr.field}"
 
         if isinstance(expr, Binary):
+            if expr.op == "+":
+                return f"__nc_add({self._emit_expr(expr.left)}, {self._emit_expr(expr.right)})"
             return f"({self._emit_expr(expr.left)} {expr.op} {self._emit_expr(expr.right)})"
 
         if isinstance(expr, Unary):
@@ -651,6 +841,18 @@ function __nc_random_float_normal(mean: number, stddev: number): number {
                 return f"__nc_random_float_uniform({args[0]}, {args[1]})"
             if expr.name == "random_float_normal":
                 return f"__nc_random_float_normal({args[0]}, {args[1]})"
+            if expr.name == "collection_pop":
+                return f"__nc_collection_pop({args[0]}, {args[1]})"
+            if expr.name == "collection_concat":
+                return f"__nc_collection_concat({args[0]}, {args[1]})"
+            if expr.name == "dict_get":
+                return f"__nc_dict_get({args[0]}, {args[1]}, {args[2]})"
+            if expr.name == "dict_keys":
+                return f"__nc_dict_keys({args[0]})"
+            if expr.name == "dict_values":
+                return f"__nc_dict_values({args[0]})"
+            if expr.name == "dict_items":
+                return f"__nc_dict_items({args[0]})"
             if expr.name.startswith(CALLABLE_EXPR_PREFIX):
                 helper_name = expr.name[len(CALLABLE_EXPR_PREFIX) :]
                 return f"{helper_name}({', '.join(args)})"

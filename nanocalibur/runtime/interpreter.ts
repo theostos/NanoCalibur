@@ -15,6 +15,7 @@ export interface CollisionFrameInput {
 export interface ToolFrameInput {
   name: string;
   payload?: Record<string, any>;
+  role_id?: string;
 }
 
 export interface NanoCaliburFrameInput {
@@ -24,6 +25,14 @@ export interface NanoCaliburFrameInput {
   collisions?: CollisionFrameInput[];
   contacts?: CollisionFrameInput[];
   toolCalls?: Array<string | ToolFrameInput>;
+  parentPreviousPositions?: Array<{
+    uid: string;
+    x?: number;
+    y?: number;
+    z?: number;
+  }>;
+  roleId?: string;
+  role_id?: string;
   keysJustPressed?: string[];
   keysBegin?: string[];
   keysPressed?: string[];
@@ -39,14 +48,20 @@ export interface NanoCaliburFrameInput {
 export interface InterpreterSceneState {
   gravityEnabled: boolean;
   elapsed: number;
+  turn: number;
+  loopMode: "real_time" | "turn_based" | "hybrid";
+  turnChangedThisStep: boolean;
+  interfaceHtml: string;
 }
 
 export interface InterpreterState {
   globals: Record<string, any>;
   actors: Record<string, any>[];
+  roles: Record<string, any>;
   camera: Record<string, any> | null;
   map: Record<string, any> | null;
   scene: InterpreterSceneState;
+  self?: Record<string, any> | null;
 }
 
 export interface RuntimeHooks {
@@ -89,6 +104,8 @@ export class NanoCaliburInterpreter {
   private readonly actorRefGlobals = new Map<string, string>();
   private readonly runningActions: ActionGenerator[] = [];
   private readonly sceneState: InterpreterSceneState;
+  private readonly rolesById: Record<string, any>;
+  private readonly keyboardAliasLookup: Map<string, Set<string>>;
   private runtimeHooks: RuntimeHooks;
 
   constructor(
@@ -110,10 +127,17 @@ export class NanoCaliburInterpreter {
     this.predicateMeta = this.buildPredicateMeta(this.spec.predicates || []);
     this.maskedTiles = this.buildMaskedTileSet(this.map);
     this.sceneState = this.initSceneState(this.spec.scene || null);
+    this.rolesById = this.initRoles(this.spec.roles || []);
+    this.keyboardAliasLookup = this.buildKeyboardAliasLookup(this.spec.scene || null);
   }
 
   tick(frame: NanoCaliburFrameInput = {}): void {
-    const previousPositions = this.captureActorPositions();
+    const fallbackPreviousPositions = this.captureActorPositions();
+    const previousPositions = this.resolveParentPreviousPositions(
+      frame.parentPreviousPositions,
+      fallbackPreviousPositions,
+    );
+    this.sceneState.turnChangedThisStep = false;
     this.advanceRunningActions();
     for (const rule of this.rules) {
       const match = this.conditionMatches(rule.condition, frame);
@@ -139,11 +163,16 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      roles: this.rolesById,
       camera: this.getCameraState(),
       map: this.map,
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
+        turn: this.sceneState.turn,
+        loopMode: this.sceneState.loopMode,
+        turnChangedThisStep: this.sceneState.turnChangedThisStep,
+        interfaceHtml: this.sceneState.interfaceHtml,
       },
     };
   }
@@ -156,12 +185,16 @@ export class NanoCaliburInterpreter {
     return {
       gravityEnabled: this.sceneState.gravityEnabled,
       elapsed: this.sceneState.elapsed,
+      turn: this.sceneState.turn,
+      loopMode: this.sceneState.loopMode,
+      turnChangedThisStep: this.sceneState.turnChangedThisStep,
+      interfaceHtml: this.sceneState.interfaceHtml,
     };
   }
 
-  getTools(): Array<{ name: string; tool_docstring: string; action: string }> {
+  getTools(): Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> {
     const fromSpec = Array.isArray(this.spec.tools) ? this.spec.tools : [];
-    const out: Array<{ name: string; tool_docstring: string; action: string }> = [];
+    const out: Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> = [];
     const seen = new Set<string>();
     for (const item of fromSpec) {
       if (!item || typeof item.name !== "string" || !item.name) {
@@ -176,6 +209,7 @@ export class NanoCaliburInterpreter {
         tool_docstring:
           typeof item.tool_docstring === "string" ? item.tool_docstring : "",
         action: typeof item.action === "string" ? item.action : "",
+        role_id: typeof item.role_id === "string" ? item.role_id : undefined,
       });
     }
     return out;
@@ -225,6 +259,7 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      roles: this.rolesById,
       tick: 1,
       elapsed: this.sceneState.elapsed,
       getActorByUid: (uid: string) => {
@@ -238,12 +273,15 @@ export class NanoCaliburInterpreter {
         }
         return this.getActorByUid(uid);
       },
+      getRoleById: (id: string) => this.getRoleById(id),
       playAnimation: this.runtimeHooks.playAnimation,
       destroyActor: (actor: Record<string, any>) => this.destroyActor(actor),
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        nextTurn: () => this.nextTurn(),
+        setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -260,6 +298,7 @@ export class NanoCaliburInterpreter {
     return {
       globals: this.globals,
       actors: this.actors,
+      roles: this.rolesById,
       tick: 1,
       elapsed: this.sceneState.elapsed,
       getActorByUid: (uid: string) => {
@@ -268,10 +307,12 @@ export class NanoCaliburInterpreter {
         }
         return this.getActorByUid(uid);
       },
+      getRoleById: (id: string) => this.getRoleById(id),
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -314,7 +355,7 @@ export class NanoCaliburInterpreter {
         }
         globals[globalVar.name] = uid ? this.getActorByUid(uid) : null;
       } else {
-        globals[globalVar.name] = globalVar.value;
+        globals[globalVar.name] = this.cloneStructuredValue(globalVar.value);
       }
     }
     return globals;
@@ -323,7 +364,7 @@ export class NanoCaliburInterpreter {
   private initActors(actorSpecs: Record<string, any>[]): Record<string, any>[] {
     return actorSpecs.map((actor) => {
       const out = {
-        ...(actor.fields || {}),
+        ...(this.cloneStructuredValue(actor.fields || {}) as Record<string, any>),
         uid: actor.uid,
         type: actor.type,
       } as Record<string, any>;
@@ -337,11 +378,77 @@ export class NanoCaliburInterpreter {
     });
   }
 
+  private initRoles(roleSpecs: Record<string, any>[]): Record<string, any> {
+    const out: Record<string, any> = {};
+    if (!Array.isArray(roleSpecs)) {
+      return out;
+    }
+    for (const role of roleSpecs) {
+      if (!role || typeof role !== "object") {
+        continue;
+      }
+      const id = typeof role.id === "string" ? role.id : "";
+      if (!id) {
+        continue;
+      }
+      const roleFields =
+        role.fields && typeof role.fields === "object"
+          ? (this.cloneStructuredValue(role.fields) as Record<string, any>)
+          : {};
+      out[id] = {
+        id,
+        type: typeof role.type === "string" ? role.type : "Role",
+        kind: typeof role.kind === "string" ? role.kind : "hybrid",
+        required: typeof role.required === "boolean" ? role.required : true,
+        ...roleFields,
+      };
+    }
+    return out;
+  }
+
+  private getRoleById(id: string): Record<string, any> | null {
+    if (typeof id !== "string" || !id) {
+      return null;
+    }
+    const role = this.rolesById[id];
+    if (!role || typeof role !== "object") {
+      return null;
+    }
+    return role;
+  }
+
   private initSceneState(sceneSpec: Record<string, any> | null): InterpreterSceneState {
+    const loopMode = this.resolveLoopMode(
+      this.spec?.multiplayer && typeof this.spec.multiplayer === "object"
+        ? this.spec.multiplayer.default_loop
+        : null,
+    );
     return {
       gravityEnabled: Boolean(sceneSpec && sceneSpec.gravity_enabled),
       elapsed: 0,
+      turn: 0,
+      loopMode,
+      turnChangedThisStep: false,
+      interfaceHtml:
+        typeof this.spec?.interface_html === "string" ? this.spec.interface_html : "",
     };
+  }
+
+  private resolveLoopMode(value: unknown): "real_time" | "turn_based" | "hybrid" {
+    if (value === "turn_based" || value === "hybrid" || value === "real_time") {
+      return value;
+    }
+    return "real_time";
+  }
+
+  private nextTurn(): void {
+    this.sceneState.turn += 1;
+    this.sceneState.turnChangedThisStep = true;
+  }
+
+  private setInterfaceHtml(html: string): void {
+    this.sceneState.interfaceHtml =
+      typeof html === "string" ? html : String(html ?? "");
   }
 
   private buildMaskedTileSet(mapSpec: Record<string, any> | null): Set<string> {
@@ -413,11 +520,17 @@ export class NanoCaliburInterpreter {
     }
 
     if (condition.kind === "keyboard" || condition.kind === "keyboard_pressed") {
+      if (!this.matchesRoleScope(condition, frame)) {
+        return { matched: false };
+      }
       const phase = condition.phase || "on";
       return { matched: this.matchKeyboardPhase(frame, phase, condition.key) };
     }
 
     if (condition.kind === "mouse" || condition.kind === "mouse_clicked") {
+      if (!this.matchesRoleScope(condition, frame)) {
+        return { matched: false };
+      }
       const phase = condition.phase || "on";
       return {
         matched: this.matchMousePhase(frame, phase, condition.button || "left"),
@@ -497,7 +610,7 @@ export class NanoCaliburInterpreter {
       }
       const toolCalls = this.normalizeToolCalls(frame.toolCalls);
       for (const toolCall of toolCalls) {
-        if (toolCall.name === toolName) {
+        if (toolCall.name === toolName && this.matchesRoleScope(condition, frame, toolCall)) {
           return { matched: true, toolCall };
         }
       }
@@ -543,24 +656,24 @@ export class NanoCaliburInterpreter {
     key: string | string[],
   ): boolean {
     const keyboard = frame.keyboard || {};
-    const begin = this.normalizeStringArray(
+    const begin = this.expandKeyboardValues(this.normalizeStringArray(
       keyboard.begin || frame.keysJustPressed || frame.keysBegin || [],
-    );
-    const on = this.normalizeStringArray(
+    ));
+    const on = this.expandKeyboardValues(this.normalizeStringArray(
       keyboard.on || frame.keysPressed || frame.keysDown || [],
-    );
-    const end = this.normalizeStringArray(
+    ));
+    const end = this.expandKeyboardValues(this.normalizeStringArray(
       keyboard.end || frame.keysJustReleased || frame.keysEnd || [],
-    );
+    ));
     if (Array.isArray(key)) {
       for (const item of key) {
-        if (this.phaseArrayContains(phase, begin, on, end, item)) {
+        if (this.phaseSetContains(phase, begin, on, end, item)) {
           return true;
         }
       }
       return false;
     }
-    return this.phaseArrayContains(phase, begin, on, end, key);
+    return this.phaseSetContains(phase, begin, on, end, key);
   }
 
   private matchMousePhase(
@@ -606,6 +719,159 @@ export class NanoCaliburInterpreter {
     return on.includes(value);
   }
 
+  private phaseSetContains(
+    phase: string,
+    begin: Set<string>,
+    on: Set<string>,
+    end: Set<string>,
+    value: string,
+  ): boolean {
+    const candidates = this.expandKeyboardToken(value);
+    if (phase === "begin") {
+      return this.setContainsAny(begin, candidates);
+    }
+    if (phase === "end") {
+      return this.setContainsAny(end, candidates);
+    }
+    return this.setContainsAny(on, candidates);
+  }
+
+  private setContainsAny(haystack: Set<string>, candidates: string[]): boolean {
+    for (const candidate of candidates) {
+      if (haystack.has(candidate)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private expandKeyboardValues(values: string[]): Set<string> {
+    const out = new Set<string>();
+    for (const value of values) {
+      const expanded = this.expandKeyboardToken(value);
+      for (const token of expanded) {
+        out.add(token);
+      }
+    }
+    return out;
+  }
+
+  private expandKeyboardToken(token: string): string[] {
+    if (typeof token !== "string" || token.length === 0) {
+      return [];
+    }
+
+    const out = new Set<string>();
+    const queue: string[] = [token];
+    while (queue.length > 0) {
+      const current = queue.pop();
+      if (!current || out.has(current)) {
+        continue;
+      }
+      out.add(current);
+
+      const lower = current.toLowerCase();
+      if (!out.has(lower)) {
+        queue.push(lower);
+      }
+
+      if (/^[a-zA-Z]$/.test(current)) {
+        const upper = current.toUpperCase();
+        const lowerLetter = current.toLowerCase();
+        const code = `Key${upper}`;
+        if (!out.has(upper)) {
+          queue.push(upper);
+        }
+        if (!out.has(lowerLetter)) {
+          queue.push(lowerLetter);
+        }
+        if (!out.has(code)) {
+          queue.push(code);
+        }
+      } else {
+        const codeMatch = /^Key([a-zA-Z])$/.exec(current);
+        if (codeMatch) {
+          const letter = codeMatch[1];
+          const upper = letter.toUpperCase();
+          const lowerLetter = upper.toLowerCase();
+          if (!out.has(upper)) {
+            queue.push(upper);
+          }
+          if (!out.has(lowerLetter)) {
+            queue.push(lowerLetter);
+          }
+        }
+      }
+
+      const aliases = this.keyboardAliasLookup.get(lower);
+      if (aliases) {
+        for (const alias of aliases) {
+          if (!out.has(alias)) {
+            queue.push(alias);
+          }
+        }
+      }
+    }
+
+    return [...out];
+  }
+
+  private buildKeyboardAliasLookup(
+    sceneSpec: Record<string, any> | null,
+  ): Map<string, Set<string>> {
+    const groups: string[][] = [
+      ["ArrowUp", "arrowup", "up"],
+      ["ArrowDown", "arrowdown", "down"],
+      ["ArrowLeft", "arrowleft", "left"],
+      ["ArrowRight", "arrowright", "right"],
+      [" ", "Space", "space", "Spacebar"],
+    ];
+
+    const sceneAliases =
+      sceneSpec && sceneSpec.keyboard_aliases && typeof sceneSpec.keyboard_aliases === "object"
+        ? (sceneSpec.keyboard_aliases as Record<string, unknown>)
+        : {};
+    for (const [source, aliasValue] of Object.entries(sceneAliases)) {
+      if (typeof source !== "string" || source.length === 0) {
+        continue;
+      }
+      const aliases: string[] = [];
+      if (typeof aliasValue === "string") {
+        aliases.push(aliasValue);
+      } else if (Array.isArray(aliasValue)) {
+        for (const item of aliasValue) {
+          if (typeof item === "string" && item.length > 0) {
+            aliases.push(item);
+          }
+        }
+      }
+      if (aliases.length === 0) {
+        continue;
+      }
+      groups.push([source, ...aliases]);
+    }
+
+    const lookup = new Map<string, Set<string>>();
+    for (const group of groups) {
+      const tokens = Array.from(new Set(group.filter((token) => token.length > 0)));
+      if (tokens.length < 2) {
+        continue;
+      }
+      for (const token of tokens) {
+        const key = token.toLowerCase();
+        let entry = lookup.get(key);
+        if (!entry) {
+          entry = new Set<string>();
+          lookup.set(key, entry);
+        }
+        for (const candidate of tokens) {
+          entry.add(candidate);
+        }
+      }
+    }
+    return lookup;
+  }
+
   private normalizeStringArray(value: unknown): string[] {
     if (!Array.isArray(value)) {
       return [];
@@ -638,10 +904,52 @@ export class NanoCaliburInterpreter {
             typeof (item as ToolFrameInput).payload === "object"
               ? (item as ToolFrameInput).payload
               : {},
+          role_id:
+            typeof (item as ToolFrameInput).role_id === "string"
+              ? (item as ToolFrameInput).role_id
+              : undefined,
         });
       }
     }
     return out;
+  }
+
+  private matchesRoleScope(
+    condition: Record<string, any>,
+    frame: NanoCaliburFrameInput,
+    toolCall: ToolFrameInput | null = null,
+  ): boolean {
+    const scopedRoleId =
+      condition && typeof condition.role_id === "string" && condition.role_id
+        ? condition.role_id
+        : null;
+    if (!scopedRoleId) {
+      return true;
+    }
+    const frameRoleId = this.readFrameRoleId(frame, toolCall);
+    return frameRoleId === scopedRoleId;
+  }
+
+  private readFrameRoleId(
+    frame: NanoCaliburFrameInput,
+    toolCall: ToolFrameInput | null = null,
+  ): string | null {
+    if (!frame || typeof frame !== "object") {
+      if (toolCall && typeof toolCall.role_id === "string" && toolCall.role_id) {
+        return toolCall.role_id;
+      }
+      return null;
+    }
+    if (typeof frame.role_id === "string" && frame.role_id) {
+      return frame.role_id;
+    }
+    if (typeof frame.roleId === "string" && frame.roleId) {
+      return frame.roleId;
+    }
+    if (toolCall && typeof toolCall.role_id === "string" && toolCall.role_id) {
+      return toolCall.role_id;
+    }
+    return null;
   }
 
   private selectActors(selector: Record<string, any>): Record<string, any>[] {
@@ -756,7 +1064,7 @@ export class NanoCaliburInterpreter {
         if (!(fieldName in schema)) {
           continue;
         }
-        actor[fieldName] = Array.isArray(value) ? [...value] : value;
+        actor[fieldName] = this.cloneStructuredValue(value);
       }
     }
 
@@ -816,6 +1124,37 @@ export class NanoCaliburInterpreter {
         y: this.numberOrZero(actor.y),
         z: this.numberOrZero(actor.z),
       });
+    }
+    return out;
+  }
+
+  private resolveParentPreviousPositions(
+    encoded:
+      | Array<{
+          uid: string;
+          x?: number;
+          y?: number;
+          z?: number;
+        }>
+      | undefined,
+    fallback: Map<string, { x: number; y: number; z: number }>,
+  ): Map<string, { x: number; y: number; z: number }> {
+    if (!Array.isArray(encoded) || encoded.length === 0) {
+      return fallback;
+    }
+    const out = new Map<string, { x: number; y: number; z: number }>();
+    for (const item of encoded) {
+      if (!item || typeof item.uid !== "string" || !item.uid) {
+        continue;
+      }
+      out.set(item.uid, {
+        x: this.numberOrZero(item.x),
+        y: this.numberOrZero(item.y),
+        z: this.numberOrZero(item.z),
+      });
+    }
+    if (out.size === 0) {
+      return fallback;
     }
     return out;
   }
@@ -908,7 +1247,24 @@ export class NanoCaliburInterpreter {
     if (typeLabel.startsWith("list[")) {
       return [];
     }
+    if (typeLabel.startsWith("dict[")) {
+      return {};
+    }
     return null;
+  }
+
+  private cloneStructuredValue(value: any): any {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.cloneStructuredValue(item));
+    }
+    if (value && typeof value === "object") {
+      const out: Record<string, any> = {};
+      for (const [key, item] of Object.entries(value)) {
+        out[key] = this.cloneStructuredValue(item);
+      }
+      return out;
+    }
+    return value;
   }
 
   private getActorByUid(uid: string): Record<string, any> | null {

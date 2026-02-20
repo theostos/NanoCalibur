@@ -4,7 +4,7 @@ This tutorial shows a full standalone flow:
 
 1. Create a blank TypeScript web project.
 2. Write a NanoCalibur DSL scene in Python.
-3. Generate `src/nanocalibur_generated` with `build_web_scene.py`.
+3. Generate `src/nanocalibur_generated` with `build_game.py`.
 4. Start the browser app and run the scene.
 
 ## Prerequisites
@@ -83,7 +83,15 @@ void host.start();
 Create `scene.py` in project root:
 
 ```python
-from nanocalibur.dsl_markers import Actor, Camera, Game, KeyboardCondition, Scene
+from nanocalibur.dsl_markers import (
+    Actor,
+    Camera,
+    Game,
+    KeyboardCondition,
+    Role,
+    RoleKind,
+    Scene,
+)
 
 
 class Player(Actor):
@@ -97,16 +105,17 @@ def move_right(player: Player["hero"]):
 game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
+game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
 
 scene.add_actor(Player(uid="hero", x=100, y=100, speed=3))
-scene.add_rule(KeyboardCondition.on_press("d"), move_right)
+scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move_right)
 scene.set_camera(Camera.follow("hero"))
 ```
 
 Note: interface HTML is not injected by default. Add it explicitly only when needed:
 
 ```python
-game.set_interface("<div>Score: {{score}}</div>")
+scene.set_interface("<div>Score: {{score}}</div>")
 ```
 
 ## 3. Generate NanoCalibur Output
@@ -114,7 +123,7 @@ game.set_interface("<div>Score: {{score}}</div>")
 Run from your project directory:
 
 ```bash
-python /path/to/NanoCalibur/nanocalibur/build_web_scene.py ./scene.py --project .
+python /path/to/NanoCalibur/nanocalibur/build_game.py ./scene.py --project .
 ```
 
 This writes:

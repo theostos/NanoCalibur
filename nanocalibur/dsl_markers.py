@@ -3,7 +3,14 @@
 These symbols are parsed from source with ``ast`` and are never executed at runtime.
 """
 
+from enum import Enum
 from typing import Any, Callable, TypeVar
+
+try:
+    from enum import StrEnum  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - Python < 3.11 fallback
+    class StrEnum(str, Enum):
+        pass
 
 
 class Global:
@@ -63,6 +70,7 @@ class Actor:
     Built-in engine-managed fields:
     - ``uid`` stable actor identifier
     - ``x``, ``y`` world position
+    - ``vx``, ``vy`` linear velocity (units/second)
     - ``w``, ``h`` collider/render size
     - ``active`` lifecycle flag
     - ``block_mask`` tile-blocking priority (``None`` disables tile blocking)
@@ -75,6 +83,8 @@ class Actor:
     uid: str
     x: float
     y: float
+    vx: float
+    vy: float
     w: float
     h: float
     active: bool
@@ -93,6 +103,8 @@ class Actor:
         *,
         x: float = 0.0,
         y: float = 0.0,
+        vx: float = 0.0,
+        vy: float = 0.0,
         w: float | None = None,
         h: float | None = None,
         z: float = 0.0,
@@ -138,7 +150,12 @@ class Scene:
         """Allow ``Scene[...]`` syntax if needed for compatibility."""
         return cls
 
-    def __init__(self, *, gravity: bool = False):
+    def __init__(
+        self,
+        *,
+        gravity: bool = False,
+        keyboard_aliases: dict[str, str | list[str]] | None = None,
+    ):
         """Declare scene-level runtime options."""
         return None
 
@@ -158,6 +175,10 @@ class Scene:
         """Configure camera behavior for this scene."""
         return None
 
+    def set_interface(self, _html: str):
+        """Configure an HTML overlay rendered above the canvas for this scene."""
+        return None
+
     def enable_gravity(self):
         """Enable gravity in the current scene."""
         return None
@@ -168,6 +189,10 @@ class Scene:
 
     def spawn(self, _actor: Actor):
         """Spawn a new actor instance inside the current scene."""
+        return None
+
+    def next_turn(self):
+        """Advance the session turn in turn-based or hybrid loop modes."""
         return None
 
 
@@ -215,6 +240,54 @@ class Sprite:
         return None
 
 
+class Multiplayer:
+    """Multiplayer runtime defaults and loop controls."""
+
+    def __init__(
+        self,
+        *,
+        default_loop: str = "real_time",
+        allowed_loops: list[str] | None = None,
+        default_visibility: str = "shared",
+        tick_rate: int = 20,
+        turn_timeout_ms: int = 15_000,
+        hybrid_window_ms: int = 500,
+        game_time_scale: float = 1.0,
+        max_catchup_steps: int = 1,
+    ):
+        return None
+
+
+class RoleKind(StrEnum):
+    """Role kind for multiplayer slot assignment."""
+
+    HUMAN = "human"
+    AI = "ai"
+    HYBRID = "hybrid"
+
+
+class Role:
+    """Role declaration for multiplayer sessions."""
+
+    id: str
+    required: bool
+    kind: str
+
+    def __class_getitem__(cls, item):
+        """Allow ``Role[...]`` syntax in type annotations."""
+        return cls
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        required: bool = True,
+        kind: RoleKind | str = RoleKind.HYBRID,
+        **_fields: Any,
+    ):
+        return None
+
+
 class Game:
     """Top-level DSL game container."""
 
@@ -247,8 +320,12 @@ class Game:
         """Configure scene runtime settings."""
         return None
 
-    def set_interface(self, _html: str):
-        """Configure an HTML overlay rendered above the canvas."""
+    def set_multiplayer(self, _multiplayer: Multiplayer):
+        """Configure multiplayer loop and pacing defaults."""
+        return None
+
+    def add_role(self, _role: Role):
+        """Declare a multiplayer role that can join sessions."""
         return None
 
     def add_resource(self, _name: str, _path: str):
@@ -260,21 +337,60 @@ class Game:
         return None
 
 
+class CodeBlock:
+    """Top-level structural block marker for DSL authoring."""
+
+    @staticmethod
+    def begin(_id: str, *, descr: str | None = None):
+        """Start a code block identified by ``_id``."""
+        return None
+
+    @staticmethod
+    def end(_id: str | None = None):
+        """Close the current code block."""
+        return None
+
+
+class AbstractCodeBlock(CodeBlock):
+    """Template block marker that requires explicit ``instantiate(...)`` calls."""
+
+    @staticmethod
+    def begin(_id: str, **_params_and_descr):
+        """Start an abstract code block template.
+
+        Supported keywords:
+        - ``descr=...`` for human-readable description
+        - parameter declarations such as ``id=str``, ``hero_name=str``
+        - optional ``params={...}`` dict declaration form
+        """
+        return AbstractCodeBlock()
+
+    @staticmethod
+    def end(_id: str | None = None):
+        """Close the current abstract code block template."""
+        return None
+
+    @staticmethod
+    def instantiate(_id: str, **_values):
+        """Instantiate an abstract block by id with constant values."""
+        return None
+
+
 class KeyboardCondition:
     """Keyboard input condition helpers."""
 
     @staticmethod
-    def begin_press(_key: str | list[str]):
+    def begin_press(_key: str | list[str], id: str):
         """Trigger when a key is pressed this frame."""
         return None
 
     @staticmethod
-    def on_press(_key: str | list[str]):
+    def on_press(_key: str | list[str], id: str):
         """Trigger while a key is held."""
         return None
 
     @staticmethod
-    def end_press(_key: str | list[str]):
+    def end_press(_key: str | list[str], id: str):
         """Trigger when a key is released this frame."""
         return None
 
@@ -318,17 +434,17 @@ class MouseCondition:
     """Mouse input condition helpers."""
 
     @staticmethod
-    def begin_click(_button: str = "left"):
+    def begin_click(_button: str = "left", *, id: str):
         """Trigger when a mouse button is pressed this frame."""
         return None
 
     @staticmethod
-    def on_click(_button: str = "left"):
+    def on_click(_button: str = "left", *, id: str):
         """Trigger while a mouse button is held."""
         return None
 
     @staticmethod
-    def end_click(_button: str = "left"):
+    def end_click(_button: str = "left", *, id: str):
         """Trigger when a mouse button is released this frame."""
         return None
 
@@ -419,7 +535,7 @@ def OnLogicalCondition(_predicate, _selector):
     return None
 
 
-def OnToolCall(_name: str, _tool_docstring: str):
+def OnToolCall(_name: str, _tool_docstring: str, id: str):
     """Condition helper exposing an action as an external LLM-callable tool."""
     return None
 
@@ -440,7 +556,7 @@ def condition(_condition_expr) -> Callable[[F], F]:
     """Attach a rule condition directly to an action function.
 
     Example:
-        ``@condition(KeyboardCondition.begin_press("g"))``
+        ``@condition(KeyboardCondition.begin_press("g", id="human_1"))``
     """
 
     def _decorate(fn: F) -> F:

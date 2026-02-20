@@ -23,6 +23,7 @@ from nanocalibur.ir import (
     ParamBinding,
     PredicateIR,
     Range,
+    RoleSelector,
     SubscriptExpr,
     Unary,
     Var,
@@ -30,68 +31,28 @@ from nanocalibur.ir import (
     Yield,
 )
 from nanocalibur.schema_registry import SchemaRegistry
-from nanocalibur.typesys import FieldType, ListType, Prim, PrimType
+from nanocalibur.typesys import DictType, FieldType, ListType, Prim, PrimType
 
-
-_ALLOWED_BIN = {
-    ast.Add: "+",
-    ast.Sub: "-",
-    ast.Mult: "*",
-    ast.Div: "/",
-    ast.Mod: "%",
-}
-
-_ALLOWED_BOOL = {
-    ast.And: "&&",
-    ast.Or: "||",
-}
-
-_ALLOWED_CMP = {
-    ast.Eq: "==",
-    ast.NotEq: "!=",
-    ast.Lt: "<",
-    ast.LtE: "<=",
-    ast.Gt: ">",
-    ast.GtE: ">=",
-    ast.Is: "==",
-    ast.IsNot: "!=",
-}
-
-_ALLOWED_UNARY = {
-    ast.Not: "!",
-    ast.UAdd: "+",
-    ast.USub: "-",
-}
-
-_PRIM_NAMES = {
-    "int": Prim.INT,
-    "float": Prim.FLOAT,
-    "str": Prim.STR,
-    "bool": Prim.BOOL,
-}
-
-BASE_ACTOR_FIELDS: Dict[str, FieldType] = {
-    "uid": PrimType(Prim.STR),
-    "x": PrimType(Prim.FLOAT),
-    "y": PrimType(Prim.FLOAT),
-    "w": PrimType(Prim.FLOAT),
-    "h": PrimType(Prim.FLOAT),
-    "z": PrimType(Prim.FLOAT),
-    "active": PrimType(Prim.BOOL),
-    "block_mask": PrimType(Prim.INT),
-    "parent": PrimType(Prim.STR),
-    "sprite": PrimType(Prim.STR),
-}
-
-BASE_ACTOR_NO_DEFAULT_FIELDS = {"uid", "w", "h", "parent", "sprite", "block_mask"}
-BASE_ACTOR_DEFAULT_OVERRIDES = {
-    "active": True,
-    "z": 0.0,
-    "x": 0.0,
-    "y": 0.0,
-}
-
-CALLABLE_EXPR_PREFIX = "__nc_callable__:"
+from .constants import (
+    CALLABLE_EXPR_PREFIX,
+    BASE_ACTOR_DEFAULT_OVERRIDES,
+    BASE_ACTOR_FIELDS,
+    BASE_ACTOR_NO_DEFAULT_FIELDS,
+    _ALLOWED_BIN,
+    _ALLOWED_BOOL,
+    _ALLOWED_CMP,
+    _ALLOWED_UNARY,
+    _PRIM_NAMES,
+)
+from .helpers import (
+    _expect_name,
+    _format_syntax_error,
+    _is_docstring_expr,
+    _parse_actor_link_literal_value,
+    _parse_global_binding_name,
+    _parse_int_literal,
+    _parse_typed_literal_value,
+)
 
 
 @dataclass
@@ -99,6 +60,7 @@ class ActionScope:
     defined_names: Set[str]
     actor_var_types: Dict[str, str]
     actor_list_var_types: Dict[str, Optional[str]]
+    role_var_types: Dict[str, str]
     scene_vars: Set[str]
     tick_vars: Set[str]
     spawn_actor_templates: Dict[str, tuple[str, Expr, Expr]]
@@ -173,65 +135,105 @@ class DSLCompiler:
                 raise DSLValidationError("Decorators are not allowed on actor schemas.")
 
             if len(node.bases) != 1:
-                raise DSLValidationError("Actor schema must inherit from Actor or ActorModel only.")
+                raise DSLValidationError(
+                    "Schema class must inherit from Actor, ActorModel, or Role."
+                )
 
             base = node.bases[0]
-            if not isinstance(base, ast.Name) or base.id not in {"Actor", "ActorModel"}:
-                raise DSLValidationError("Only Actor or ActorModel subclasses are allowed.")
+            if not isinstance(base, ast.Name):
+                raise DSLValidationError(
+                    "Schema class must inherit from Actor, ActorModel, or Role."
+                )
 
-            fields: Dict[str, FieldType] = dict(BASE_ACTOR_FIELDS)
-            for stmt in node.body:
-                with dsl_node_context(stmt):
-                    if isinstance(stmt, ast.Pass):
-                        continue
-                    if not isinstance(stmt, ast.AnnAssign):
-                        raise DSLValidationError(
-                            "Actor schema body can only contain annotated fields."
-                        )
-                    if stmt.value is not None:
-                        raise DSLValidationError(
-                            "Actor schema fields cannot have default values."
-                        )
-                    if not isinstance(stmt.target, ast.Name):
-                        raise DSLValidationError("Actor schema field target must be a name.")
+            if base.id in {"Actor", "ActorModel"}:
+                fields: Dict[str, FieldType] = dict(BASE_ACTOR_FIELDS)
+                for stmt in node.body:
+                    with dsl_node_context(stmt):
+                        if isinstance(stmt, ast.Pass):
+                            continue
+                        if not isinstance(stmt, ast.AnnAssign):
+                            raise DSLValidationError(
+                                "Actor schema body can only contain annotated fields."
+                            )
+                        if stmt.value is not None:
+                            raise DSLValidationError(
+                                "Actor schema fields cannot have default values."
+                            )
+                        if not isinstance(stmt.target, ast.Name):
+                            raise DSLValidationError(
+                                "Actor schema field target must be a name."
+                            )
 
-                    field_name = stmt.target.id
-                    if field_name in fields and field_name not in BASE_ACTOR_FIELDS:
-                        raise DSLValidationError(
-                            f"Duplicate field '{field_name}' in actor '{node.name}'."
-                        )
-                    fields[field_name] = self._parse_field_type(stmt.annotation)
+                        field_name = stmt.target.id
+                        if field_name in fields and field_name not in BASE_ACTOR_FIELDS:
+                            raise DSLValidationError(
+                                f"Duplicate field '{field_name}' in actor '{node.name}'."
+                            )
+                        fields[field_name] = self._parse_field_type(stmt.annotation)
 
-            self.schemas.register_actor(node.name, fields)
+                self.schemas.register_actor(node.name, fields)
+                return
+
+            if base.id == "Role":
+                fields: Dict[str, FieldType] = {}
+                reserved = {"id", "required", "kind"}
+                for stmt in node.body:
+                    with dsl_node_context(stmt):
+                        if isinstance(stmt, ast.Pass):
+                            continue
+                        if not isinstance(stmt, ast.AnnAssign):
+                            raise DSLValidationError(
+                                "Role schema body can only contain annotated fields."
+                            )
+                        if stmt.value is not None:
+                            raise DSLValidationError(
+                                "Role schema fields cannot have default values."
+                            )
+                        if not isinstance(stmt.target, ast.Name):
+                            raise DSLValidationError(
+                                "Role schema field target must be a name."
+                            )
+                        field_name = stmt.target.id
+                        if field_name in reserved:
+                            raise DSLValidationError(
+                                f"Role schema field '{field_name}' is reserved."
+                            )
+                        if field_name in fields:
+                            raise DSLValidationError(
+                                f"Duplicate field '{field_name}' in role '{node.name}'."
+                            )
+                        fields[field_name] = self._parse_field_type(stmt.annotation)
+                self.schemas.register_role(node.name, fields)
+                return
+
+            raise DSLValidationError("Only Actor, ActorModel, or Role subclasses are allowed.")
 
     def _parse_field_type(self, annotation: ast.AST) -> FieldType:
-        if isinstance(annotation, ast.Name) and annotation.id in _PRIM_NAMES:
-            return PrimType(_PRIM_NAMES[annotation.id])
+        return self._parse_container_field_type(annotation)
 
-        if isinstance(annotation, ast.Subscript):
-            if not isinstance(annotation.value, ast.Name) or annotation.value.id not in {
-                "List",
-                "list",
-            }:
-                raise DSLValidationError("Only List[...] container types are allowed.")
-
-            return ListType(self._parse_list_field_elem_type(annotation.slice))
-
-        raise DSLValidationError(
-            "Field type must be int, float, str, bool, or List[...]"
-        )
-
-    def _parse_list_field_elem_type(self, node: ast.AST) -> FieldType:
+    def _parse_container_field_type(self, node: ast.AST) -> FieldType:
         if isinstance(node, ast.Name) and node.id in _PRIM_NAMES:
             return PrimType(_PRIM_NAMES[node.id])
-        if (
-            isinstance(node, ast.Subscript)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in {"List", "list"}
-        ):
-            return ListType(self._parse_list_field_elem_type(node.slice))
+
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            container_name = node.value.id
+            if container_name in {"List", "list"}:
+                return ListType(self._parse_container_field_type(node.slice))
+            if container_name in {"Dict", "dict"}:
+                if not isinstance(node.slice, ast.Tuple) or len(node.slice.elts) != 2:
+                    raise DSLValidationError(
+                        "Dict[...] field types must be declared as Dict[str, value_type]."
+                    )
+                key_type = self._parse_container_field_type(node.slice.elts[0])
+                if not isinstance(key_type, PrimType) or key_type.prim != Prim.STR:
+                    raise DSLValidationError(
+                        "Dict[...] keys must be str in field type declarations."
+                    )
+                value_type = self._parse_container_field_type(node.slice.elts[1])
+                return DictType(key=key_type, value=value_type)
+
         raise DSLValidationError(
-            "List element type must be a primitive or nested List[...] of primitives."
+            "Field type must be int, float, str, bool, List[...], or Dict[str, ...]."
         )
 
     def _compile_action(self, fn: ast.FunctionDef) -> ActionIR:
@@ -254,11 +256,14 @@ class DSLCompiler:
 
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
+            role_var_types: Dict[str, str] = {}
             for param in params:
                 if param.kind == BindingKind.ACTOR and param.actor_type is not None:
                     actor_var_types[param.name] = param.actor_type
                 if param.kind == BindingKind.ACTOR_LIST:
                     actor_list_var_types[param.name] = param.actor_list_type
+                if param.kind == BindingKind.ROLE and param.role_type is not None:
+                    role_var_types[param.name] = param.role_type
                 if (
                     param.kind == BindingKind.GLOBAL
                     and param.global_name in self.global_actor_types
@@ -270,6 +275,7 @@ class DSLCompiler:
                 defined_names={p.name for p in params},
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
+                role_var_types=role_var_types,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
                 spawn_actor_templates={},
@@ -306,11 +312,14 @@ class DSLCompiler:
 
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
+            role_var_types: Dict[str, str] = {}
             for param in params:
                 if param.kind == BindingKind.ACTOR and param.actor_type is not None:
                     actor_var_types[param.name] = param.actor_type
                 if param.kind == BindingKind.ACTOR_LIST:
                     actor_list_var_types[param.name] = param.actor_list_type
+                if param.kind == BindingKind.ROLE and param.role_type is not None:
+                    role_var_types[param.name] = param.role_type
                 if (
                     param.kind == BindingKind.GLOBAL
                     and param.global_name in self.global_actor_types
@@ -338,6 +347,7 @@ class DSLCompiler:
                 defined_names={p.name for p in params},
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
+                role_var_types=role_var_types,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
                 spawn_actor_templates={},
@@ -363,6 +373,7 @@ class DSLCompiler:
             params: List[str] = []
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
+            role_var_types: Dict[str, str] = {}
             scene_vars: Set[str] = set()
             tick_vars: Set[str] = set()
 
@@ -381,6 +392,8 @@ class DSLCompiler:
                             tick_vars.add(arg.arg)
                         elif ann.id in self.schemas.actor_fields:
                             actor_var_types[arg.arg] = ann.id
+                        elif ann.id in self.schemas.role_fields:
+                            role_var_types[arg.arg] = ann.id
                         continue
 
                     if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
@@ -391,6 +404,8 @@ class DSLCompiler:
                             tick_vars.add(arg.arg)
                         elif head in self.schemas.actor_fields:
                             actor_var_types[arg.arg] = head
+                        elif head in self.schemas.role_fields:
+                            role_var_types[arg.arg] = head
                         elif head in {"List", "list"} and isinstance(ann.slice, ast.Name):
                             if ann.slice.id == "Actor":
                                 actor_list_var_types[arg.arg] = None
@@ -413,6 +428,7 @@ class DSLCompiler:
                 defined_names=set(params),
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
+                role_var_types=role_var_types,
                 scene_vars=scene_vars,
                 tick_vars=tick_vars,
                 spawn_actor_templates={},
@@ -456,6 +472,12 @@ class DSLCompiler:
                     kind=BindingKind.ACTOR,
                     actor_selector=ActorSelector(uid=ann.id),
                     actor_type=ann.id,
+                )
+            if isinstance(ann, ast.Name) and ann.id == "Role":
+                raise DSLValidationError('Role binding must be Role["role_id"].')
+            if isinstance(ann, ast.Name) and ann.id in self.schemas.role_fields:
+                raise DSLValidationError(
+                    f'{ann.id} role binding must be {ann.id}["role_id"].'
                 )
 
             if not isinstance(ann, ast.Subscript):
@@ -502,6 +524,22 @@ class DSLCompiler:
                         actor_type=actor_type,
                     )
 
+            if head == "Role":
+                role_id: Optional[str] = None
+                if isinstance(selector, ast.Constant) and isinstance(selector.value, str):
+                    role_id = selector.value
+                elif _parse_int_literal(selector) is not None:
+                    raise DSLValidationError(
+                        'Role binding does not support index selectors. Use Role["role_id"].'
+                    )
+                if role_id is None:
+                    raise DSLValidationError('Role binding must be Role["role_id"].')
+                return ParamBinding(
+                    name=arg.arg,
+                    kind=BindingKind.ROLE,
+                    role_selector=RoleSelector(id=role_id),
+                )
+
             # Typed actor binding using actor schema name as the binding head:
             #   player: Player["hero_uid"] or player: Player[-1]
             if head in self.schemas.actor_fields:
@@ -524,6 +562,25 @@ class DSLCompiler:
 
                 raise DSLValidationError(
                     f'{head} binding must be {head}["uid"] or {head}[index].'
+                )
+
+            if head in self.schemas.role_fields:
+                role_id: Optional[str] = None
+                if isinstance(selector, ast.Constant) and isinstance(selector.value, str):
+                    role_id = selector.value
+                elif _parse_int_literal(selector) is not None:
+                    raise DSLValidationError(
+                        f'{head} binding does not support index selectors. Use {head}["role_id"].'
+                    )
+                if role_id is None:
+                    raise DSLValidationError(
+                        f'{head} binding must be {head}["role_id"].'
+                    )
+                return ParamBinding(
+                    name=arg.arg,
+                    kind=BindingKind.ROLE,
+                    role_selector=RoleSelector(id=role_id),
+                    role_type=head,
                 )
 
             if head in {"List", "list"}:
@@ -704,6 +761,9 @@ class DSLCompiler:
         if owner == "Scene":
             return self._compile_static_scene_call(expr, scope)
 
+        if owner in scope.defined_names:
+            return self._compile_collection_call_stmt(expr, scope, owner)
+
         raise DSLValidationError("Unsupported call statement in action body.")
 
     def _compile_actor_instance_attach_call(
@@ -765,6 +825,66 @@ class DSLCompiler:
             )
         return CallStmt(name="destroy_actor", args=[Var(owner)])
 
+    def _compile_collection_call_stmt(
+        self, expr: ast.Call, scope: ActionScope, owner: str
+    ) -> CallStmt:
+        method = expr.func.attr
+        if expr.keywords:
+            raise DSLValidationError(
+                f"{owner}.{method}(...) does not accept keyword arguments."
+            )
+
+        if method == "append":
+            if len(expr.args) != 1:
+                raise DSLValidationError(
+                    f"{owner}.append(...) expects exactly one argument."
+                )
+            return CallStmt(
+                name="list_append",
+                args=[
+                    Var(owner),
+                    self._compile_expr(expr.args[0], scope, allow_range_call=False),
+                ],
+            )
+
+        if method == "update":
+            if len(expr.args) != 1:
+                raise DSLValidationError(
+                    f"{owner}.update(...) expects exactly one argument."
+                )
+            return CallStmt(
+                name="dict_update",
+                args=[
+                    Var(owner),
+                    self._compile_expr(expr.args[0], scope, allow_range_call=False),
+                ],
+            )
+
+        if method == "pop":
+            if len(expr.args) > 1:
+                raise DSLValidationError(
+                    f"{owner}.pop(...) expects zero or one positional argument."
+                )
+            index_expr = (
+                self._compile_expr(expr.args[0], scope, allow_range_call=False)
+                if expr.args
+                else Const(None)
+            )
+            return CallStmt(
+                name="collection_pop_discard",
+                args=[Var(owner), index_expr],
+            )
+
+        if method == "concat":
+            raise DSLValidationError(
+                f"{owner}.concat(...) returns a value. Assign the result to a variable."
+            )
+
+        raise DSLValidationError(
+            f"Unsupported call statement '{owner}.{method}(...)'. "
+            "Supported mutating methods: append, pop, update."
+        )
+
     def _compile_scene_instance_call(
         self, expr: ast.Call, scope: ActionScope, owner: str
     ) -> CallStmt:
@@ -776,6 +896,25 @@ class DSLCompiler:
                 name="scene_set_gravity",
                 args=[Const(method == "enable_gravity")],
             )
+        if method == "set_interface":
+            if expr.keywords:
+                raise DSLValidationError(
+                    f"{owner}.set_interface(...) does not accept keyword args."
+                )
+            if len(expr.args) != 1:
+                raise DSLValidationError(
+                    f"{owner}.set_interface(...) expects one HTML string argument."
+                )
+            html_expr = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+            if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
+                raise DSLValidationError(
+                    f"{owner}.set_interface(...) HTML must be a string."
+                )
+            return CallStmt(name="scene_set_interface", args=[html_expr])
+        if method == "next_turn":
+            if expr.args or expr.keywords:
+                raise DSLValidationError(f"{owner}.next_turn(...) does not accept arguments.")
+            return CallStmt(name="scene_next_turn", args=[])
         if method == "spawn":
             return self._compile_scene_spawn_call(
                 args=expr.args,
@@ -798,6 +937,31 @@ class DSLCompiler:
                 name="scene_set_gravity",
                 args=[Const(method == "enable_gravity")],
             )
+        if method == "set_interface":
+            if expr.keywords:
+                raise DSLValidationError(
+                    "Scene.set_interface(...) does not accept keyword args."
+                )
+            if len(expr.args) != 2:
+                raise DSLValidationError(
+                    "Scene.set_interface(...) expects scene and html arguments."
+                )
+            scene_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+            self._require_scene_var(scene_arg, scope, "Scene.set_interface(...)")
+            html_expr = self._compile_expr(expr.args[1], scope, allow_range_call=False)
+            if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
+                raise DSLValidationError(
+                    "Scene.set_interface(...) HTML must be a string."
+                )
+            return CallStmt(name="scene_set_interface", args=[html_expr])
+        if method == "next_turn":
+            if expr.keywords:
+                raise DSLValidationError("Scene.next_turn(...) does not accept keyword args.")
+            if len(expr.args) != 1:
+                raise DSLValidationError("Scene.next_turn(...) expects a scene argument.")
+            scene_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+            self._require_scene_var(scene_arg, scope, "Scene.next_turn(...)")
+            return CallStmt(name="scene_next_turn", args=[])
         if method == "spawn":
             if not expr.args:
                 raise DSLValidationError(
@@ -1027,7 +1191,14 @@ class DSLCompiler:
             ):
                 raise DSLValidationError("tick.elapsed is read-only.")
             return compiled
-        raise DSLValidationError("Assignment target must be a variable or actor field.")
+        if isinstance(target, ast.Subscript):
+            if isinstance(target.slice, ast.Slice):
+                raise DSLValidationError("Slice assignment is not supported.")
+            return SubscriptExpr(
+                value=self._compile_expr(target.value, scope, allow_range_call=False),
+                index=self._compile_expr(target.slice, scope, allow_range_call=False),
+            )
+        raise DSLValidationError("Assignment target must be a variable or actor/role field.")
 
     # ---------------- Expressions ----------------
 
@@ -1051,6 +1222,21 @@ class DSLCompiler:
                         for item in expr.elts
                     ]
                 )
+
+            if isinstance(expr, ast.Dict):
+                fields: Dict[str, Expr] = {}
+                for key_node, value_node in zip(expr.keys, expr.values):
+                    if key_node is None:
+                        raise DSLValidationError("Dict unpacking is not supported.")
+                    key_expr = self._compile_expr(key_node, scope, allow_range_call=False)
+                    if not isinstance(key_expr, Const) or not isinstance(key_expr.value, str):
+                        raise DSLValidationError(
+                            "Dict literal keys must be constant strings."
+                        )
+                    fields[key_expr.value] = self._compile_expr(
+                        value_node, scope, allow_range_call=False
+                    )
+                return ObjectExpr(fields=fields)
 
             if isinstance(expr, ast.Name):
                 if expr.id not in scope.defined_names:
@@ -1205,6 +1391,9 @@ class DSLCompiler:
 
             raise DSLValidationError(f"Unsupported Random method '{method}'.")
 
+        if isinstance(expr.func, ast.Attribute):
+            return self._compile_collection_expr_call(expr, scope)
+
         if isinstance(expr.func, ast.Name) and expr.func.id in self.callable_signatures:
             if expr.keywords:
                 raise DSLValidationError(
@@ -1224,6 +1413,73 @@ class DSLCompiler:
             )
 
         raise DSLValidationError("Function calls are not allowed.")
+
+    def _compile_collection_expr_call(self, expr: ast.Call, scope: ActionScope) -> CallExpr:
+        if not (
+            isinstance(expr.func, ast.Attribute)
+            and isinstance(expr.func.value, ast.Name)
+        ):
+            raise DSLValidationError("Unsupported method call expression.")
+        owner_name = expr.func.value.id
+        if owner_name not in scope.defined_names:
+            raise DSLValidationError(
+                "Method call expression receiver must be a declared variable."
+            )
+        if expr.keywords:
+            raise DSLValidationError(
+                f"{owner_name}.{expr.func.attr}(...) does not accept keyword arguments."
+            )
+
+        owner_expr: Expr = Var(owner_name)
+        args = [self._compile_expr(arg, scope, allow_range_call=False) for arg in expr.args]
+        method = expr.func.attr
+
+        if method == "pop":
+            if len(args) > 1:
+                raise DSLValidationError(
+                    f"{owner_name}.pop(...) expects zero or one positional argument."
+                )
+            index_expr = args[0] if args else Const(None)
+            return CallExpr(name="collection_pop", args=[owner_expr, index_expr])
+
+        if method == "concat":
+            if len(args) != 1:
+                raise DSLValidationError(
+                    f"{owner_name}.concat(...) expects exactly one argument."
+                )
+            return CallExpr(name="collection_concat", args=[owner_expr, args[0]])
+
+        if method == "get":
+            if len(args) not in {1, 2}:
+                raise DSLValidationError(
+                    f"{owner_name}.get(...) expects key or key/default arguments."
+                )
+            default_expr = args[1] if len(args) == 2 else Const(None)
+            return CallExpr(name="dict_get", args=[owner_expr, args[0], default_expr])
+
+        if method == "keys":
+            if args:
+                raise DSLValidationError(f"{owner_name}.keys(...) does not accept arguments.")
+            return CallExpr(name="dict_keys", args=[owner_expr])
+
+        if method == "values":
+            if args:
+                raise DSLValidationError(
+                    f"{owner_name}.values(...) does not accept arguments."
+                )
+            return CallExpr(name="dict_values", args=[owner_expr])
+
+        if method == "items":
+            if args:
+                raise DSLValidationError(
+                    f"{owner_name}.items(...) does not accept arguments."
+                )
+            return CallExpr(name="dict_items", args=[owner_expr])
+
+        raise DSLValidationError(
+            f"Unsupported method call expression '{owner_name}.{method}(...)'. "
+            "Supported expression methods: pop, concat, get, keys, values, items."
+        )
 
     def _compile_range_call(self, expr: ast.Call, scope: ActionScope) -> Range:
         if not isinstance(expr.func, ast.Name) or expr.func.id != "range":
@@ -1264,12 +1520,21 @@ class DSLCompiler:
             return Attr(obj=obj_name, field="elapsed")
 
         actor_type = scope.actor_var_types.get(obj_name)
+        role_type = scope.role_var_types.get(obj_name)
+        if role_type is not None:
+            if not self.schemas.has_role_field(role_type, expr.attr):
+                raise DSLValidationError(
+                    f"Role '{role_type}' has no field '{expr.attr}'."
+                )
+            return Attr(obj=obj_name, field=expr.attr)
+
         if actor_type is None:
             raise DSLValidationError(
                 f"Actor variable '{obj_name}' must use Actor[\"Type\"] or "
-                "Type[...] binding to allow field access."
+                "Type[...] binding to allow field access. "
+                "Role fields require RoleType[\"role_id\"] bindings."
             )
-        if not self.schemas.has_field(actor_type, expr.attr):
+        if not self.schemas.has_actor_field(actor_type, expr.attr):
             raise DSLValidationError(
                 f"Actor '{actor_type}' has no field '{expr.attr}'."
             )
@@ -1289,6 +1554,10 @@ class DSLCompiler:
                 ]
             else:
                 scope.actor_list_var_types.pop(target_name, None)
+            if value.name in scope.role_var_types:
+                scope.role_var_types[target_name] = scope.role_var_types[value.name]
+            else:
+                scope.role_var_types.pop(target_name, None)
             if value.name in scope.spawn_actor_templates:
                 scope.spawn_actor_templates[target_name] = scope.spawn_actor_templates[
                     value.name
@@ -1299,167 +1568,10 @@ class DSLCompiler:
 
         scope.actor_var_types.pop(target_name, None)
         scope.actor_list_var_types.pop(target_name, None)
+        scope.role_var_types.pop(target_name, None)
         scope.spawn_actor_templates.pop(target_name, None)
 
     def _iterated_actor_type(self, iterable, scope: ActionScope) -> Optional[str]:
         if isinstance(iterable, Var):
             return scope.actor_list_var_types.get(iterable.name)
         return None
-
-
-def _is_docstring_expr(node: ast.AST) -> bool:
-    return isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(
-        node.value.value, str
-    )
-
-
-def _format_syntax_error(exc: SyntaxError, source: str) -> str:
-    line = exc.lineno or 0
-    col = exc.offset or 0
-    snippet = (exc.text or "").strip()
-    if not snippet and line > 0:
-        lines = source.splitlines()
-        if line <= len(lines):
-            snippet = lines[line - 1].strip()
-    message = f"Invalid Python syntax: {exc.msg}"
-    if line > 0:
-        message += f"\nLocation: line {line}, column {col if col > 0 else 1}"
-    if snippet:
-        message += f"\nCode: {snippet}"
-    return message
-
-
-def _parse_int_literal(node: ast.AST) -> int | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(
-        node.value, bool
-    ):
-        return node.value
-
-    if (
-        isinstance(node, ast.UnaryOp)
-        and isinstance(node.op, ast.USub)
-        and isinstance(node.operand, ast.Constant)
-        and isinstance(node.operand.value, int)
-        and not isinstance(node.operand.value, bool)
-    ):
-        return -node.operand.value
-
-    return None
-
-
-def _parse_global_binding_name(selector: ast.AST) -> str:
-    # Supports both:
-    #   Global["name"]
-    #   Global["name", int]
-    if isinstance(selector, ast.Constant) and isinstance(selector.value, str):
-        return selector.value
-
-    if isinstance(selector, ast.Tuple) and len(selector.elts) == 2:
-        name_node, type_node = selector.elts
-        if not isinstance(name_node, ast.Constant) or not isinstance(name_node.value, str):
-            raise DSLValidationError(
-                'Global binding must be Global["name"] or Global["name", type].'
-            )
-        _validate_global_binding_type(type_node)
-        return name_node.value
-
-    raise DSLValidationError(
-        'Global binding must be Global["name"] or Global["name", type].'
-    )
-
-
-def _validate_global_binding_type(node: ast.AST) -> None:
-    if _is_supported_global_binding_type(node):
-        return
-
-    raise DSLValidationError(
-        "Global typed binding only supports int, float, str, bool, or nested List[...] with primitive elements."
-    )
-
-
-def _is_supported_global_binding_type(node: ast.AST) -> bool:
-    if isinstance(node, ast.Name) and node.id in {"int", "float", "str", "bool"}:
-        return True
-    if (
-        isinstance(node, ast.Subscript)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in {"List", "list"}
-    ):
-        return _is_supported_global_binding_type(node.slice)
-    return False
-
-
-def _expect_name(node: ast.AST, label: str) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    raise DSLValidationError(f"Expected {label} name.")
-
-
-def _parse_typed_literal_value(
-    node: ast.AST,
-    field_type: FieldType,
-    source_name: str,
-):
-    if isinstance(field_type, PrimType):
-        if field_type.prim == Prim.BOOL:
-            if isinstance(node, ast.Constant) and isinstance(node.value, bool):
-                return node.value
-            raise DSLValidationError(f"{source_name} expected bool literal value.")
-
-        if field_type.prim == Prim.INT:
-            if (
-                isinstance(node, ast.Constant)
-                and isinstance(node.value, int)
-                and not isinstance(node.value, bool)
-            ):
-                return node.value
-            raise DSLValidationError(f"{source_name} expected int literal value.")
-
-        if field_type.prim == Prim.FLOAT:
-            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-                if isinstance(node.value, bool):
-                    raise DSLValidationError(
-                        f"{source_name} expected float literal value."
-                    )
-                return float(node.value)
-            raise DSLValidationError(f"{source_name} expected float literal value.")
-
-        if field_type.prim == Prim.STR:
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                return node.value
-            raise DSLValidationError(f"{source_name} expected string literal value.")
-
-    if isinstance(field_type, ListType):
-        if not isinstance(node, ast.List):
-            raise DSLValidationError(f"{source_name} expected list literal value.")
-        return [
-            _parse_typed_literal_value(elem, field_type.elem, source_name)
-            for elem in node.elts
-        ]
-
-    raise DSLValidationError(f"{source_name} uses unsupported field type.")
-
-
-def _parse_actor_link_literal_value(
-    node: ast.AST,
-    actor_fields: Dict[str, Dict[str, FieldType]],
-    source_name: str,
-) -> str:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-
-    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-        owner = node.value.id
-        if owner != "Actor" and owner not in actor_fields:
-            raise DSLValidationError(
-                f"{source_name} parent selector references unknown actor schema '{owner}'."
-            )
-        if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
-            return node.slice.value
-        raise DSLValidationError(
-            f"{source_name} parent selector must be ActorType[\"uid\"]."
-        )
-
-    raise DSLValidationError(
-        f"{source_name} parent field must be a uid string or ActorType[\"uid\"] selector."
-    )

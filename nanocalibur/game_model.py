@@ -5,7 +5,15 @@ from typing import Dict, List, Optional, Union
 from nanocalibur.ir import ActionIR, CallableIR, PredicateIR
 
 PrimitiveValue = Union[int, float, str, bool, None]
-ListValue = List[PrimitiveValue]
+StructuredValue = Union[PrimitiveValue, "ListValue", "DictValue"]
+ListValue = List[StructuredValue]
+DictValue = Dict[str, StructuredValue]
+
+try:
+    from enum import StrEnum  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - Python < 3.11 fallback
+    class StrEnum(str, Enum):
+        pass
 
 
 class SelectorKind(Enum):
@@ -44,12 +52,14 @@ class InputPhase(Enum):
 class KeyboardConditionSpec:
     key: Union[str, List[str]]
     phase: InputPhase = InputPhase.ON
+    role_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class MouseConditionSpec:
     button: str
     phase: InputPhase = InputPhase.ON
+    role_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +84,7 @@ class LogicalConditionSpec:
 class ToolConditionSpec:
     name: str
     tool_docstring: str
+    role_id: Optional[str] = None
 
 
 ConditionSpec = Union[
@@ -92,6 +103,7 @@ class GlobalValueKind(Enum):
     STR = "str"
     BOOL = "bool"
     LIST = "list"
+    DICT = "dict"
     ACTOR_REF = "actor_ref"
 
 
@@ -105,7 +117,7 @@ class ActorRefValue:
 class GlobalVariableSpec:
     name: str
     kind: GlobalValueKind
-    value: Union[PrimitiveValue, ListValue, ActorRefValue]
+    value: Union[PrimitiveValue, ListValue, DictValue, ActorRefValue]
     list_elem_kind: Optional[str] = None
 
 
@@ -113,7 +125,7 @@ class GlobalVariableSpec:
 class ActorInstanceSpec:
     actor_type: str
     uid: str
-    fields: Dict[str, Union[PrimitiveValue, ListValue]]
+    fields: Dict[str, Union[PrimitiveValue, ListValue, DictValue]]
 
 
 @dataclass(frozen=True)
@@ -152,12 +164,52 @@ class CameraMode(Enum):
     FOLLOW = "follow"
 
 
+class MultiplayerLoopMode(Enum):
+    REAL_TIME = "real_time"
+    TURN_BASED = "turn_based"
+    HYBRID = "hybrid"
+
+
+class VisibilityMode(Enum):
+    SHARED = "shared"
+    ROLE_FILTERED = "role_filtered"
+
+
+class RoleKind(StrEnum):
+    HUMAN = "human"
+    AI = "ai"
+    HYBRID = "hybrid"
+
+
 @dataclass(frozen=True)
 class CameraSpec:
     mode: CameraMode
     x: Optional[int] = None
     y: Optional[int] = None
     target_uid: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class MultiplayerSpec:
+    default_loop: MultiplayerLoopMode = MultiplayerLoopMode.REAL_TIME
+    allowed_loops: List[MultiplayerLoopMode] = field(
+        default_factory=lambda: [MultiplayerLoopMode.REAL_TIME]
+    )
+    default_visibility: VisibilityMode = VisibilityMode.SHARED
+    tick_rate: int = 20
+    turn_timeout_ms: int = 15_000
+    hybrid_window_ms: int = 500
+    game_time_scale: float = 1.0
+    max_catchup_steps: int = 1
+
+
+@dataclass(frozen=True)
+class RoleSpec:
+    id: str
+    required: bool = True
+    kind: RoleKind = RoleKind.HYBRID
+    role_type: str = "Role"
+    fields: Dict[str, Union[PrimitiveValue, ListValue, DictValue]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -196,11 +248,13 @@ class SpriteSpec:
 @dataclass(frozen=True)
 class SceneSpec:
     gravity_enabled: bool = False
+    keyboard_aliases: Dict[str, List[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class ProjectSpec:
     actor_schemas: Dict[str, Dict[str, str]]
+    role_schemas: Dict[str, Dict[str, str]]
     globals: List[GlobalVariableSpec]
     actors: List[ActorInstanceSpec]
     rules: List[RuleSpec]
@@ -213,3 +267,6 @@ class ProjectSpec:
     sprites: List[SpriteSpec]
     scene: Optional[SceneSpec]
     interface_html: Optional[str] = None
+    multiplayer: Optional[MultiplayerSpec] = None
+    roles: List[RoleSpec] = field(default_factory=list)
+    contains_next_turn_call: bool = False

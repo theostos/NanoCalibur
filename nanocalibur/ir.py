@@ -7,6 +7,7 @@ class BindingKind(Enum):
     GLOBAL = "global"
     ACTOR = "actor"
     ACTOR_LIST = "actor_list"
+    ROLE = "role"
     SCENE = "scene"
     TICK = "tick"
 
@@ -24,6 +25,11 @@ class ActorSelector:
 
 
 @dataclass(frozen=True)
+class RoleSelector:
+    id: str
+
+
+@dataclass(frozen=True)
 class ParamBinding:
     name: str
     kind: BindingKind
@@ -31,6 +37,8 @@ class ParamBinding:
     actor_selector: Optional[ActorSelector] = None
     actor_type: Optional[str] = None
     actor_list_type: Optional[str] = None
+    role_selector: Optional[RoleSelector] = None
+    role_type: Optional[str] = None
 
 
 # Expressions

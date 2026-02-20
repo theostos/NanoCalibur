@@ -33,7 +33,7 @@ export class HeadlessHost {
     return this.symbolicRenderer.render(this.core.getState(), this.core.getMap());
   }
 
-  listTools(): Array<{ name: string; tool_docstring: string; action: string }> {
+  listTools(): Array<{ name: string; tool_docstring: string; action: string; role_id?: string }> {
     return this.core.getInterpreter().getTools();
   }
 
@@ -48,6 +48,12 @@ export class HeadlessHost {
       mouse: input.mouse,
       uiButtons: input.uiButtons,
       toolCalls: input.toolCalls,
+      roleId:
+        typeof input.roleId === "string"
+          ? input.roleId
+          : typeof input.role_id === "string"
+            ? input.role_id
+            : undefined,
     });
 
     return this.getSymbolicFrame();

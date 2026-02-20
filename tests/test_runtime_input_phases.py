@@ -96,6 +96,172 @@ def test_runtime_keyboard_and_mouse_phase_matching(tmp_path):
     assert values["ms_end"] == 1
 
 
+def test_runtime_keyboard_normalization_and_scene_aliases(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "arrow", kind: "int", value: 0 }},
+            {{ name: "code", kind: "int", value: 0 }},
+            {{ name: "layout", kind: "int", value: 0 }}
+          ],
+          scene: {{
+            keyboard_aliases: {{
+              z: ["w"]
+            }}
+          }},
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "keyboard", phase: "on", key: "up" }}, action: "inc_arrow" }},
+            {{ condition: {{ kind: "keyboard", phase: "on", key: "d" }}, action: "inc_code" }},
+            {{ condition: {{ kind: "keyboard", phase: "on", key: "z" }}, action: "inc_layout" }}
+          ]
+        }};
+
+        function makeInc(name) {{
+          return (ctx) => {{
+            ctx.globals[name] = ctx.globals[name] + 1;
+          }};
+        }}
+
+        const actions = {{
+          inc_arrow: makeInc("arrow"),
+          inc_code: makeInc("code"),
+          inc_layout: makeInc("layout")
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{ keyboard: {{ on: ["ArrowUp"] }} }});
+        i.tick({{ keyboard: {{ on: ["KeyD"] }} }});
+        i.tick({{ keyboard: {{ on: ["w"] }} }});
+        console.log(JSON.stringify(i.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["arrow"] == 1
+    assert values["code"] == 1
+    assert values["layout"] == 1
+
+
+def test_runtime_role_state_and_context_binding(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [],
+          roles: [
+            {{
+              id: "human_1",
+              kind: "human",
+              type: "HumanRole",
+              required: true,
+              fields: {{ score: 1 }}
+            }},
+            {{
+              id: "human_2",
+              kind: "human",
+              type: "HumanRole",
+              required: true,
+              fields: {{ score: 5 }}
+            }}
+          ],
+          predicates: [],
+          rules: [
+            {{
+              condition: {{ kind: "keyboard", phase: "begin", key: "E", role_id: "human_1" }},
+              action: "inc"
+            }}
+          ]
+        }};
+
+        const actions = {{
+          inc: (ctx) => {{
+            const role = ctx.getRoleById("human_1");
+            role.score = role.score + 1;
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{ keyboard: {{ begin: ["E"] }}, role_id: "human_1" }});
+        const state = i.getState();
+        console.log(JSON.stringify({{
+          human1: state.roles.human_1.score,
+          human2: state.roles.human_2.score
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["human1"] == 2
+    assert values["human2"] == 5
+
+
 def test_runtime_tool_condition_and_tools_metadata(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
@@ -171,6 +337,175 @@ def test_runtime_tool_condition_and_tools_metadata(tmp_path):
     values = json.loads(proc.stdout.strip())
     assert values["count"] == 2
     assert values["tools"][0]["name"] == "spawn_bonus"
+
+
+def test_runtime_role_scoped_input_and_tool_conditions(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "kb", kind: "int", value: 0 }},
+            {{ name: "tool", kind: "int", value: 0 }}
+          ],
+          predicates: [],
+          tools: [
+            {{ name: "bot_move", tool_docstring: "bot move", action: "inc_tool", role_id: "dummy_1" }}
+          ],
+          rules: [
+            {{
+              condition: {{ kind: "keyboard", phase: "on", key: "d", role_id: "human_1" }},
+              action: "inc_kb"
+            }},
+            {{
+              condition: {{ kind: "tool", name: "bot_move", role_id: "dummy_1" }},
+              action: "inc_tool"
+            }}
+          ]
+        }};
+
+        const actions = {{
+          inc_kb: (ctx) => {{
+            ctx.globals.kb = ctx.globals.kb + 1;
+          }},
+          inc_tool: (ctx) => {{
+            ctx.globals.tool = ctx.globals.tool + 1;
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+
+        i.tick({{
+          keyboard: {{ on: ["d"] }},
+          role_id: "dummy_1"
+        }});
+        i.tick({{
+          keyboard: {{ on: ["d"] }},
+          role_id: "human_1"
+        }});
+        i.tick({{
+          toolCalls: [{{ name: "bot_move", payload: {{}}, role_id: "human_1" }}]
+        }});
+        i.tick({{
+          toolCalls: [{{ name: "bot_move", payload: {{}}, role_id: "dummy_1" }}]
+        }});
+
+        console.log(JSON.stringify(i.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["kb"] == 1
+    assert values["tool"] == 1
+
+
+def test_runtime_scene_next_turn_updates_turn_state(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [],
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "keyboard", phase: "begin", key: "A" }}, action: "advance" }}
+          ],
+          multiplayer: {{
+            default_loop: "turn_based"
+          }}
+        }};
+
+        const actions = {{
+          advance: (ctx) => {{
+            ctx.scene.nextTurn();
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{ keyboard: {{ begin: ["A"], on: [], end: [] }} }});
+        const first = i.getState().scene;
+        i.tick({{}});
+        const second = i.getState().scene;
+
+        console.log(JSON.stringify({{
+          first_turn: first.turn,
+          first_changed: first.turnChangedThisStep,
+          second_turn: second.turn,
+          second_changed: second.turnChangedThisStep,
+          mode: first.loopMode
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["first_turn"] == 1
+    assert values["first_changed"] is True
+    assert values["second_turn"] == 1
+    assert values["second_changed"] is False
+    assert values["mode"] == "turn_based"
 
 
 def test_runtime_parent_binding_moves_children_with_parent(tmp_path):
@@ -458,6 +793,70 @@ def test_runtime_button_condition_matches_ui_buttons(tmp_path):
     )
     count = json.loads(proc.stdout.strip())
     assert count == 1
+
+
+def test_runtime_scene_set_interface_updates_state(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [],
+          interface_html: "<div>default</div>",
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "button", name: "swap_ui" }}, action: "swap_ui" }}
+          ]
+        }};
+
+        const actions = {{
+          swap_ui: (ctx) => {{
+            ctx.scene.setInterfaceHtml("<div>runtime</div>");
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        const before = i.getState().scene.interfaceHtml;
+        i.tick({{ uiButtons: ["swap_ui"] }});
+        const after = i.getState().scene.interfaceHtml;
+        console.log(JSON.stringify({{ before, after }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["before"] == "<div>default</div>"
+    assert values["after"] == "<div>runtime</div>"
 
 
 def test_runtime_collision_modes_distinguish_overlap_and_contact(tmp_path):

@@ -17,13 +17,15 @@ import {
   SpecSpriteDef,
   SpriteAnimationConfig,
 } from "./canvas/types";
-import { asNumber } from "./canvas/utils";
+import { actorCenterX, actorCenterY, asNumber } from "./canvas/utils";
 
 export interface RuntimeStepInput {
   keyboard?: PhasePayload;
   mouse?: PhasePayload;
   uiButtons?: string[];
   toolCalls?: Array<string | ToolFrameInput>;
+  roleId?: string;
+  role_id?: string;
 }
 
 function toSpriteConfig(specSprite: SpecSpriteDef): SpriteAnimationConfig | null {
@@ -199,6 +201,12 @@ export class RuntimeCore {
     this.refreshScene(beforeState);
     const beforeActors = beforeState.actors as ActorState[];
     this.applySpriteDefaultDimensions(beforeActors);
+    const parentPreviousPositions = beforeActors.map((actor) => ({
+      uid: actor.uid,
+      x: actorCenterX(actor),
+      y: actorCenterY(actor),
+      z: asNumber(actor.z, 0),
+    }));
 
     this.physics.syncBodiesFromActors(beforeActors, false);
     this.physics.integrate(dtSeconds);
@@ -237,6 +245,13 @@ export class RuntimeCore {
       mouse: input.mouse,
       uiButtons: input.uiButtons,
       toolCalls: input.toolCalls,
+      parentPreviousPositions,
+      roleId:
+        typeof input.roleId === "string"
+          ? input.roleId
+          : typeof input.role_id === "string"
+            ? input.role_id
+            : undefined,
       collisions: overlapFrameEvents,
       contacts: contacts.map((pair) => ({ aUid: pair.aUid, bUid: pair.bUid })),
     };

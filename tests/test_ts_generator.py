@@ -226,7 +226,20 @@ def test_ts_emits_scene_spawn_with_expression_fields():
         """
     )
 
-    assert 'ctx.scene.spawnActor("Coin", "", { "x": (last_coin.x + 32), "y": 224, "active": true, "sprite": "coin" });' in ts
+    assert 'ctx.scene.spawnActor("Coin", "", { "x": __nc_add(last_coin.x, 32), "y": 224, "active": true, "sprite": "coin" });' in ts
+
+
+def test_ts_emits_scene_set_interface_call():
+    ts = compile_to_ts(
+        """
+        def open_panel(scene: Scene):
+            scene.set_interface("<button data-button='win'>Win</button>")
+        """
+    )
+
+    assert "setInterfaceHtml?: (html: string) => void;" in ts
+    assert "if (ctx.scene && ctx.scene.setInterfaceHtml) {" in ts
+    assert "ctx.scene.setInterfaceHtml(String(\"<button data-button='win'>Win</button>\"));" in ts
 
 
 def test_ts_emits_negative_index_lookup_for_typed_actor_binding():
@@ -337,6 +350,50 @@ def test_ts_emits_list_literals_and_subscript_access():
     assert "values = [last, 1, 2];" in ts
 
 
+def test_ts_emits_collection_helpers_for_list_and_dict_operations():
+    ts = compile_to_ts(
+        """
+        def mutate(values: Global["values", List[int]], bag: Global["bag", Dict[str, int]]):
+            values.append(1)
+            tail = values.pop()
+            values = values.concat([tail]) + [2]
+            bag["coins"] = tail
+            current = bag.get("coins", 0)
+            keys = bag.keys()
+            vals = bag.values()
+            pairs = bag.items()
+            bag.update({"bonus": 1})
+        """
+    )
+
+    assert "__nc_list_append(values, 1);" in ts
+    assert "tail = __nc_collection_pop(values, null);" in ts
+    assert "__nc_collection_concat(values, [tail])" in ts
+    assert "__nc_add(__nc_collection_concat(values, [tail]), [2])" in ts
+    assert 'bag["coins"] = tail;' in ts
+    assert 'current = __nc_dict_get(bag, "coins", 0);' in ts
+    assert "keys = __nc_dict_keys(bag);" in ts
+    assert "vals = __nc_dict_values(bag);" in ts
+    assert "pairs = __nc_dict_items(bag);" in ts
+    assert '__nc_dict_update(bag, { "bonus": 1 });' in ts
+
+
+def test_ts_emits_role_lookup_binding():
+    ts = compile_to_ts(
+        """
+        class HumanRole(Role):
+            score: int
+
+        def increment(self_role: HumanRole["human_1"]):
+            self_role.score = self_role.score + 1
+        """
+    )
+
+    assert 'getRoleById?: (id: string) => any;' in ts
+    assert 'let self_role = (ctx.getRoleById ? ctx.getRoleById("human_1") : null);' in ts
+    assert 'if (self_role && self_role.type !== "HumanRole") { self_role = null; }' in ts
+
+
 def test_ts_emits_callable_helpers_and_invocations():
     ts = compile_project_to_ts(
         """
@@ -347,13 +404,14 @@ def test_ts_emits_callable_helpers_and_invocations():
         def next_x(x: float, offset: int) -> float:
             return x + offset
 
-        @condition(KeyboardCondition.begin_press("e"))
+        @condition(KeyboardCondition.begin_press("e", id="human_1"))
         def spawn(scene: Scene, last_coin: Coin[-1]):
             if last_coin is not None:
                 x = next_x(last_coin.x, 32)
                 scene.spawn(Coin(x=x, y=0, active=True))
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Coin(uid="coin_1", x=0, y=0, active=True))

@@ -16,7 +16,9 @@ from nanocalibur.game_model import (
     KeyboardConditionSpec,
     LogicalConditionSpec,
     MouseConditionSpec,
+    MultiplayerSpec,
     ProjectSpec,
+    RoleSpec,
     ResourceSpec,
     RuleSpec,
     SceneSpec,
@@ -29,15 +31,27 @@ from nanocalibur.ts_generator import TSGenerator
 from nanocalibur.ir import ParamBinding
 
 
-def compile_project(source: str, source_path: str | None = None) -> ProjectSpec:
+def compile_project(
+    source: str,
+    source_path: str | None = None,
+    *,
+    require_code_blocks: bool = False,
+    unboxed_disable_flag: str = "--allow-unboxed",
+) -> ProjectSpec:
     """Compile DSL source into a :class:`ProjectSpec`."""
-    return ProjectCompiler().compile(source, source_path=source_path)
+    return ProjectCompiler().compile(
+        source,
+        source_path=source_path,
+        require_code_blocks=require_code_blocks,
+        unboxed_disable_flag=unboxed_disable_flag,
+    )
 
 
 def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
     """Serialize a :class:`ProjectSpec` into the JSON game spec payload."""
     return {
         "schemas": project.actor_schemas,
+        "role_schemas": project.role_schemas,
         "globals": [_global_to_dict(g) for g in project.globals],
         "actors": [
             {
@@ -52,6 +66,8 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
         "map": _map_to_dict(project.tile_map),
         "camera": _camera_to_dict(project.camera),
         "scene": _scene_to_dict(project.scene),
+        "multiplayer": _multiplayer_to_dict(project.multiplayer),
+        "roles": [_role_to_dict(role) for role in project.roles],
         "interface_html": project.interface_html,
         "resources": [_resource_to_dict(resource) for resource in project.resources],
         "sprites": {
@@ -81,12 +97,25 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
             for predicate in project.predicates
         ],
         "callables": [callable_fn.name for callable_fn in project.callables],
+        "contains_next_turn_call": project.contains_next_turn_call,
     }
 
 
-def export_project(source: str, output_dir: str, source_path: str | None = None) -> ProjectSpec:
+def export_project(
+    source: str,
+    output_dir: str,
+    source_path: str | None = None,
+    *,
+    require_code_blocks: bool = False,
+    unboxed_disable_flag: str = "--allow-unboxed",
+) -> ProjectSpec:
     """Compile and write spec/IR/TypeScript outputs to ``output_dir``."""
-    project = compile_project(source, source_path=source_path)
+    project = compile_project(
+        source,
+        source_path=source_path,
+        require_code_blocks=require_code_blocks,
+        unboxed_disable_flag=unboxed_disable_flag,
+    )
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -135,12 +164,14 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "kind": "keyboard",
             "phase": condition.phase.value,
             "key": condition.key,
+            "role_id": condition.role_id,
         }
     if isinstance(condition, MouseConditionSpec):
         return {
             "kind": "mouse",
             "phase": condition.phase.value,
             "button": condition.button,
+            "role_id": condition.role_id,
         }
     if isinstance(condition, ButtonConditionSpec):
         return {
@@ -165,6 +196,7 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "kind": "tool",
             "name": condition.name,
             "tool_docstring": condition.tool_docstring,
+            "role_id": condition.role_id,
         }
     raise TypeError(f"Unsupported condition: {condition!r}")
 
@@ -243,11 +275,37 @@ def _resource_to_dict(resource: ResourceSpec) -> Dict[str, Any]:
     }
 
 
+def _role_to_dict(role: RoleSpec) -> Dict[str, Any]:
+    return {
+        "id": role.id,
+        "required": role.required,
+        "kind": role.kind.value,
+        "type": role.role_type,
+        "fields": role.fields,
+    }
+
+
 def _scene_to_dict(scene: SceneSpec | None) -> Dict[str, Any] | None:
     if scene is None:
         return None
     return {
         "gravity_enabled": scene.gravity_enabled,
+        "keyboard_aliases": scene.keyboard_aliases,
+    }
+
+
+def _multiplayer_to_dict(multiplayer: MultiplayerSpec | None) -> Dict[str, Any] | None:
+    if multiplayer is None:
+        return None
+    return {
+        "default_loop": multiplayer.default_loop.value,
+        "allowed_loops": [mode.value for mode in multiplayer.allowed_loops],
+        "default_visibility": multiplayer.default_visibility.value,
+        "tick_rate": multiplayer.tick_rate,
+        "turn_timeout_ms": multiplayer.turn_timeout_ms,
+        "hybrid_window_ms": multiplayer.hybrid_window_ms,
+        "game_time_scale": multiplayer.game_time_scale,
+        "max_catchup_steps": multiplayer.max_catchup_steps,
     }
 
 
@@ -283,6 +341,7 @@ def _param_binding_to_dict(param: ParamBinding) -> Dict[str, Any]:
         "global_name": param.global_name,
         "actor_type": param.actor_type,
         "actor_list_type": param.actor_list_type,
+        "role_type": param.role_type,
     }
     if param.actor_selector is None:
         payload["actor_selector"] = None
@@ -290,6 +349,12 @@ def _param_binding_to_dict(param: ParamBinding) -> Dict[str, Any]:
         payload["actor_selector"] = {
             "uid": param.actor_selector.uid,
             "index": param.actor_selector.index,
+        }
+    if param.role_selector is None:
+        payload["role_selector"] = None
+    else:
+        payload["role_selector"] = {
+            "id": param.role_selector.id,
         }
     return payload
 
@@ -308,6 +373,7 @@ def _tools_to_dict(rules: list[RuleSpec]) -> list[Dict[str, Any]]:
             {
                 "name": condition.name,
                 "tool_docstring": condition.tool_docstring,
+                "role_id": condition.role_id,
                 "action": rule.action_name,
             }
         )
