@@ -703,30 +703,15 @@ function browserKeyboardTokens(event: KeyboardEvent): string[] {
   return uniqueStrings(tokens);
 }
 
-function mapBrowserKeyDownToCommand(
-  event: KeyboardEvent,
+function keyboardTokensWithLogicalBindings(
   localState: Record<string, any>,
-): Record<string, any> | null {
-  const physicalTokens = browserKeyboardTokens(event);
-  const logicalTokens = resolveLogicalKeyboardTokens(localState, physicalTokens);
-  const tokens = uniqueStrings([...physicalTokens, ...logicalTokens]);
-  if (tokens.length === 0) {
-    return null;
+  physicalTokens: string[],
+): string[] {
+  if (physicalTokens.length === 0) {
+    return [];
   }
-  return { kind: 'input', keyboard: { begin: tokens, on: tokens } };
-}
-
-function mapBrowserKeyUpToCommand(
-  event: KeyboardEvent,
-  localState: Record<string, any>,
-): Record<string, any> | null {
-  const physicalTokens = browserKeyboardTokens(event);
   const logicalTokens = resolveLogicalKeyboardTokens(localState, physicalTokens);
-  const tokens = uniqueStrings([...physicalTokens, ...logicalTokens]);
-  if (tokens.length === 0) {
-    return null;
-  }
-  return { kind: 'input', keyboard: { end: tokens } };
+  return uniqueStrings([...physicalTokens, ...logicalTokens]);
 }
 
 async function startSessionBrowserClient(
@@ -783,6 +768,7 @@ async function startSessionBrowserClient(
   let latestSnapshot: SessionSnapshot | null = null;
   let sessionWarning: string | null = null;
   let lastSymbolicRenderAtMs = 0;
+  let lastSnapshotAtMs = 0;
 
   const renderPanel = (): void => {
     const nowMs = performance.now();
@@ -808,6 +794,7 @@ async function startSessionBrowserClient(
 
   const renderSnapshot = (snapshot: SessionSnapshot): void => {
     latestSnapshot = snapshot;
+    lastSnapshotAtMs = performance.now();
     renderPanel();
   };
 
@@ -833,6 +820,40 @@ async function startSessionBrowserClient(
   const statusPollHandle = window.setInterval(() => {
     void refreshSessionWarning();
   }, 1500);
+
+  let snapshotPollInFlight = false;
+  const snapshotPollHandle = window.setInterval(() => {
+    if (snapshotPollInFlight) {
+      return;
+    }
+    if (performance.now() - lastSnapshotAtMs < 250) {
+      return;
+    }
+    snapshotPollInFlight = true;
+    void requestJson(
+      config.baseUrl,
+      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      'GET',
+      undefined,
+      { 'x-role-token': accessToken },
+    ).then((payload) => {
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+      const candidate: SessionSnapshot = {
+        session_id: typeof payload.session_id === 'string' ? payload.session_id : sessionId,
+        frame: (payload.frame || { rows: [], legend: [] }) as SymbolicFrame,
+        state: (payload.state || {}) as Record<string, any>,
+      };
+      if (hasSnapshotSceneProgress(latestSnapshot, candidate)) {
+        renderSnapshot(candidate);
+      }
+    }).catch((_error) => {
+      // SSE is still the primary path; polling is only a compatibility fallback.
+    }).finally(() => {
+      snapshotPollInFlight = false;
+    });
+  }, 120);
 
   const sendCommand = async (command: Record<string, any>): Promise<void> => {
     try {
@@ -865,30 +886,175 @@ async function startSessionBrowserClient(
     }
   };
 
-  window.addEventListener('keydown', (event) => {
+  const pendingCommands: Record<string, any>[] = [];
+  let commandInFlight = false;
+  const flushCommandQueue = async (): Promise<void> => {
+    if (commandInFlight) {
+      return;
+    }
+    commandInFlight = true;
+    try {
+      while (pendingCommands.length > 0) {
+        const command = pendingCommands.shift();
+        if (!command) {
+          continue;
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await sendCommand(command);
+      }
+    } finally {
+      commandInFlight = false;
+    }
+  };
+
+  const enqueueCommand = (
+    command: Record<string, any>,
+    options: { dropIfBusy?: boolean } = {},
+  ): void => {
+    if (options.dropIfBusy && (commandInFlight || pendingCommands.length > 0)) {
+      return;
+    }
+    pendingCommands.push(command);
+    void flushCommandQueue();
+  };
+
+  const activePhysicalTokensByKey = new Map<string, string[]>();
+  const activeInputTokens = (): string[] => {
+    const physicalTokens = uniqueStrings(
+      Array.from(activePhysicalTokensByKey.values()).flat(),
+    );
+    return keyboardTokensWithLogicalBindings(roleLocal.localState, physicalTokens);
+  };
+
+  const keyIdentity = (event: KeyboardEvent): string => {
+    if (typeof event.code === 'string' && event.code.length > 0) {
+      return event.code;
+    }
+    if (typeof event.key === 'string' && event.key.length > 0) {
+      return event.key;
+    }
+    return '';
+  };
+
+  const sendReleaseForAllPressedKeys = (): void => {
+    const physicalTokens = uniqueStrings(
+      Array.from(activePhysicalTokensByKey.values()).flat(),
+    );
+    if (physicalTokens.length === 0) {
+      return;
+    }
+    activePhysicalTokensByKey.clear();
+    const endTokens = keyboardTokensWithLogicalBindings(roleLocal.localState, physicalTokens);
+    if (endTokens.length === 0) {
+      return;
+    }
+    enqueueCommand({
+      kind: 'input',
+      keyboard: { end: endTokens },
+    });
+  };
+
+  const handleKeyDown = (event: KeyboardEvent): void => {
     if (event.repeat) {
       return;
     }
-    const command = mapBrowserKeyDownToCommand(event, roleLocal.localState);
-    if (!command) {
+    const keyId = keyIdentity(event);
+    if (!keyId) {
+      return;
+    }
+    const physicalTokens = browserKeyboardTokens(event);
+    if (physicalTokens.length === 0) {
+      return;
+    }
+    activePhysicalTokensByKey.set(keyId, physicalTokens);
+    const beginTokens = keyboardTokensWithLogicalBindings(roleLocal.localState, physicalTokens);
+    const onTokens = activeInputTokens();
+    const keyboardPayload: Record<string, string[]> = {};
+    if (beginTokens.length > 0) {
+      keyboardPayload.begin = beginTokens;
+    }
+    if (onTokens.length > 0) {
+      keyboardPayload.on = onTokens;
+    }
+    if (Object.keys(keyboardPayload).length === 0) {
       return;
     }
     if (event.key.startsWith('Arrow') || event.key === ' ') {
       event.preventDefault();
     }
-    void sendCommand(command);
-  });
+    enqueueCommand({
+      kind: 'input',
+      keyboard: keyboardPayload,
+    });
+  };
 
-  window.addEventListener('keyup', (event) => {
-    const command = mapBrowserKeyUpToCommand(event, roleLocal.localState);
-    if (!command) {
+  const handleKeyUp = (event: KeyboardEvent): void => {
+    const keyId = keyIdentity(event);
+    const releasedPhysicalTokens = keyId
+      ? (activePhysicalTokensByKey.get(keyId) || browserKeyboardTokens(event))
+      : browserKeyboardTokens(event);
+    if (keyId) {
+      activePhysicalTokensByKey.delete(keyId);
+    }
+    const endTokens = keyboardTokensWithLogicalBindings(roleLocal.localState, releasedPhysicalTokens);
+    const onTokens = activeInputTokens();
+    const keyboardPayload: Record<string, string[]> = {};
+    if (endTokens.length > 0) {
+      keyboardPayload.end = endTokens;
+    }
+    if (onTokens.length > 0) {
+      keyboardPayload.on = onTokens;
+    }
+    if (Object.keys(keyboardPayload).length === 0) {
       return;
     }
     if (event.key.startsWith('Arrow') || event.key === ' ') {
       event.preventDefault();
     }
-    void sendCommand(command);
-  });
+    enqueueCommand({
+      kind: 'input',
+      keyboard: keyboardPayload,
+    });
+  };
+
+  const handleVisibilityChange = (): void => {
+    if (document.visibilityState !== 'visible') {
+      sendReleaseForAllPressedKeys();
+    }
+  };
+
+  window.addEventListener('keydown', handleKeyDown);
+  window.addEventListener('keyup', handleKeyUp);
+  window.addEventListener('blur', sendReleaseForAllPressedKeys);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+
+  const multiplayerSpec =
+    sessionSpec &&
+    typeof sessionSpec === 'object' &&
+    sessionSpec.multiplayer &&
+    typeof sessionSpec.multiplayer === 'object'
+      ? (sessionSpec.multiplayer as Record<string, any>)
+      : null;
+  const configuredTickRate = multiplayerSpec && typeof multiplayerSpec.tick_rate === 'number'
+    ? multiplayerSpec.tick_rate
+    : 30;
+  const inputPulseMs = Math.max(
+    20,
+    Math.round(1000 / Math.max(1, Math.floor(configuredTickRate))),
+  );
+  const inputPulseHandle = window.setInterval(() => {
+    const onTokens = activeInputTokens();
+    if (onTokens.length === 0) {
+      return;
+    }
+    enqueueCommand(
+      {
+        kind: 'input',
+        keyboard: { on: onTokens },
+      },
+      { dropIfBusy: true },
+    );
+  }, inputPulseMs);
 
   const streamResponse = await fetch(
     `${config.baseUrl}/sessions/${encodeURIComponent(sessionId)}/stream`,
@@ -953,6 +1119,13 @@ async function startSessionBrowserClient(
     }
   } finally {
     window.clearInterval(statusPollHandle);
+    window.clearInterval(snapshotPollHandle);
+    window.clearInterval(inputPulseHandle);
+    sendReleaseForAllPressedKeys();
+    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('keyup', handleKeyUp);
+    window.removeEventListener('blur', sendReleaseForAllPressedKeys);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   }
 }
 

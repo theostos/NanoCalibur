@@ -29,7 +29,7 @@ export class HeadlessHttpServer {
   private server: any | null = null;
   private port: number | null = null;
   private readonly streamSubscribersBySession = new Map<string, Set<SessionStreamSubscriber>>();
-  private readonly streamTickersBySession = new Map<string, any>();
+  private readonly runtimeTickersBySession = new Map<string, any>();
 
   constructor(
     host: HeadlessHost,
@@ -74,7 +74,7 @@ export class HeadlessHttpServer {
   }
 
   async stop(): Promise<void> {
-    this.stopAllSessionStreamTickers();
+    this.stopAllSessionRuntimeTickers();
     this.closeAllSessionStreamSubscribers();
 
     if (!this.server) {
@@ -299,6 +299,7 @@ export class HeadlessHttpServer {
         return true;
       }
       const status = this.sessionManager.startSession(sessionId, adminToken);
+      this.ensureSessionRuntimeTicker(sessionId);
       this.respondJson(res, 200, { session_id: sessionId, status });
       return true;
     }
@@ -313,6 +314,7 @@ export class HeadlessHttpServer {
         return true;
       }
       const status = this.sessionManager.stopSession(sessionId, adminToken);
+      this.stopSessionRuntimeTicker(sessionId);
       this.respondJson(res, 200, { session_id: sessionId, status });
       return true;
     }
@@ -423,6 +425,22 @@ export class HeadlessHttpServer {
       return true;
     }
 
+    const snapshotMatch = /^\/sessions\/([^/]+)\/snapshot$/.exec(url.pathname);
+    if (method === "GET" && snapshotMatch) {
+      const sessionId = decodeURIComponent(snapshotMatch[1]);
+      const viewer = this.resolveSessionViewer(req, url, sessionId, null);
+      if (!viewer) {
+        this.respondJson(res, 401, { error: "Unauthorized." });
+        return true;
+      }
+      this.respondJson(
+        res,
+        200,
+        this.buildSessionSnapshotPayload(sessionId, viewer),
+      );
+      return true;
+    }
+
     const toolsMatch = /^\/sessions\/([^/]+)\/tools$/.exec(url.pathname);
     if (method === "GET" && toolsMatch) {
       const sessionId = decodeURIComponent(toolsMatch[1]);
@@ -454,7 +472,7 @@ export class HeadlessHttpServer {
       const subscriber: SessionStreamSubscriber = { res, viewer };
       this.registerSessionStreamSubscriber(sessionId, subscriber);
       this.sendSnapshotToSubscriber(sessionId, subscriber);
-      this.ensureSessionStreamTicker(sessionId);
+      this.ensureSessionRuntimeTicker(sessionId);
       req.on("close", () => {
         this.unregisterSessionStreamSubscriber(sessionId, subscriber);
       });
@@ -773,12 +791,16 @@ export class HeadlessHttpServer {
     subscribers.delete(subscriber);
     if (subscribers.size === 0) {
       this.streamSubscribersBySession.delete(sessionId);
-      this.stopSessionStreamTicker(sessionId);
     }
   }
 
-  private ensureSessionStreamTicker(sessionId: string): void {
-    if (!this.sessionManager || this.streamTickersBySession.has(sessionId)) {
+  private ensureSessionRuntimeTicker(sessionId: string): void {
+    if (!this.sessionManager || this.runtimeTickersBySession.has(sessionId)) {
+      return;
+    }
+
+    const status = this.sessionManager.getSessionStatus(sessionId);
+    if (status !== "running") {
       return;
     }
 
@@ -789,25 +811,25 @@ export class HeadlessHttpServer {
         : 1 / 20;
     const intervalMs = Math.max(10, Math.round(stepSeconds * 1000));
     const interval = setInterval(() => {
-      this.tickAndBroadcastSessionSnapshot(sessionId, stepSeconds);
+      this.tickSessionAndBroadcastSnapshot(sessionId, stepSeconds);
     }, intervalMs);
-    this.streamTickersBySession.set(sessionId, interval);
+    this.runtimeTickersBySession.set(sessionId, interval);
   }
 
-  private stopSessionStreamTicker(sessionId: string): void {
-    const interval = this.streamTickersBySession.get(sessionId);
+  private stopSessionRuntimeTicker(sessionId: string): void {
+    const interval = this.runtimeTickersBySession.get(sessionId);
     if (!interval) {
       return;
     }
     clearInterval(interval);
-    this.streamTickersBySession.delete(sessionId);
+    this.runtimeTickersBySession.delete(sessionId);
   }
 
-  private stopAllSessionStreamTickers(): void {
-    for (const interval of this.streamTickersBySession.values()) {
+  private stopAllSessionRuntimeTickers(): void {
+    for (const interval of this.runtimeTickersBySession.values()) {
       clearInterval(interval);
     }
-    this.streamTickersBySession.clear();
+    this.runtimeTickersBySession.clear();
   }
 
   private closeAllSessionStreamSubscribers(): void {
@@ -823,18 +845,12 @@ export class HeadlessHttpServer {
     this.streamSubscribersBySession.clear();
   }
 
-  private tickAndBroadcastSessionSnapshot(
+  private tickSessionAndBroadcastSnapshot(
     sessionId: string,
     stepSeconds: number,
   ): void {
     if (!this.sessionManager) {
-      this.stopSessionStreamTicker(sessionId);
-      return;
-    }
-
-    const subscribers = this.streamSubscribersBySession.get(sessionId);
-    if (!subscribers || subscribers.size === 0) {
-      this.stopSessionStreamTicker(sessionId);
+      this.stopSessionRuntimeTicker(sessionId);
       return;
     }
 
@@ -843,7 +859,11 @@ export class HeadlessHttpServer {
       const result = this.sessionManager.tickSession(sessionId, stepSeconds);
       state = result.state as Record<string, any>;
     } catch (_error) {
-      this.stopSessionStreamTicker(sessionId);
+      this.stopSessionRuntimeTicker(sessionId);
+      const subscribers = this.streamSubscribersBySession.get(sessionId);
+      if (!subscribers || subscribers.size === 0) {
+        return;
+      }
       for (const subscriber of subscribers) {
         try {
           subscriber.res.end();
@@ -852,6 +872,11 @@ export class HeadlessHttpServer {
         }
       }
       this.streamSubscribersBySession.delete(sessionId);
+      return;
+    }
+
+    const subscribers = this.streamSubscribersBySession.get(sessionId);
+    if (!subscribers || subscribers.size === 0) {
       return;
     }
 

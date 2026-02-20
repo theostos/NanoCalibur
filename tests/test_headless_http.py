@@ -1,6 +1,7 @@
 import json
 import subprocess
 import textwrap
+import time
 import urllib.request
 from pathlib import Path
 
@@ -321,6 +322,135 @@ def test_headless_http_server_session_endpoints_support_join_start_and_commands(
 
         session_open_roles = _http_get_json(base_url + f"/sessions/{session_id}/open-roles")
         assert session_open_roles["roles"] == []
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+        proc.wait(timeout=5)
+        if proc.returncode != 0:
+            stderr = proc.stderr.read() if proc.stderr else ""
+            raise AssertionError(f"Server process exited with code {proc.returncode}: {stderr}")
+
+
+def test_headless_http_server_running_session_ticks_without_stream_subscribers(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_dir = root / "nanocalibur" / "runtime"
+
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_dir / "headless_http_server.ts"),
+            str(runtime_dir / "headless_host.ts"),
+            str(runtime_dir / "runtime_core.ts"),
+            str(runtime_dir / "symbolic_renderer.ts"),
+            str(runtime_dir / "interpreter.ts"),
+            str(runtime_dir / "session_runtime.ts"),
+            str(runtime_dir / "session_manager.ts"),
+            str(runtime_dir / "replay_store_sqlite.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_path = compiled_dir / "interpreter.js"
+    headless_path = compiled_dir / "headless_host.js"
+    http_server_path = compiled_dir / "headless_http_server.js"
+    session_manager_path = compiled_dir / "session_manager.js"
+
+    server_script = tmp_path / "run_session_server_ticking.js"
+    server_script.write_text(
+        textwrap.dedent(
+            f"""
+            const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+            const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+            const {{ HeadlessHttpServer }} = require({json.dumps(str(http_server_path))});
+            const {{ SessionManager }} = require({json.dumps(str(session_manager_path))});
+
+            function createHost() {{
+              const spec = {{
+                actors: [],
+                globals: [{{ name: "count", kind: "int", value: 0 }}],
+                predicates: [],
+                tools: [],
+                rules: []
+              }};
+              return new HeadlessHost(new NanoCaliburInterpreter(spec, {{}}, {{}}), {{}});
+            }}
+
+            (async () => {{
+              const manager = new SessionManager();
+              const httpServer = new HeadlessHttpServer(createHost(), manager, createHost);
+              const port = await httpServer.start({{ host: "127.0.0.1", port: 0 }});
+
+              process.stdout.write(String(port) + "\\n");
+              process.stdin.resume();
+              process.stdin.on("end", async () => {{
+                await httpServer.stop();
+                process.exit(0);
+              }});
+            }})().catch((error) => {{
+              console.error(error);
+              process.exit(1);
+            }});
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.Popen(
+        ["node", str(server_script)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        port_line = proc.stdout.readline().strip()
+        assert port_line
+        port = int(port_line)
+        base_url = f"http://127.0.0.1:{port}"
+
+        created = _http_post_json(
+            base_url + "/sessions",
+            {"roles": [{"id": "human_1", "required": True}]},
+        )
+        session_id = created["session_id"]
+        invite_token = created["invites"][0]["invite_token"]
+        joined = _http_post_json(base_url + "/join", {"invite_token": invite_token})
+
+        _http_post_json(
+            base_url + f"/sessions/{session_id}/start",
+            {"admin_token": created["admin_token"]},
+        )
+
+        snapshot_1 = _http_get_json(
+            base_url
+            + f"/sessions/{session_id}/snapshot?access_token={joined['access_token']}"
+        )
+        elapsed_1 = snapshot_1["state"]["scene"]["elapsed"]
+        time.sleep(0.25)
+        snapshot_2 = _http_get_json(
+            base_url
+            + f"/sessions/{session_id}/snapshot?access_token={joined['access_token']}"
+        )
+        elapsed_2 = snapshot_2["state"]["scene"]["elapsed"]
+
+        assert isinstance(elapsed_1, (int, float))
+        assert isinstance(elapsed_2, (int, float))
+        assert elapsed_2 > elapsed_1
     finally:
         if proc.stdin:
             proc.stdin.close()
