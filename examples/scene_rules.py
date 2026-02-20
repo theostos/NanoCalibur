@@ -1,0 +1,81 @@
+from nanocalibur.dsl_markers import (
+    CodeBlock,
+    Global,
+    KeyboardCondition,
+    OnOverlap,
+    OnToolCall,
+    Scene,
+    Tick,
+    condition,
+)
+
+from .scene_entities import Coin, Player
+
+
+CodeBlock.begin(
+    "gameplay_rules",
+    descr="Shared gameplay rules: coin collection, gravity toggles, and bonus spawn.",
+)
+
+
+@condition(OnOverlap(Player["hero_1"], Coin))
+def collect_coin_for_player_1(hero: Player, coin: Coin, score: Global["score", int]):
+    if coin.active and coin.uid != "coin_pet":
+        coin.destroy()
+        score = score + 1
+
+
+@condition(OnOverlap(Player["hero_2"], Coin))
+def collect_coin_for_player_2(hero: Player, coin: Coin, score: Global["score", int]):
+    if coin.active and coin.uid != "coin_pet":
+        coin.destroy()
+        score = score + 1
+
+
+@condition(OnOverlap(Player["hero_3"], Coin))
+def collect_coin_for_player_3(hero: Player, coin: Coin, score: Global["score", int]):
+    if coin.active and coin.uid != "coin_pet":
+        coin.destroy()
+        score = score + 1
+
+
+@condition(OnOverlap(Player["hero_4"], Coin))
+def collect_coin_for_player_4(hero: Player, coin: Coin, score: Global["score", int]):
+    if coin.active and coin.uid != "coin_pet":
+        coin.destroy()
+        score = score + 1
+
+
+@condition(KeyboardCondition.begin_press("g", id="human_1"))
+def enable_gravity(scene: Scene):
+    scene.enable_gravity()
+
+
+@condition(KeyboardCondition.begin_press("h", id="human_1"))
+def disable_gravity(scene: Scene):
+    scene.disable_gravity()
+
+
+@condition(KeyboardCondition.begin_press("e", id="human_1"))
+@condition(OnToolCall("spawn_bonus", "Spawn one bonus coin near hero_1", id="human_1"))
+def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
+    for _ in range(20):
+        yield tick
+    if last_coin is not None and scene.elapsed > 300:
+        scene.spawn(
+            Coin(
+                x=last_coin.x + 32,
+                y=224,
+                active=True,
+                sprite="coin",
+            )
+        )
+    scene.next_turn()
+
+
+@condition(OnToolCall("llm_dummy_next_turn", "Advance scene turn", id="dummy_1"))
+def llm_dummy_next_turn(scene: Scene):
+    scene.next_turn()
+
+
+CodeBlock.end("gameplay_rules")
