@@ -232,6 +232,7 @@ def test_project_parses_roles_and_role_scoped_conditions():
             player.x = player.x + 1
 
         def call_tool(player: Player["hero"]):
+            \"\"\"bot move\"\"\"
             player.x = player.x + 2
 
         game = Game()
@@ -241,7 +242,7 @@ def test_project_parses_roles_and_role_scoped_conditions():
         game.add_role(Role(id="ai_1", required=False, kind="AI"))
         scene.add_actor(Player(uid="hero", x=0, y=0))
         scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move_right)
-        scene.add_rule(OnToolCall("bot_move", "bot move", id="ai_1"), call_tool)
+        scene.add_rule(OnToolCall("bot_move", id="ai_1"), call_tool)
         """
     )
 
@@ -258,6 +259,7 @@ def test_project_parses_roles_and_role_scoped_conditions():
     tool_rule = project.rules[1]
     assert isinstance(tool_rule.condition, ToolConditionSpec)
     assert tool_rule.condition.role_id == "ai_1"
+    assert tool_rule.condition.tool_docstring == "bot move"
 
 
 def test_project_parses_role_schema_and_role_bindings():
@@ -444,7 +446,7 @@ def test_tool_condition_requires_role_id():
             game = Game()
             game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
             game.set_scene(Scene(gravity=False))
-            game.add_rule(OnToolCall("spawn", "spawn something"), noop)
+            game.add_rule(OnToolCall("spawn"), noop)
             """
         )
 
@@ -1174,8 +1176,9 @@ def test_condition_decorator_adds_rule_without_add_rule_call():
 def test_condition_decorator_supports_tool_calling():
     project = compile_project(
         """
-        @condition(OnToolCall("spawn_bonus", "Spawn one bonus coin", id="human_1"))
+        @condition(OnToolCall("spawn_bonus", id="human_1"))
         def spawn(scene: Scene):
+            \"\"\"Spawn one bonus coin\"\"\"
             scene.enable_gravity()
 
         game = Game()
@@ -1191,16 +1194,54 @@ def test_condition_decorator_supports_tool_calling():
     assert project.rules[0].condition.tool_docstring == "Spawn one bonus coin"
 
 
+def test_condition_decorator_tool_call_warns_without_action_docstring():
+    with pytest.warns(UserWarning, match="MISSING INFORMAL DESCRIPTION"):
+        project = compile_project(
+            """
+            @condition(OnToolCall("spawn_bonus", id="human_1"))
+            def spawn(scene: Scene):
+                scene.enable_gravity()
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            game.set_scene(Scene(gravity=False))
+            """
+        )
+
+    assert len(project.rules) == 1
+    condition = project.rules[0].condition
+    assert isinstance(condition, ToolConditionSpec)
+    assert condition.tool_docstring == ""
+
+
+def test_tool_call_rejects_legacy_docstring_argument():
+    with pytest.raises(DSLValidationError, match="only positional argument"):
+        compile_project(
+            """
+            def spawn(scene: Scene):
+                \"\"\"Spawn helper.\"\"\"
+                scene.enable_gravity()
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            game.set_scene(Scene(gravity=False))
+            game.add_rule(OnToolCall("spawn_bonus", "legacy desc", id="human_1"), spawn)
+            """
+        )
+
+
 def test_tool_calling_name_cannot_bind_multiple_actions():
     with pytest.raises(DSLValidationError, match="already bound to action"):
         compile_project(
             """
-            @condition(OnToolCall("toggle", "Enable gravity", id="human_1"))
+            @condition(OnToolCall("toggle", id="human_1"))
             def enable(scene: Scene):
+                \"\"\"Enable gravity\"\"\"
                 scene.enable_gravity()
 
-            @condition(OnToolCall("toggle", "Disable gravity", id="human_1"))
+            @condition(OnToolCall("toggle", id="human_1"))
             def disable(scene: Scene):
+                \"\"\"Disable gravity\"\"\"
                 scene.disable_gravity()
 
             game = Game()
@@ -1678,7 +1719,8 @@ def test_require_code_blocks_keeps_imports_and_compiles_boxed_statements():
         """
         import math
 
-        CodeBlock.begin("core", descr="main setup")
+        CodeBlock.begin("core")
+        \"\"\"main setup\"\"\"
 
         class Player(Actor):
             pass
@@ -1697,6 +1739,84 @@ def test_require_code_blocks_keeps_imports_and_compiles_boxed_statements():
     assert project.actors[0].uid == "hero"
 
 
+def test_code_block_rejects_legacy_descr_keyword():
+    with pytest.raises(DSLValidationError, match="no longer supported"):
+        compile_project(
+            """
+            CodeBlock.begin("core", descr="legacy")
+            CodeBlock.end("core")
+            """,
+            require_code_blocks=True,
+        )
+
+
+def test_abstract_code_block_rejects_legacy_descr_keyword():
+    with pytest.raises(DSLValidationError, match="no longer supported"):
+        compile_project(
+            """
+            AbstractCodeBlock.begin("controls", role_id=str, descr="legacy")
+            AbstractCodeBlock.end("controls")
+            """,
+            require_code_blocks=True,
+        )
+
+
+def test_code_block_warns_when_missing_docstring_description():
+    with pytest.warns(UserWarning, match="MISSING INFORMAL DESCRIPTION"):
+        project = compile_project(
+            """
+            CodeBlock.begin("core")
+
+            class Player(Actor):
+                pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+
+            CodeBlock.end("core")
+            """,
+            require_code_blocks=True,
+        )
+
+    assert len(project.actors) == 1
+
+
+def test_abstract_code_block_warns_when_missing_docstring_description():
+    with pytest.warns(UserWarning, match="MISSING INFORMAL DESCRIPTION"):
+        project = compile_project(
+            """
+            AbstractCodeBlock.begin("controls", role_id=str, hero_uid=str)
+
+            @condition(KeyboardCondition.on_press("d", id=role_id))
+            def move_right(player: Player[hero_uid]):
+                player.x = player.x + 1
+
+            AbstractCodeBlock.end("controls")
+
+            AbstractCodeBlock.instantiate("controls", role_id="human_1", hero_uid="hero_1")
+
+            CodeBlock.begin("main")
+            \"\"\"main\"\"\"
+
+            class Player(Actor):
+                pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene.add_actor(Player(uid="hero_1", x=0, y=0))
+
+            CodeBlock.end("main")
+            """,
+            require_code_blocks=True,
+        )
+
+    assert len(project.rules) == 1
+
+
 def test_abstract_code_block_instantiation_expands_rules_and_selectors():
     project = compile_project(
         """
@@ -1704,8 +1824,8 @@ def test_abstract_code_block_instantiation_expands_rules_and_selectors():
             "player_controls",
             id=str,
             hero_name=str,
-            descr="keyboard movement",
         )
+        \"\"\"keyboard movement\"\"\"
 
         @condition(KeyboardCondition.on_press("d", id=id))
         def move_right(player: Player[hero_name]):
@@ -1753,7 +1873,8 @@ def test_abstract_code_block_warns_when_not_instantiated():
     with pytest.warns(UserWarning, match="never instantiated"):
         compile_project(
             """
-            AbstractCodeBlock.begin("unused", id=str, descr="unused template")
+            AbstractCodeBlock.begin("unused", id=str)
+            \"\"\"unused template\"\"\"
 
             @condition(KeyboardCondition.on_press("d", id=id))
             def move_right(player: Player["hero"]):

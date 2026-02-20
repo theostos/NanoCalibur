@@ -12,10 +12,8 @@ from nanocalibur.dsl_markers import (
 from .scene_entities import Coin, Player
 
 
-CodeBlock.begin(
-    "gameplay_rules",
-    descr="Shared gameplay rules: coin collection, gravity toggles, and bonus spawn.",
-)
+CodeBlock.begin("gameplay_rules")
+"""Shared gameplay rules: coin collection, gravity toggles, and bonus spawn."""
 
 
 @condition(OnOverlap(Player["hero_1"], Coin))
@@ -57,8 +55,9 @@ def disable_gravity(scene: Scene):
 
 
 @condition(KeyboardCondition.begin_press("e", id="human_1"))
-@condition(OnToolCall("spawn_bonus", "Spawn one bonus coin near hero_1", id="human_1"))
+@condition(OnToolCall("spawn_bonus", id="human_1"))
 def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
+    """Spawn one bonus coin near hero_1."""
     for _ in range(20):
         yield tick
     if last_coin is not None and scene.elapsed > 300:
@@ -73,8 +72,9 @@ def spawn_bonus(scene: Scene, tick: Tick, last_coin: Coin[-1]):
     scene.next_turn()
 
 
-@condition(OnToolCall("llm_dummy_next_turn", "Advance scene turn", id="dummy_1"))
+@condition(OnToolCall("llm_dummy_next_turn", id="dummy_1"))
 def llm_dummy_next_turn(scene: Scene):
+    """Advance scene turn."""
     scene.next_turn()
 
 

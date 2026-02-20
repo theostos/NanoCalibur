@@ -3,10 +3,8 @@ from nanocalibur.dsl_markers import CodeBlock, Role, RoleKind
 from .scene_shared import game
 
 
-CodeBlock.begin(
-    "multiplayer_roles",
-    descr="Declare join slots: up to 4 humans + 1 optional AI dummy.",
-)
+CodeBlock.begin("multiplayer_roles")
+"""Declare join slots: up to 4 humans + 1 optional AI dummy."""
 
 game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
 game.add_role(Role(id="human_2", required=False, kind=RoleKind.HUMAN))

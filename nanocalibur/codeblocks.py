@@ -77,6 +77,17 @@ def preprocess_code_blocks(
                     f"Code block end id '{explicit_id}' does not match open block '{active.block_id}'.",
                     node=stmt,
                 )
+            if active.descr is None or not active.descr.strip():
+                marker_name = "CodeBlock" if active.kind == "code" else "AbstractCodeBlock"
+                warnings.warn(
+                    format_dsl_diagnostic(
+                        "IMPORTANT: MISSING INFORMAL DESCRIPTION. "
+                        f"{marker_name} '{active.block_id}' has no docstring description. "
+                        "Add a string literal immediately after begin(...).",
+                        node=active.begin_node,
+                    ),
+                    stacklevel=2,
+                )
             if active.kind == "code":
                 output_body.extend(active.body)
             else:
@@ -131,6 +142,11 @@ def preprocess_code_blocks(
             continue
 
         if active is not None:
+            if active.descr is None:
+                maybe_doc = _parse_docstring_stmt(stmt)
+                if maybe_doc is not None:
+                    active.descr = maybe_doc
+                    continue
             active.body.append(stmt)
             continue
 
@@ -223,30 +239,20 @@ def _parse_begin(stmt: ast.stmt) -> Optional[_ActiveBlock]:
 
     if cls_name == "CodeBlock":
         for keyword in call.keywords:
-            if keyword.arg == "descr":
-                if not (
-                    isinstance(keyword.value, ast.Constant)
-                    and isinstance(keyword.value.value, str)
-                ):
-                    raise DSLValidationError(
-                        "CodeBlock.begin(..., descr=...) must be a string literal.",
-                        node=keyword.value,
-                    )
-                descr = keyword.value.value
-                continue
             if keyword.arg is None:
                 raise DSLValidationError(
                     "CodeBlock.begin(...) does not support **kwargs expansion.",
                     node=keyword,
                 )
+            if keyword.arg == "descr":
+                raise DSLValidationError(
+                    "CodeBlock.begin(..., descr=...) is no longer supported. "
+                    "Use a docstring literal immediately after CodeBlock.begin(...).",
+                    node=keyword,
+                )
             raise DSLValidationError(
                 f"CodeBlock.begin(...) does not support keyword '{keyword.arg}'.",
                 node=keyword,
-            )
-        if call.keywords and len(call.keywords) > 1:
-            raise DSLValidationError(
-                "CodeBlock.begin(...) only supports optional descr keyword.",
-                node=stmt,
             )
         if len(call.args) != 1:
             raise DSLValidationError(
@@ -277,16 +283,11 @@ def _parse_begin(stmt: ast.stmt) -> Optional[_ActiveBlock]:
                 node=keyword,
             )
         if keyword.arg == "descr":
-            if not (
-                isinstance(keyword.value, ast.Constant)
-                and isinstance(keyword.value.value, str)
-            ):
-                raise DSLValidationError(
-                    "AbstractCodeBlock.begin(..., descr=...) must be a string literal.",
-                    node=keyword.value,
-                )
-            descr = keyword.value.value
-            continue
+            raise DSLValidationError(
+                "AbstractCodeBlock.begin(..., descr=...) is no longer supported. "
+                "Use a docstring literal immediately after AbstractCodeBlock.begin(...).",
+                node=keyword,
+            )
         if keyword.arg == "params":
             if not isinstance(keyword.value, ast.Dict):
                 raise DSLValidationError(
@@ -550,3 +551,11 @@ def _literal_to_ast(value) -> ast.AST:
 
 def _is_import_stmt(stmt: ast.stmt) -> bool:
     return isinstance(stmt, (ast.Import, ast.ImportFrom))
+
+
+def _parse_docstring_stmt(stmt: ast.stmt) -> Optional[str]:
+    if not isinstance(stmt, ast.Expr):
+        return None
+    if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+        return stmt.value.value.strip()
+    return None

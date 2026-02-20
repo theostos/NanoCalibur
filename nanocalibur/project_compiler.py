@@ -481,6 +481,7 @@ class ProjectCompiler:
                             f"Function '{node.name}' cannot use both @callable and @condition decorators."
                         )
                     normalized = self._normalize_callable_function(node, compiler)
+                    normalized = self._strip_function_docstring(normalized)
                     callable_signatures[node.name] = len(normalized.args.args)
                     normalized_callables[node.name] = normalized
 
@@ -498,9 +499,12 @@ class ProjectCompiler:
                     continue
 
                 if _looks_like_predicate(node, compiler):
-                    predicates[node.name] = compiler._compile_predicate(node)
+                    predicates[node.name] = compiler._compile_predicate(
+                        self._strip_function_docstring(node)
+                    )
                 elif _looks_like_action(node, compiler):
                     normalized_fn = self._strip_condition_decorators(node)
+                    normalized_fn = self._strip_function_docstring(normalized_fn)
                     actions[node.name] = compiler._compile_action(normalized_fn)
                 else:
                     continue
@@ -557,6 +561,9 @@ class ProjectCompiler:
         tool_action_by_name: Dict[str, str] = {}
         name_aliases: Dict[str, str] = {}
         callable_aliases: Dict[str, ast.AST] = {}
+        function_nodes: Dict[str, ast.FunctionDef] = {
+            node.name: node for node in module.body if isinstance(node, ast.FunctionDef)
+        }
 
         def clear_declared_value(name: str) -> None:
             declared_actor_vars.pop(name, None)
@@ -613,6 +620,23 @@ class ProjectCompiler:
                     warned_predicates=logical_warning_predicates,
                     source_node=source_node,
                 )
+
+            if isinstance(condition, ToolConditionSpec) and not condition.tool_docstring.strip():
+                action_node = function_nodes.get(action_name)
+                action_docstring = _extract_informal_docstring(action_node)
+                if action_docstring:
+                    condition = replace(condition, tool_docstring=action_docstring)
+                else:
+                    warning_node = action_node or source_node
+                    warnings.warn(
+                        format_dsl_diagnostic(
+                            "IMPORTANT: MISSING INFORMAL DESCRIPTION. "
+                            f"OnToolCall('{condition.name}', id=...) bound to action "
+                            f"'{action_name}' requires an action docstring to work as intended.",
+                            node=warning_node,
+                        ),
+                        stacklevel=2,
+                    )
 
             rules.append(RuleSpec(condition=condition, action_name=action_name))
             if isinstance(condition, ToolConditionSpec):
@@ -1872,6 +1896,20 @@ class ProjectCompiler:
         cloned.decorator_list = stripped
         return cloned
 
+    def _strip_function_docstring(self, fn: ast.FunctionDef) -> ast.FunctionDef:
+        if not fn.body:
+            return fn
+        first = fn.body[0]
+        if not (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            return fn
+        cloned = copy.deepcopy(fn)
+        cloned.body = cloned.body[1:]
+        return cloned
+
     def _parse_decorator_conditions(
         self,
         node: ast.FunctionDef,
@@ -2045,29 +2083,29 @@ class ProjectCompiler:
             return LogicalConditionSpec(predicate_name=predicate_name, target=selector)
 
         if isinstance(node.func, ast.Name) and node.func.id == "OnToolCall":
+            if any(keyword.arg is None for keyword in node.keywords):
+                raise DSLValidationError(
+                    "OnToolCall(...) does not support **kwargs expansion."
+                )
             kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
             unexpected = sorted(set(kwargs.keys()) - {"id"})
             if unexpected:
                 raise DSLValidationError(
                     "OnToolCall(...) only accepts keyword 'id'."
                 )
-            if len(node.args) not in {2, 3}:
+            if len(node.args) != 1:
                 raise DSLValidationError(
-                    "OnToolCall(...) expects tool name, docstring, and required role id."
+                    "OnToolCall(...) expects tool name as the only positional argument."
                 )
-            role_id = _expect_string(node.args[2], "condition role id") if len(node.args) == 3 else None
-            if len(node.args) == 3 and "id" in kwargs:
-                raise DSLValidationError("OnToolCall(...) role id must be provided once.")
-            if role_id is None and "id" in kwargs:
-                role_id = _expect_string(kwargs["id"], "condition role id")
-            if role_id is None:
+            if "id" not in kwargs:
                 raise DSLValidationError(
                     "OnToolCall(...) requires role id. "
                     "Use id=\"<role_id>\" and declare it with game.add_role(Role(...))."
                 )
+            role_id = _expect_string(kwargs["id"], "condition role id")
             return ToolConditionSpec(
                 name=_expect_string(node.args[0], "tool name"),
-                tool_docstring=_expect_string(node.args[1], "tool docstring"),
+                tool_docstring="",
                 role_id=role_id,
             )
 
@@ -3933,6 +3971,15 @@ def _extract_declared_actor_ctor_uid(ctor: ast.Call) -> Optional[str]:
                 return keyword.value.value
             return None
     return None
+
+
+def _extract_informal_docstring(fn: Optional[ast.FunctionDef]) -> str:
+    if fn is None:
+        return ""
+    docstring = ast.get_docstring(fn, clean=True)
+    if not docstring:
+        return ""
+    return docstring.strip()
 
 
 def _collect_used_callable_names(

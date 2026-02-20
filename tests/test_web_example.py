@@ -13,7 +13,8 @@ def _write_scene(path: Path) -> None:
     path.write_text(
         textwrap.dedent(
             """
-            CodeBlock.begin("main_game", descr="Main game assembly")
+            CodeBlock.begin("main_game")
+            \"\"\"Main game assembly\"\"\"
 
             class Player(ActorModel):
                 x: int
@@ -186,6 +187,7 @@ def test_build_game_resolves_local_relative_imports(tmp_path):
         textwrap.dedent(
             """
             CodeBlock.begin("entities")
+            \"\"\"entities\"\"\"
 
             class Player(ActorModel):
                 x: int
@@ -203,6 +205,7 @@ def test_build_game_resolves_local_relative_imports(tmp_path):
             from .entities import Player
 
             CodeBlock.begin("controls")
+            \"\"\"controls\"\"\"
 
             @condition(KeyboardCondition.on_press("ArrowRight", id="human_1"))
             def move_right(player: Player["main_character"]):
@@ -220,6 +223,7 @@ def test_build_game_resolves_local_relative_imports(tmp_path):
             from .controls import move_right
 
             CodeBlock.begin("main")
+            \"\"\"main\"\"\"
 
             game = Game()
             scene = Scene(gravity=False)

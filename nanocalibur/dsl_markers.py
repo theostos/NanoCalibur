@@ -341,8 +341,11 @@ class CodeBlock:
     """Top-level structural block marker for DSL authoring."""
 
     @staticmethod
-    def begin(_id: str, *, descr: str | None = None):
-        """Start a code block identified by ``_id``."""
+    def begin(_id: str):
+        """Start a code block identified by ``_id``.
+
+        Put a docstring string literal immediately after this call to describe the block.
+        """
         return None
 
     @staticmethod
@@ -355,13 +358,14 @@ class AbstractCodeBlock(CodeBlock):
     """Template block marker that requires explicit ``instantiate(...)`` calls."""
 
     @staticmethod
-    def begin(_id: str, **_params_and_descr):
+    def begin(_id: str, **_params):
         """Start an abstract code block template.
 
         Supported keywords:
-        - ``descr=...`` for human-readable description
         - parameter declarations such as ``id=str``, ``hero_name=str``
         - optional ``params={...}`` dict declaration form
+
+        Put a docstring string literal immediately after this call to describe the block.
         """
         return AbstractCodeBlock()
 
@@ -535,8 +539,11 @@ def OnLogicalCondition(_predicate, _selector):
     return None
 
 
-def OnToolCall(_name: str, _tool_docstring: str, id: str):
-    """Condition helper exposing an action as an external LLM-callable tool."""
+def OnToolCall(_name: str, *, id: str):
+    """Condition helper exposing an action as an external LLM-callable tool.
+
+    The tool description is read from the bound action function docstring.
+    """
     return None
 
 

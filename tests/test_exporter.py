@@ -18,8 +18,9 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
         def is_dead(player: Player) -> bool:
             return player.life <= 0
 
-        @condition(OnToolCall("boost_heal", "Increase heal amount by one", id="human_1"))
+        @condition(OnToolCall("boost_heal", id="human_1"))
         def boost_heal(amount: Global["heal"]):
+            \"\"\"Increase heal amount by one\"\"\"
             amount = amount + 1
 
         game = Game()
@@ -332,6 +333,7 @@ def test_export_project_serializes_roles_and_role_scoped_conditions(tmp_path):
             pass
 
         def move(player: Player["hero"]):
+            \"\"\"move bot\"\"\"
             player.x = player.x + 1
 
         game = Game()
@@ -341,7 +343,7 @@ def test_export_project_serializes_roles_and_role_scoped_conditions(tmp_path):
         game.add_role(Role(id="ai_1", kind=RoleKind.AI, required=False))
         scene.add_actor(Player(uid="hero", x=0, y=0))
         scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move)
-        scene.add_rule(OnToolCall("bot_move", "move bot", id="ai_1"), move)
+        scene.add_rule(OnToolCall("bot_move", id="ai_1"), move)
         """
     )
 
@@ -355,6 +357,7 @@ def test_export_project_serializes_roles_and_role_scoped_conditions(tmp_path):
     assert spec["rules"][0]["condition"]["role_id"] == "human_1"
     assert spec["rules"][1]["condition"]["role_id"] == "ai_1"
     assert spec["tools"][0]["role_id"] == "ai_1"
+    assert spec["tools"][0]["tool_docstring"] == "move bot"
 
 
 def test_export_project_serializes_role_schemas_and_fields(tmp_path):

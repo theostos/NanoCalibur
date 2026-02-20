@@ -3,10 +3,8 @@ from nanocalibur.dsl_markers import Actor, CodeBlock
 from .scene_shared import scene
 
 
-CodeBlock.begin(
-    "actors_and_spawn",
-    descr="Actor schemas and initial actor instances shared by all rule modules.",
-)
+CodeBlock.begin("actors_and_spawn")
+"""Actor schemas and initial actor instances shared by all rule modules."""
 
 
 class Player(Actor):

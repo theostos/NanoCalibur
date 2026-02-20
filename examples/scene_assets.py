@@ -3,10 +3,8 @@ from nanocalibur.dsl_markers import CodeBlock, Sprite
 from .scene_shared import game
 
 
-CodeBlock.begin(
-    "resources_and_sprites",
-    descr="Load image resources and bind named sprite clips.",
-)
+CodeBlock.begin("resources_and_sprites")
+"""Load image resources and bind named sprite clips."""
 
 game.add_resource(
     "hero_sheet",

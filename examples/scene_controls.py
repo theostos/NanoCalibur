@@ -17,8 +17,8 @@ AbstractCodeBlock.begin(
     key_left=str,
     key_down=str,
     key_right=str,
-    descr="Reusable movement block for one human role/hero binding.",
 )
+"""Reusable movement block for one human role/hero binding."""
 
 
 @condition(KeyboardCondition.on_press(key_right, id=role_id))
@@ -100,38 +100,41 @@ AbstractCodeBlock.instantiate(
 )
 
 
-CodeBlock.begin(
-    "dummy_ai_controls",
-    descr="Optional tool-controlled bot controls (dummy external client role).",
-)
+CodeBlock.begin("dummy_ai_controls")
+"""Optional tool-controlled bot controls (dummy external client role)."""
 
 
-@condition(OnToolCall("llm_dummy_move_right", "Move llm_dummy right", id="dummy_1"))
+@condition(OnToolCall("llm_dummy_move_right", id="dummy_1"))
 def llm_dummy_move_right(bot: Player["llm_dummy"]):
+    """Move llm_dummy right."""
     bot.vx = bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_move_left", "Move llm_dummy left", id="dummy_1"))
+@condition(OnToolCall("llm_dummy_move_left", id="dummy_1"))
 def llm_dummy_move_left(bot: Player["llm_dummy"]):
+    """Move llm_dummy left."""
     bot.vx = -bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_move_up", "Move llm_dummy up", id="dummy_1"))
+@condition(OnToolCall("llm_dummy_move_up", id="dummy_1"))
 def llm_dummy_move_up(bot: Player["llm_dummy"]):
+    """Move llm_dummy up."""
     bot.vy = -bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_move_down", "Move llm_dummy down", id="dummy_1"))
+@condition(OnToolCall("llm_dummy_move_down", id="dummy_1"))
 def llm_dummy_move_down(bot: Player["llm_dummy"]):
+    """Move llm_dummy down."""
     bot.vy = bot.speed
     bot.play("run")
 
 
-@condition(OnToolCall("llm_dummy_idle", "Set llm_dummy to idle animation", id="dummy_1"))
+@condition(OnToolCall("llm_dummy_idle", id="dummy_1"))
 def llm_dummy_idle(bot: Player["llm_dummy"]):
+    """Set llm_dummy to idle animation."""
     bot.vx = 0
     bot.vy = 0
     bot.play("idle")

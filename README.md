@@ -87,8 +87,8 @@ Role bindings are id-scoped only (no index selectors).
 - `OnOverlap(selector_a, selector_b)`
 - `OnContact(selector_a, selector_b)`
 - `OnLogicalCondition(predicate_fn, selector)`
-- `OnToolCall("tool_name", "tool docstring", id="human_1")`
-- `OnToolCall("tool_name", "tool docstring", id="ai_1")`
+- `OnToolCall("tool_name", id="human_1")`
+- `OnToolCall("tool_name", id="ai_1")`
 - `OnButton("button_name")`
 
 `id` is mandatory for `KeyboardCondition`, `MouseCondition`, and `OnToolCall`.
@@ -174,6 +174,7 @@ game.add_role(Role(id="dummy_1", required=True, kind=RoleKind.AI))
 
 Rules:
 - Condition `id="..."` on `KeyboardCondition`, `MouseCondition`, and `OnToolCall` must match a declared role id.
+- `OnToolCall(...)` informal tool description is taken from the bound action function docstring.
 - Compiler raises an error if a role-scoped condition references an unknown role id.
 
 ### Interface Overlay (Optional)
@@ -201,7 +202,8 @@ Built-in dynamic placeholders available in interface HTML:
 Use structural blocks:
 
 ```python
-CodeBlock.begin("player_controls", descr="keyboard movement")
+CodeBlock.begin("player_controls")
+"""keyboard movement"""
 
 @condition(KeyboardCondition.on_press("d", id="human_1"))
 def move_right(player: Player["hero"]):
@@ -213,7 +215,8 @@ CodeBlock.end("player_controls")
 Template blocks are supported via `AbstractCodeBlock`:
 
 ```python
-AbstractCodeBlock.begin("player_controls", id=str, hero_name=str, descr="reusable controls")
+AbstractCodeBlock.begin("player_controls", id=str, hero_name=str)
+"""reusable controls"""
 # ... rules/actions using `id` and `hero_name` ...
 AbstractCodeBlock.end("player_controls")
 

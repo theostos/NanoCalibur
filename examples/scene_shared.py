@@ -1,10 +1,8 @@
 from nanocalibur.dsl_markers import CodeBlock, Game, Multiplayer, Scene
 
 
-CodeBlock.begin(
-    "shared_context",
-    descr="Create game/scene once so every feature module can import and extend them.",
-)
+CodeBlock.begin("shared_context")
+"""Create game/scene once so every feature module can import and extend them."""
 
 game = Game()
 scene = Scene(

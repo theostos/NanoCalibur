@@ -3,10 +3,8 @@ from nanocalibur.dsl_markers import Camera, CodeBlock, Color, Tile, TileMap
 from .scene_shared import scene
 
 
-CodeBlock.begin(
-    "world_layout",
-    descr="Camera + tile map configuration for the shared scene.",
-)
+CodeBlock.begin("world_layout")
+"""Camera + tile map configuration for the shared scene."""
 
 scene.set_camera(Camera.follow("hero_1"))
 scene.set_map(
