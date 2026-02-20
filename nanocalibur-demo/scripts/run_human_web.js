@@ -6,12 +6,14 @@ const net = require('net');
 
 const inviteToken = process.env.NC_INVITE_TOKEN || '';
 const baseUrl = (process.env.NC_BASE_URL || 'http://127.0.0.1:7070').replace(/\/$/, '');
+const webOnly = process.env.NC_WEB_ONLY === '1' || process.argv.includes('--web-only');
+const cliArgs = process.argv.slice(2).filter((arg) => arg !== '--web-only');
 const defaultPort = 9000;
-const requestedPort = process.argv[2] || process.env.NC_WEB_PORT || `${defaultPort}`;
+const requestedPort = cliArgs[0] || process.env.NC_WEB_PORT || `${defaultPort}`;
 const webHost = process.env.NC_WEB_HOST || '127.0.0.1';
 
-if (!inviteToken) {
-  console.error('NC_INVITE_TOKEN is required for human:play.');
+if (!inviteToken && !webOnly) {
+  console.error('NC_INVITE_TOKEN is required for human:play (unless NC_WEB_ONLY=1).');
   process.exit(1);
 }
 
@@ -24,7 +26,9 @@ const webpackDevServer = path.resolve(
   isWin ? 'webpack-dev-server.cmd' : 'webpack-dev-server',
 );
 
-const openPath = `/?mode=session&baseUrl=${encodeURIComponent(baseUrl)}&inviteToken=${encodeURIComponent(inviteToken)}`;
+const openPath = webOnly
+  ? (process.env.NC_OPEN_PATH || '/')
+  : `/?mode=session&baseUrl=${encodeURIComponent(baseUrl)}&inviteToken=${encodeURIComponent(inviteToken)}`;
 
 function normalizePort(value) {
   const parsed = Number.parseInt(`${value}`, 10);
@@ -69,7 +73,11 @@ async function main() {
   if (port !== startPort) {
     console.warn(`Requested web port ${startPort} is busy, using ${port} instead.`);
   }
-  console.log(`Launching browser client at http://${webHost}:${port}${openPath}`);
+  if (webOnly) {
+    console.log(`Launching session web host at http://${webHost}:${port}${openPath}`);
+  } else {
+    console.log(`Launching browser client at http://${webHost}:${port}${openPath}`);
+  }
 
   const child = spawn(
     webpackDevServer,
