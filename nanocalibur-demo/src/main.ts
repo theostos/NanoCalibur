@@ -598,17 +598,27 @@ function hasSnapshotSceneProgress(
     typeof previousScene.elapsed === 'number' ? previousScene.elapsed : null;
   const nextElapsed =
     typeof nextScene.elapsed === 'number' ? nextScene.elapsed : null;
-  if (previousElapsed !== null && nextElapsed !== null && previousElapsed !== nextElapsed) {
-    return true;
+  if (previousElapsed !== null && nextElapsed !== null) {
+    if (nextElapsed > previousElapsed) {
+      return true;
+    }
+    if (nextElapsed < previousElapsed) {
+      return false;
+    }
   }
   const previousTurn =
     typeof previousScene.turn === 'number' ? previousScene.turn : null;
   const nextTurn =
     typeof nextScene.turn === 'number' ? nextScene.turn : null;
-  if (previousTurn !== null && nextTurn !== null && previousTurn !== nextTurn) {
-    return true;
+  if (previousTurn !== null && nextTurn !== null) {
+    if (nextTurn > previousTurn) {
+      return true;
+    }
+    if (nextTurn < previousTurn) {
+      return false;
+    }
   }
-  if (previousElapsed === null || nextElapsed === null) {
+  if (previousElapsed === null || nextElapsed === null || previousTurn === null || nextTurn === null) {
     return true;
   }
   return false;
@@ -906,6 +916,7 @@ async function startSessionBrowserClient(
         break;
       }
       sseBuffer += decoder.decode(chunk.value, { stream: true });
+      sseBuffer = sseBuffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       while (true) {
         const split = sseBuffer.indexOf('\n\n');
         if (split < 0) {
@@ -921,6 +932,9 @@ async function startSessionBrowserClient(
           if (line.startsWith('event:')) {
             eventName = line.slice('event:'.length).trim();
           } else if (line.startsWith('data:')) {
+            if (dataPayload.length > 0) {
+              dataPayload += '\n';
+            }
             dataPayload += line.slice('data:'.length).trim();
           }
         }
