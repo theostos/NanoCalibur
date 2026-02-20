@@ -201,8 +201,25 @@ def test_export_project_serializes_scene_interface_html_and_button_condition(tmp
     spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
     assert spec["interface_html"] is not None
     assert "Score: {{score}}" in spec["interface_html"]
+    assert spec["interfaces_by_role"] == {}
     assert spec["rules"][0]["condition"]["kind"] == "button"
     assert spec["rules"][0]["condition"]["name"] == "spawn_bonus"
+
+
+def test_export_project_serializes_role_scoped_interfaces(tmp_path):
+    source = textwrap.dedent(
+        '''
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene.set_interface("<div>P1</div>", Role["human_1"])
+        '''
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["interfaces_by_role"] == {"human_1": "<div>P1</div>"}
 
 
 def test_export_project_serializes_overlap_and_contact_modes(tmp_path):

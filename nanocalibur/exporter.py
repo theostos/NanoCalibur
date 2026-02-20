@@ -68,6 +68,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
         "multiplayer": _multiplayer_to_dict(project.multiplayer),
         "roles": [_role_to_dict(role) for role in project.roles],
         "interface_html": project.interface_html,
+        "interfaces_by_role": dict(project.interfaces_by_role),
         "resources": [_resource_to_dict(resource) for resource in project.resources],
         "sprites": {
             "by_name": {

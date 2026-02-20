@@ -237,9 +237,20 @@ def test_ts_emits_scene_set_interface_call():
         """
     )
 
-    assert "setInterfaceHtml?: (html: string) => void;" in ts
+    assert "setInterfaceHtml?: (html: string, role?: any) => void;" in ts
     assert "if (ctx.scene && ctx.scene.setInterfaceHtml) {" in ts
     assert "ctx.scene.setInterfaceHtml(String(\"<button data-button='win'>Win</button>\"));" in ts
+
+
+def test_ts_emits_role_scoped_scene_set_interface_call():
+    ts = compile_to_ts(
+        """
+        def open_panel(scene: Scene):
+            scene.set_interface("<div>P1</div>", Role["human_1"])
+        """
+    )
+
+    assert 'ctx.scene.setInterfaceHtml(String("<div>P1</div>"), "human_1");' in ts
 
 
 def test_ts_emits_negative_index_lookup_for_typed_actor_binding():

@@ -190,6 +190,7 @@ class ProjectCompiler:
                 sprites,
                 scene,
                 interface_html,
+                interfaces_by_role,
                 multiplayer,
                 roles,
             ) = self._collect_game_setup(
@@ -290,6 +291,7 @@ class ProjectCompiler:
                 _action_contains_next_turn(action) for action in actions.values()
             )
             self._validate_condition_role_ids(rules, roles)
+            self._validate_interface_role_ids(interfaces_by_role, roles)
             self._validate_role_bindings(actions, predicates, roles)
             self._validate_camera_bindings(actions, predicates, cameras)
             self._validate_role_cameras(roles, cameras)
@@ -321,6 +323,7 @@ class ProjectCompiler:
                 sprites=sprites,
                 scene=scene,
                 interface_html=interface_html,
+                interfaces_by_role=interfaces_by_role,
                 multiplayer=multiplayer,
                 roles=roles,
                 contains_next_turn_call=contains_next_turn_call,
@@ -696,6 +699,7 @@ class ProjectCompiler:
         List[SpriteSpec],
         Optional[SceneSpec],
         Optional[str],
+        Dict[str, str],
         Optional[MultiplayerSpec],
         List[RoleSpec],
     ]:
@@ -708,6 +712,7 @@ class ProjectCompiler:
         sprites: List[SpriteSpec] = []
         scene: Optional[SceneSpec] = None
         interface_html: Optional[str] = None
+        interfaces_by_role: Dict[str, str] = {}
         multiplayer: Optional[MultiplayerSpec] = None
         roles_by_id: Dict[str, RoleSpec] = {}
         declared_scene_vars: Dict[str, SceneSpec] = {}
@@ -718,6 +723,7 @@ class ProjectCompiler:
         declared_actor_vars: Dict[str, ast.Call] = {}
         declared_tile_map_vars: Dict[str, ast.Call] = {}
         declared_camera_vars: Dict[str, CameraSpec] = {}
+        declared_resource_vars: Dict[str, ast.Call] = {}
         declared_sprite_vars: Dict[str, ast.Call] = {}
         declared_color_vars: Dict[str, ast.Call] = {}
         declared_tile_vars: Dict[str, ast.Call] = {}
@@ -736,6 +742,7 @@ class ProjectCompiler:
             declared_actor_vars.pop(name, None)
             declared_tile_map_vars.pop(name, None)
             declared_camera_vars.pop(name, None)
+            declared_resource_vars.pop(name, None)
             declared_sprite_vars.pop(name, None)
             declared_color_vars.pop(name, None)
             declared_tile_vars.pop(name, None)
@@ -798,7 +805,7 @@ class ProjectCompiler:
                     warnings.warn(
                         format_dsl_diagnostic(
                             "IMPORTANT: MISSING INFORMAL DESCRIPTION. "
-                            f"OnToolCall('{condition.name}', id=...) bound to action "
+                            f"OnToolCall('{condition.name}', Role[...]) bound to action "
                             f"'{action_name}' requires an action docstring to work as intended.",
                             node=warning_node,
                         ),
@@ -931,6 +938,7 @@ class ProjectCompiler:
                                 declared_actor_vars[target.id] = resolved_call
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
@@ -942,6 +950,20 @@ class ProjectCompiler:
                             ):
                                 declared_tile_map_vars[target.id] = resolved_call
                                 declared_actor_vars.pop(target.id, None)
+                                declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
+                                declared_sprite_vars.pop(target.id, None)
+                                declared_color_vars.pop(target.id, None)
+                                declared_tile_vars.pop(target.id, None)
+                                declared_scene_vars.pop(target.id, None)
+                                active_scene_vars.discard(target.id)
+                            elif (
+                                isinstance(resolved_call.func, ast.Name)
+                                and resolved_call.func.id == "Resource"
+                            ):
+                                declared_resource_vars[target.id] = resolved_call
+                                declared_actor_vars.pop(target.id, None)
+                                declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
@@ -956,6 +978,7 @@ class ProjectCompiler:
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
                                 declared_scene_vars.pop(target.id, None)
@@ -968,6 +991,7 @@ class ProjectCompiler:
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
                                 declared_scene_vars.pop(target.id, None)
@@ -980,6 +1004,7 @@ class ProjectCompiler:
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
                                 declared_scene_vars.pop(target.id, None)
@@ -995,6 +1020,7 @@ class ProjectCompiler:
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
                                 declared_scene_vars.pop(target.id, None)
@@ -1007,6 +1033,7 @@ class ProjectCompiler:
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
@@ -1019,6 +1046,7 @@ class ProjectCompiler:
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
@@ -1035,6 +1063,7 @@ class ProjectCompiler:
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
@@ -1077,7 +1106,13 @@ class ProjectCompiler:
                         continue
 
                     if method_name == "add_resource":
-                        resource = self._parse_resource(args, kwargs)
+                        resource = self._parse_resource(
+                            self._resolve_resource_arg(
+                                args,
+                                declared_resource_vars=declared_resource_vars,
+                            ),
+                            kwargs,
+                        )
                         resources_by_name[resource.name] = resource
                         continue
 
@@ -1088,6 +1123,7 @@ class ProjectCompiler:
                                 kwargs,
                                 compiler,
                                 declared_sprite_vars=declared_sprite_vars,
+                                declared_resource_vars=declared_resource_vars,
                             )
                         )
                         continue
@@ -1298,13 +1334,24 @@ class ProjectCompiler:
                         raise DSLValidationError(
                             "scene.set_interface(...) does not accept keyword args."
                         )
-                    if len(scene_args) != 1:
+                    if len(scene_args) not in {1, 2}:
                         raise DSLValidationError(
-                            "scene.set_interface(...) expects one argument."
+                            "scene.set_interface(...) expects html and optional role selector."
                         )
-                    interface_html = self._resolve_interface_html_arg(
-                        scene_args[0], declared_interface_vars
+                    html = self._resolve_interface_html_arg(
+                        scene_args[0],
+                        declared_interface_vars,
                     )
+                    if len(scene_args) == 1:
+                        interface_html = html
+                    else:
+                        role_id = self._parse_role_selector_id(
+                            scene_args[1],
+                            compiler=compiler,
+                            source_name="scene.set_interface role",
+                            allow_plain_string=True,
+                        )
+                        interfaces_by_role[role_id] = html
                     continue
 
                 raise DSLValidationError(
@@ -1323,6 +1370,7 @@ class ProjectCompiler:
             sprites,
             scene,
             interface_html,
+            interfaces_by_role,
             multiplayer,
             list(roles_by_id.values()),
         )
@@ -1524,6 +1572,21 @@ class ProjectCompiler:
                 )
             return declared_tile_map_vars[node.id]
         return node
+
+    def _resolve_resource_arg(
+        self,
+        args: List[ast.AST],
+        *,
+        declared_resource_vars: Dict[str, ast.Call],
+    ) -> List[ast.AST]:
+        if len(args) != 1:
+            return args
+        if not isinstance(args[0], ast.Name):
+            return args
+        resource_var = args[0].id
+        if resource_var not in declared_resource_vars:
+            return args
+        return [declared_resource_vars[resource_var]]
 
     def _resolve_camera_binding_arg(
         self,
@@ -1768,6 +1831,28 @@ class ProjectCompiler:
             declared_list = ", ".join(sorted(declared))
             raise DSLValidationError(
                 f"Condition for action '{rule.action_name}' references unknown role id '{role_id}'. "
+                f"Declared roles: {declared_list}."
+            )
+
+    def _validate_interface_role_ids(
+        self,
+        interfaces_by_role: Dict[str, str],
+        roles: List[RoleSpec],
+    ) -> None:
+        if not interfaces_by_role:
+            return
+        declared = {role.id for role in roles}
+        for role_id in interfaces_by_role.keys():
+            if role_id in declared:
+                continue
+            if not declared:
+                raise DSLValidationError(
+                    f"scene.set_interface(..., Role['{role_id}']) references role id '{role_id}', "
+                    "but no roles were declared via game.add_role(...)."
+                )
+            declared_list = ", ".join(sorted(declared))
+            raise DSLValidationError(
+                f"scene.set_interface(..., Role['{role_id}']) references unknown role id '{role_id}'. "
                 f"Declared roles: {declared_list}."
             )
 
@@ -2097,6 +2182,11 @@ class ProjectCompiler:
     ) -> object:
         if field_name == "parent":
             return self._parse_parent_uid(value_node, compiler, source_name)
+        if field_name == "sprite":
+            return self._parse_sprite_name_selector(
+                value_node,
+                source_name=f"{source_name} sprite",
+            )
         if field_name == "block_mask":
             return _expect_optional_int(value_node, "actor block_mask")
         return _parse_typed_value(value_node, field_type)
@@ -2419,9 +2509,18 @@ class ProjectCompiler:
                     )
                 if len(node.args) not in {1, 2}:
                     raise DSLValidationError(
-                        "KeyboardCondition.<phase>(...) expects key and required role id."
+                        "KeyboardCondition.<phase>(...) expects key and role selector."
                     )
-                role_id = _expect_string(node.args[1], "condition role id") if len(node.args) == 2 else None
+                role_id = (
+                    self._parse_role_selector_id(
+                        node.args[1],
+                        compiler=compiler,
+                        source_name="KeyboardCondition role",
+                        allow_plain_string=True,
+                    )
+                    if len(node.args) == 2
+                    else None
+                )
                 if len(node.args) == 2 and "id" in kwargs:
                     raise DSLValidationError(
                         "KeyboardCondition.<phase>(...) role id must be provided once."
@@ -2431,7 +2530,7 @@ class ProjectCompiler:
                 if role_id is None:
                     raise DSLValidationError(
                         "KeyboardCondition.<phase>(...) requires role id. "
-                        "Use id=\"<role_id>\" and declare it with game.add_role(Role(...))."
+                        "Use Role[\"<role_id>\"] or id=\"<role_id>\" and declare it with game.add_role(Role(...))."
                     )
                 return KeyboardConditionSpec(
                     key=_expect_string_or_string_list(node.args[0], "keyboard key"),
@@ -2451,12 +2550,28 @@ class ProjectCompiler:
                     )
                 if len(node.args) > 2:
                     raise DSLValidationError(
-                        "MouseCondition.<phase>(...) accepts button and required role id."
+                        "MouseCondition.<phase>(...) accepts button and role selector."
                     )
                 button = "left"
-                if len(node.args) >= 1:
+                role_id: Optional[str] = None
+                if len(node.args) == 1:
+                    try:
+                        role_id = self._parse_role_selector_id(
+                            node.args[0],
+                            compiler=compiler,
+                            source_name="MouseCondition role",
+                            allow_plain_string=False,
+                        )
+                    except DSLValidationError:
+                        button = _expect_string(node.args[0], "mouse button")
+                elif len(node.args) == 2:
                     button = _expect_string(node.args[0], "mouse button")
-                role_id = _expect_string(node.args[1], "condition role id") if len(node.args) == 2 else None
+                    role_id = self._parse_role_selector_id(
+                        node.args[1],
+                        compiler=compiler,
+                        source_name="MouseCondition role",
+                        allow_plain_string=True,
+                    )
                 if len(node.args) == 2 and "id" in kwargs:
                     raise DSLValidationError(
                         "MouseCondition.<phase>(...) role id must be provided once."
@@ -2466,7 +2581,7 @@ class ProjectCompiler:
                 if role_id is None:
                     raise DSLValidationError(
                         "MouseCondition.<phase>(...) requires role id. "
-                        "Use id=\"<role_id>\" and declare it with game.add_role(Role(...))."
+                        "Use Role[\"<role_id>\"] or id=\"<role_id>\" and declare it with game.add_role(Role(...))."
                     )
                 return MouseConditionSpec(
                     button=button,
@@ -2523,16 +2638,41 @@ class ProjectCompiler:
                 raise DSLValidationError(
                     "OnToolCall(...) only accepts keyword 'id'."
                 )
-            if len(node.args) != 1:
+            if (
+                len(node.args) == 2
+                and "id" in kwargs
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
                 raise DSLValidationError(
-                    "OnToolCall(...) expects tool name as the only positional argument."
+                    "OnToolCall(...) only positional argument is tool name. "
+                    "Provide action docstring for tool description."
                 )
-            if "id" not in kwargs:
+            if len(node.args) not in {1, 2}:
+                raise DSLValidationError(
+                    "OnToolCall(...) expects tool name and role selector."
+                )
+            role_id = (
+                self._parse_role_selector_id(
+                    node.args[1],
+                    compiler=compiler,
+                    source_name="OnToolCall role",
+                    allow_plain_string=True,
+                )
+                if len(node.args) == 2
+                else None
+            )
+            if len(node.args) == 2 and "id" in kwargs:
+                raise DSLValidationError(
+                    "OnToolCall(...) role id must be provided once."
+                )
+            if role_id is None and "id" not in kwargs:
                 raise DSLValidationError(
                     "OnToolCall(...) requires role id. "
-                    "Use id=\"<role_id>\" and declare it with game.add_role(Role(...))."
+                    "Use Role[\"<role_id>\"] or id=\"<role_id>\" and declare it with game.add_role(Role(...))."
                 )
-            role_id = _expect_string(kwargs["id"], "condition role id")
+            if role_id is None:
+                role_id = _expect_string(kwargs["id"], "condition role id")
             return ToolConditionSpec(
                 name=_expect_string(node.args[0], "tool name"),
                 tool_docstring="",
@@ -2801,7 +2941,10 @@ class ProjectCompiler:
             )
             return TileSpec(block_mask=block_mask, color=color, sprite=None)
 
-        sprite = _expect_string(kwargs["sprite"], "tile sprite")
+        sprite = self._parse_sprite_name_selector(
+            kwargs["sprite"],
+            source_name="Tile(...) sprite",
+        )
         return TileSpec(block_mask=block_mask, color=None, sprite=sprite)
 
     def _parse_tile_color(
@@ -2939,26 +3082,91 @@ class ProjectCompiler:
         node: ast.AST,
         compiler: DSLCompiler,
     ) -> str:
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return self._parse_role_selector_id(
+            node,
+            compiler=compiler,
+            source_name="Camera role selector",
+            allow_plain_string=True,
+        )
+
+    def _parse_role_selector_id(
+        self,
+        node: ast.AST,
+        *,
+        compiler: DSLCompiler,
+        source_name: str,
+        allow_plain_string: bool,
+    ) -> str:
+        if allow_plain_string and isinstance(node, ast.Constant) and isinstance(node.value, str):
             if not node.value:
-                raise DSLValidationError("Camera role id must be non-empty.")
+                raise DSLValidationError(f"{source_name} must be non-empty.")
             return node.value
+
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
             owner = node.value.id
             if owner != "Role" and owner not in compiler.schemas.role_fields:
                 raise DSLValidationError(
-                    "Camera role selector must use Role[\"id\"] or RoleType[\"id\"]."
+                    f"{source_name} must use Role[\"id\"] or RoleType[\"id\"]."
                 )
             if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int):
                 raise DSLValidationError(
-                    "Camera role selector does not support index selectors; use Role[\"id\"]."
+                    f"{source_name} does not support index selectors; use Role[\"id\"]."
                 )
             if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
                 if not node.slice.value:
-                    raise DSLValidationError("Camera role id must be non-empty.")
+                    raise DSLValidationError(f"{source_name} must be non-empty.")
                 return node.slice.value
+
+        if allow_plain_string:
+            raise DSLValidationError(
+                f"{source_name} must be role id string, Role[\"id\"], or RoleType[\"id\"]."
+            )
         raise DSLValidationError(
-            "Camera role selector must be a role id string, Role[\"id\"], or RoleType[\"id\"]."
+            f"{source_name} must be Role[\"id\"] or RoleType[\"id\"]."
+        )
+
+    def _parse_resource_name_selector(
+        self,
+        node: ast.AST,
+        *,
+        source_name: str,
+        declared_resource_vars: Dict[str, ast.Call] | None = None,
+    ) -> str:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name):
+            if declared_resource_vars is not None and node.id in declared_resource_vars:
+                return self._parse_resource_name_selector(
+                    declared_resource_vars[node.id],
+                    source_name=source_name,
+                    declared_resource_vars=declared_resource_vars,
+                )
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            if node.value.id == "Resource":
+                return _expect_string(node.slice, f"{source_name} resource name")
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Resource":
+            if node.keywords:
+                raise DSLValidationError("Resource(...) does not accept keyword args.")
+            if len(node.args) != 2:
+                raise DSLValidationError("Resource(...) expects name and path arguments.")
+            return _expect_string(node.args[0], f"{source_name} resource name")
+        raise DSLValidationError(
+            f"{source_name} must be resource name string or Resource[\"name\"]."
+        )
+
+    def _parse_sprite_name_selector(
+        self,
+        node: ast.AST,
+        *,
+        source_name: str,
+    ) -> str:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            if node.value.id == "Sprite":
+                return _expect_string(node.slice, f"{source_name} sprite name")
+        raise DSLValidationError(
+            f"{source_name} must be sprite name string or Sprite[\"name\"]."
         )
 
     def _parse_scene(self, node: ast.AST) -> SceneSpec:
@@ -2998,13 +3206,31 @@ class ProjectCompiler:
     ) -> ResourceSpec:
         if kwargs:
             raise DSLValidationError("add_resource(...) does not accept keyword args.")
-        if len(args) != 2:
-            raise DSLValidationError(
-                "add_resource(...) expects name and path arguments."
+        if len(args) == 2:
+            return ResourceSpec(
+                name=_expect_string(args[0], "resource name"),
+                path=_expect_string(args[1], "resource path"),
             )
-        return ResourceSpec(
-            name=_expect_string(args[0], "resource name"),
-            path=_expect_string(args[1], "resource path"),
+        if len(args) == 1:
+            resource_node = args[0]
+            if not isinstance(resource_node, ast.Call):
+                raise DSLValidationError(
+                    "add_resource(...) expects Resource(...) or name/path arguments."
+                )
+            if not isinstance(resource_node.func, ast.Name) or resource_node.func.id != "Resource":
+                raise DSLValidationError(
+                    "add_resource(...) expects Resource(...) or name/path arguments."
+                )
+            if resource_node.keywords:
+                raise DSLValidationError("Resource(...) does not accept keyword args.")
+            if len(resource_node.args) != 2:
+                raise DSLValidationError("Resource(...) expects name and path arguments.")
+            return ResourceSpec(
+                name=_expect_string(resource_node.args[0], "resource name"),
+                path=_expect_string(resource_node.args[1], "resource path"),
+            )
+        raise DSLValidationError(
+            "add_resource(...) expects Resource(...) or name/path arguments."
         )
 
     def _parse_sprite(
@@ -3013,6 +3239,7 @@ class ProjectCompiler:
         kwargs: Dict[str, ast.AST],
         compiler: DSLCompiler,
         declared_sprite_vars: Dict[str, ast.Call] | None = None,
+        declared_resource_vars: Dict[str, ast.Call] | None = None,
     ) -> SpriteSpec:
         sprite_kwargs = kwargs
         source_name = "add_sprite(...)"
@@ -3039,6 +3266,7 @@ class ProjectCompiler:
             sprite_kwargs=sprite_kwargs,
             compiler=compiler,
             source_name=source_name,
+            declared_resource_vars=declared_resource_vars,
         )
 
     def _extract_sprite_kwargs(self, node: ast.AST) -> Dict[str, ast.AST]:
@@ -3059,6 +3287,7 @@ class ProjectCompiler:
         sprite_kwargs: Dict[str, ast.AST],
         compiler: DSLCompiler,
         source_name: str,
+        declared_resource_vars: Dict[str, ast.Call] | None = None,
     ) -> SpriteSpec:
         allowed = {
             "name",
@@ -3115,7 +3344,11 @@ class ProjectCompiler:
             name=name,
             uid=uid,
             actor_type=actor_type,
-            resource=_expect_string(sprite_kwargs["resource"], "sprite resource name"),
+            resource=self._parse_resource_name_selector(
+                sprite_kwargs["resource"],
+                source_name=f"{source_name} resource",
+                declared_resource_vars=declared_resource_vars,
+            ),
             frame_width=_expect_int(sprite_kwargs["frame_width"], "sprite frame_width"),
             frame_height=_expect_int(
                 sprite_kwargs["frame_height"],
@@ -3505,4 +3738,3 @@ class ProjectCompiler:
                 raise DSLValidationError(
                     f"add_sprite(...) references unknown resource '{sprite.resource}'."
                 )
-

@@ -859,6 +859,72 @@ def test_runtime_scene_set_interface_updates_state(tmp_path):
     assert values["after"] == "<div>runtime</div>"
 
 
+def test_runtime_scene_set_interface_updates_role_scoped_state(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [],
+          interface_html: "<div>default</div>",
+          interfaces_by_role: {{ human_1: "<div>h1</div>" }},
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "button", name: "swap_ui" }}, action: "swap_ui" }}
+          ]
+        }};
+
+        const actions = {{
+          swap_ui: (ctx) => {{
+            ctx.scene.setInterfaceHtml("<div>updated</div>", {{ id: "human_1" }});
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        const before = i.getState().scene.interfaceByRole.human_1;
+        i.tick({{ uiButtons: ["swap_ui"] }});
+        const state = i.getState().scene;
+        console.log(JSON.stringify({{ before, after: state.interfaceByRole.human_1, global: state.interfaceHtml }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["before"] == "<div>h1</div>"
+    assert values["after"] == "<div>updated</div>"
+    assert values["global"] == "<div>default</div>"
+
+
 def test_runtime_collision_modes_distinguish_overlap_and_contact(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"

@@ -1761,6 +1761,33 @@ def test_scene_set_interface_accepts_literal_and_alias_variable():
     assert 'data-button="spawn_bonus"' in project.interface_html
 
 
+def test_scene_set_interface_accepts_role_selector():
+    project = compile_project(
+        '''
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene.set_interface("<div>P1 HUD</div>", Role["human_1"])
+        '''
+    )
+
+    assert project.interfaces_by_role == {"human_1": "<div>P1 HUD</div>"}
+
+
+def test_scene_set_interface_rejects_unknown_role_selector():
+    with pytest.raises(DSLValidationError, match="unknown role id 'human_9'"):
+        compile_project(
+            '''
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene.set_interface("<div>P9 HUD</div>", Role["human_9"])
+            '''
+        )
+
+
 def test_setup_sprite_arguments_allow_static_expressions():
     project = compile_project(
         """
@@ -1785,6 +1812,66 @@ def test_setup_sprite_arguments_allow_static_expressions():
 
     assert project.sprites[0].name == "hero_alt"
     assert project.sprites[0].clips[0].frames == [0, 1, 2, 3, 4, 5]
+
+
+def test_setup_supports_resource_and_sprite_selectors():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        hero_res = Resource("hero_sheet", "hero.png")
+        game.add_resource(hero_res)
+        game.add_sprite(
+            Sprite(
+                name="hero",
+                resource=Resource["hero_sheet"],
+                frame_width=16,
+                frame_height=16,
+                default_clip="idle",
+                clips={"idle": {"frames": [0, 1], "ticks_per_frame": 8, "loop": True}},
+            )
+        )
+        scene.add_actor(Player(uid="hero_1", x=0, y=0, sprite=Sprite["hero"]))
+        """
+    )
+
+    assert project.resources[0].name == "hero_sheet"
+    assert project.sprites[0].resource == "hero_sheet"
+    assert project.actors[0].fields["sprite"] == "hero"
+
+
+def test_conditions_accept_role_selector_arguments():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        @unsafe_condition(KeyboardCondition.on_press("d", Role["human_1"]))
+        def move(player: Player["hero"]):
+            player.x = player.x + 1
+
+        @unsafe_condition(OnToolCall("bot_move", Role["dummy_1"]))
+        def bot_move(player: Player["hero"]):
+            \"\"\"move\"\"\"
+            player.x = player.x + 2
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        game.add_role(Role(id="dummy_1", required=False, kind=RoleKind.AI))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        """
+    )
+
+    assert isinstance(project.rules[0].condition, KeyboardConditionSpec)
+    assert project.rules[0].condition.role_id == "human_1"  # type: ignore[attr-defined]
+    assert isinstance(project.rules[1].condition, ToolConditionSpec)
+    assert project.rules[1].condition.role_id == "dummy_1"  # type: ignore[attr-defined]
 
 
 def test_game_set_interface_is_rejected():
@@ -2099,6 +2186,50 @@ def test_abstract_code_block_instantiation_expands_rules_and_selectors():
     assert role_ids == ["human_1", "human_2"]
     assert len(project.actions) == 2
     assert project.actions[0].name != project.actions[1].name
+
+
+def test_abstract_code_block_supports_selector_macro_values():
+    project = compile_project(
+        """
+        AbstractCodeBlock.begin(
+            "player_controls",
+            role=Role,
+            hero=Player,
+        )
+        \"\"\"keyboard movement\"\"\"
+
+        @unsafe_condition(KeyboardCondition.on_press("d", role))
+        def move_right(player: hero):
+            player.x = player.x + 1
+
+        AbstractCodeBlock.end("player_controls")
+
+        AbstractCodeBlock.instantiate(
+            "player_controls",
+            role=Role["human_1"],
+            hero=Player["hero_1"],
+        )
+
+        CodeBlock.begin("main")
+        \"\"\"main\"\"\"
+
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene.add_actor(Player(uid="hero_1", x=0, y=0))
+
+        CodeBlock.end("main")
+        """,
+        require_code_blocks=True,
+    )
+
+    assert len(project.rules) == 1
+    assert isinstance(project.rules[0].condition, KeyboardConditionSpec)
+    assert project.rules[0].condition.role_id == "human_1"  # type: ignore[attr-defined]
 
 
 def test_abstract_code_block_warns_when_not_instantiated():

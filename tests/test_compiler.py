@@ -407,14 +407,18 @@ def test_accept_scene_set_interface_calls():
         def set_ui(scene: Scene):
             scene.set_interface("<div>hello</div>")
             Scene.set_interface(scene, "<div>world</div>")
+            scene.set_interface("<div>p1</div>", Role["human_1"])
         """
     )
 
     set_ui = actions[0]
     assert isinstance(set_ui.body[0], CallStmt)
     assert isinstance(set_ui.body[1], CallStmt)
+    assert isinstance(set_ui.body[2], CallStmt)
     assert set_ui.body[0].name == "scene_set_interface"
     assert set_ui.body[1].name == "scene_set_interface"
+    assert set_ui.body[2].name == "scene_set_interface"
+    assert len(set_ui.body[2].args) == 2
 
 
 def test_accept_scene_elapsed_read_access():

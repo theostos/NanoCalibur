@@ -989,16 +989,21 @@ class DSLCompiler:
                 raise DSLValidationError(
                     f"{owner}.set_interface(...) does not accept keyword args."
                 )
-            if len(expr.args) != 1:
+            if len(expr.args) not in {1, 2}:
                 raise DSLValidationError(
-                    f"{owner}.set_interface(...) expects one HTML string argument."
+                    f"{owner}.set_interface(...) expects html and optional role selector."
                 )
             html_expr = self._compile_expr(expr.args[0], scope, allow_range_call=False)
             if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
                 raise DSLValidationError(
                     f"{owner}.set_interface(...) HTML must be a string."
                 )
-            return CallStmt(name="scene_set_interface", args=[html_expr])
+            if len(expr.args) == 1:
+                return CallStmt(name="scene_set_interface", args=[html_expr])
+            role_expr = self._compile_role_ref_expr(
+                expr.args[1], scope, f"{owner}.set_interface(...) role"
+            )
+            return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
         if method == "next_turn":
             if expr.args or expr.keywords:
                 raise DSLValidationError(f"{owner}.next_turn(...) does not accept arguments.")
@@ -1030,9 +1035,9 @@ class DSLCompiler:
                 raise DSLValidationError(
                     "Scene.set_interface(...) does not accept keyword args."
                 )
-            if len(expr.args) != 2:
+            if len(expr.args) not in {2, 3}:
                 raise DSLValidationError(
-                    "Scene.set_interface(...) expects scene and html arguments."
+                    "Scene.set_interface(...) expects scene, html, and optional role selector."
                 )
             scene_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
             self._require_scene_var(scene_arg, scope, "Scene.set_interface(...)")
@@ -1041,7 +1046,12 @@ class DSLCompiler:
                 raise DSLValidationError(
                     "Scene.set_interface(...) HTML must be a string."
                 )
-            return CallStmt(name="scene_set_interface", args=[html_expr])
+            if len(expr.args) == 2:
+                return CallStmt(name="scene_set_interface", args=[html_expr])
+            role_expr = self._compile_role_ref_expr(
+                expr.args[2], scope, "Scene.set_interface(...) role"
+            )
+            return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
         if method == "next_turn":
             if expr.keywords:
                 raise DSLValidationError("Scene.next_turn(...) does not accept keyword args.")
@@ -1260,6 +1270,35 @@ class DSLCompiler:
             raise DSLValidationError(
                 f"{source_name} scene argument must reference a Scene binding variable."
             )
+
+    def _compile_role_ref_expr(
+        self,
+        node: ast.AST,
+        scope: ActionScope,
+        source_name: str,
+    ) -> Expr:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if not node.value:
+                raise DSLValidationError(f"{source_name} must be non-empty.")
+            return Const(node.value)
+
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner == "Role" or owner in self.schemas.role_fields:
+                if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                    if not node.slice.value:
+                        raise DSLValidationError(f"{source_name} must be non-empty.")
+                    return Const(node.slice.value)
+                raise DSLValidationError(
+                    f'{source_name} must use Role["role_id"] or RoleType["role_id"].'
+                )
+
+        compiled = self._compile_expr(node, scope, allow_range_call=False)
+        if isinstance(compiled, Var):
+            return compiled
+        raise DSLValidationError(
+            f"{source_name} must be role variable or Role selector."
+        )
 
     def _compile_assign_target(self, target: ast.AST, scope: ActionScope):
         if isinstance(target, ast.Name):

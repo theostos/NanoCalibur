@@ -52,6 +52,7 @@ export interface InterpreterSceneState {
   loopMode: "real_time" | "turn_based" | "hybrid";
   turnChangedThisStep: boolean;
   interfaceHtml: string;
+  interfaceByRole: Record<string, string>;
 }
 
 export interface InterpreterState {
@@ -181,6 +182,7 @@ export class NanoCaliburInterpreter {
         loopMode: this.sceneState.loopMode,
         turnChangedThisStep: this.sceneState.turnChangedThisStep,
         interfaceHtml: this.sceneState.interfaceHtml,
+        interfaceByRole: { ...this.sceneState.interfaceByRole },
       },
     };
   }
@@ -197,6 +199,7 @@ export class NanoCaliburInterpreter {
       loopMode: this.sceneState.loopMode,
       turnChangedThisStep: this.sceneState.turnChangedThisStep,
       interfaceHtml: this.sceneState.interfaceHtml,
+      interfaceByRole: { ...this.sceneState.interfaceByRole },
     };
   }
 
@@ -310,7 +313,7 @@ export class NanoCaliburInterpreter {
         elapsed: this.sceneState.elapsed,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
         nextTurn: () => this.nextTurn(),
-        setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
+        setInterfaceHtml: (html: string, role?: unknown) => this.setInterfaceHtml(html, role),
         followCamera: (camera: Record<string, any>, targetUid: string) =>
           this.followCamera(camera, targetUid),
         detachCamera: (camera: Record<string, any>) => this.detachCamera(camera),
@@ -353,7 +356,7 @@ export class NanoCaliburInterpreter {
         detachCamera: (camera: Record<string, any>) => this.detachCamera(camera),
         translateCamera: (camera: Record<string, any>, dx: number, dy: number) =>
           this.translateCamera(camera, dx, dy),
-        setInterfaceHtml: (html: string) => this.setInterfaceHtml(html),
+        setInterfaceHtml: (html: string, role?: unknown) => this.setInterfaceHtml(html, role),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -604,6 +607,20 @@ export class NanoCaliburInterpreter {
         ? this.spec.multiplayer.default_loop
         : null,
     );
+    const interfaceByRole: Record<string, string> = {};
+    const roleInterfacesRaw =
+      this.spec && this.spec.interfaces_by_role && typeof this.spec.interfaces_by_role === "object"
+        ? (this.spec.interfaces_by_role as Record<string, unknown>)
+        : {};
+    for (const [roleId, html] of Object.entries(roleInterfacesRaw)) {
+      if (typeof roleId !== "string" || !roleId) {
+        continue;
+      }
+      if (typeof html !== "string") {
+        continue;
+      }
+      interfaceByRole[roleId] = html;
+    }
     return {
       gravityEnabled: Boolean(sceneSpec && sceneSpec.gravity_enabled),
       elapsed: 0,
@@ -612,6 +629,7 @@ export class NanoCaliburInterpreter {
       turnChangedThisStep: false,
       interfaceHtml:
         typeof this.spec?.interface_html === "string" ? this.spec.interface_html : "",
+      interfaceByRole,
     };
   }
 
@@ -627,9 +645,25 @@ export class NanoCaliburInterpreter {
     this.sceneState.turnChangedThisStep = true;
   }
 
-  private setInterfaceHtml(html: string): void {
-    this.sceneState.interfaceHtml =
-      typeof html === "string" ? html : String(html ?? "");
+  private setInterfaceHtml(html: string, role?: unknown): void {
+    const nextHtml = typeof html === "string" ? html : String(html ?? "");
+    const roleId = this.resolveRoleIdArg(role);
+    if (roleId) {
+      this.sceneState.interfaceByRole[roleId] = nextHtml;
+      return;
+    }
+    this.sceneState.interfaceHtml = nextHtml;
+  }
+
+  private resolveRoleIdArg(role: unknown): string | null {
+    if (typeof role === "string") {
+      return role || null;
+    }
+    if (role && typeof role === "object" && typeof (role as { id?: unknown }).id === "string") {
+      const id = (role as { id: string }).id;
+      return id || null;
+    }
+    return null;
   }
 
   private buildMaskedTileSet(mapSpec: Record<string, any> | null): Set<string> {

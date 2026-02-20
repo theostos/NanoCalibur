@@ -469,7 +469,20 @@ async function startSessionBrowserClient(
   const sessionRenderer = new SessionSnapshotRenderer(
     canvas,
     rendererOptions,
-    typeof sessionSpec.interface_html === 'string' ? sessionSpec.interface_html : '',
+    (() => {
+      if (typeof sessionSpec.interface_html === 'string') {
+        return sessionSpec.interface_html;
+      }
+      const byRole = sessionSpec.interfaces_by_role;
+      if (
+        byRole &&
+        typeof byRole === 'object' &&
+        typeof (byRole as Record<string, unknown>)[joined.role_id] === 'string'
+      ) {
+        return (byRole as Record<string, string>)[joined.role_id];
+      }
+      return '';
+    })(),
   );
   void sessionRenderer.start().catch((error) => {
     console.error('Failed to preload session renderer assets.', error);

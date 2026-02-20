@@ -267,6 +267,7 @@ class ProjectSpec:
     sprites: List[SpriteSpec]
     scene: Optional[SceneSpec]
     interface_html: Optional[str] = None
+    interfaces_by_role: Dict[str, str] = field(default_factory=dict)
     multiplayer: Optional[MultiplayerSpec] = None
     roles: List[RoleSpec] = field(default_factory=list)
     contains_next_turn_call: bool = False

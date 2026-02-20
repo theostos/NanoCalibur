@@ -175,8 +175,8 @@ class Scene:
         """Attach a camera instance to this scene."""
         return None
 
-    def set_interface(self, _html: str):
-        """Configure an HTML overlay rendered above the canvas for this scene."""
+    def set_interface(self, _html: str, _role=None):
+        """Configure an HTML overlay for one role (or role subclass selector)."""
         return None
 
     def enable_gravity(self):
@@ -216,6 +216,10 @@ class Sprite:
     - ``bind=Player``
     """
 
+    def __class_getitem__(cls, item):
+        """Allow ``Sprite[...]`` selector syntax."""
+        return cls
+
     def __init__(
         self,
         *,
@@ -237,6 +241,17 @@ class Sprite:
         offset_y: float = 0.0,
     ):
         """Build a sprite declaration payload for the compiler."""
+        return None
+
+
+class Resource:
+    """Resource declaration object consumed by :meth:`Game.add_resource`."""
+
+    def __class_getitem__(cls, item):
+        """Allow ``Resource[...]`` selector syntax."""
+        return cls
+
+    def __init__(self, _name: str, _path: str):
         return None
 
 
@@ -324,8 +339,8 @@ class Game:
         """Declare a multiplayer role that can join sessions."""
         return None
 
-    def add_resource(self, _name: str, _path: str):
-        """Declare an image resource by name and path."""
+    def add_resource(self, _resource: "Resource"):
+        """Declare an image resource."""
         return None
 
     def add_sprite(self, _sprite: "Sprite"):
@@ -380,17 +395,17 @@ class KeyboardCondition:
     """Keyboard input condition helpers."""
 
     @staticmethod
-    def begin_press(_key: str | list[str], id: str):
+    def begin_press(_key: str | list[str], _role=None):
         """Trigger when a key is pressed this frame."""
         return None
 
     @staticmethod
-    def on_press(_key: str | list[str], id: str):
+    def on_press(_key: str | list[str], _role=None):
         """Trigger while a key is held."""
         return None
 
     @staticmethod
-    def end_press(_key: str | list[str], id: str):
+    def end_press(_key: str | list[str], _role=None):
         """Trigger when a key is released this frame."""
         return None
 
@@ -434,17 +449,17 @@ class MouseCondition:
     """Mouse input condition helpers."""
 
     @staticmethod
-    def begin_click(_button: str = "left", *, id: str):
+    def begin_click(_button: str = "left", _role=None):
         """Trigger when a mouse button is pressed this frame."""
         return None
 
     @staticmethod
-    def on_click(_button: str = "left", *, id: str):
+    def on_click(_button: str = "left", _role=None):
         """Trigger while a mouse button is held."""
         return None
 
     @staticmethod
-    def end_click(_button: str = "left", *, id: str):
+    def end_click(_button: str = "left", _role=None):
         """Trigger when a mouse button is released this frame."""
         return None
 
@@ -562,7 +577,7 @@ def OnLogicalCondition(_predicate, _selector):
     return None
 
 
-def OnToolCall(_name: str, *, id: str):
+def OnToolCall(_name: str, _role=None):
     """Condition helper exposing an action as an external LLM-callable tool.
 
     The tool description is read from the bound action function docstring.

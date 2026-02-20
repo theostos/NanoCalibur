@@ -600,9 +600,44 @@ export class HeadlessHttpServer {
       return state;
     }
 
+    const scopedScene = (() => {
+      const scene =
+        state && state.scene && typeof state.scene === "object"
+          ? ({ ...(state.scene as Record<string, any>) } as Record<string, any>)
+          : null;
+      if (!scene) {
+        return null;
+      }
+      const roleScoped =
+        scene.interfaceByRole && typeof scene.interfaceByRole === "object"
+          ? (scene.interfaceByRole as Record<string, any>)
+          : {};
+      const fallbackHtml =
+        typeof scene.interfaceHtml === "string" ? scene.interfaceHtml : "";
+      if (viewer.isAdmin) {
+        scene.interfaceByRole = {};
+        scene.interfaceHtml = fallbackHtml;
+        return scene;
+      }
+      const roleId = viewer.roleId;
+      const scopedHtml =
+        roleId &&
+        typeof roleScoped[roleId] === "string"
+          ? (roleScoped[roleId] as string)
+          : fallbackHtml;
+      scene.interfaceHtml = scopedHtml;
+      scene.interfaceByRole =
+        roleId &&
+        typeof roleScoped[roleId] === "string"
+          ? { [roleId]: roleScoped[roleId] }
+          : {};
+      return scene;
+    })();
+
     if (viewer.isAdmin) {
       return {
         ...state,
+        scene: scopedScene,
         camera: null,
         self: null,
       };
@@ -618,6 +653,7 @@ export class HeadlessHttpServer {
         : null;
     return {
       ...state,
+      scene: scopedScene,
       roles: selfRole && roleId ? { [roleId]: selfRole } : {},
       camera: resolveCameraForRole(roleId) || null,
       self: selfRole,

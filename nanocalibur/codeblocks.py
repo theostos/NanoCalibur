@@ -441,16 +441,18 @@ def _parse_static_macro_value(node: ast.AST, context_node: ast.AST):
     try:
         value = ast.literal_eval(node)
     except Exception as exc:  # pragma: no cover - ast error formatting
+        if _is_supported_selector_macro_expr(node):
+            return copy.deepcopy(node)
         raise DSLValidationError(
             "AbstractCodeBlock.instantiate(...) values must be static constants "
-            "(int/float/str/bool/list/dict).",
+            "(int/float/str/bool/list/dict) or selector expressions like Role[\"id\"].",
             node=context_node,
         ) from exc
     if _is_supported_macro_value(value):
         return value
     raise DSLValidationError(
         "AbstractCodeBlock.instantiate(...) values must be static constants "
-        "(int/float/str/bool/list/dict).",
+        "(int/float/str/bool/list/dict) or selector expressions like Role[\"id\"].",
         node=context_node,
     )
 
@@ -472,12 +474,21 @@ def _is_supported_macro_value(value) -> bool:
     return False
 
 
+def _is_supported_selector_macro_expr(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return True
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            return True
+    return False
+
+
 def _instantiate_template(
     template: _AbstractTemplate,
     values: Dict[str, object],
     instance_index: int,
 ) -> List[ast.stmt]:
-    macro_values_ast = {name: _literal_to_ast(value) for name, value in values.items()}
+    macro_values_ast = {name: _macro_value_to_ast(value) for name, value in values.items()}
 
     name_map: Dict[str, str] = {}
     for stmt in template.body:
@@ -537,14 +548,16 @@ class _TemplateReplacer(ast.NodeTransformer):
         return node
 
 
-def _literal_to_ast(value) -> ast.AST:
+def _macro_value_to_ast(value) -> ast.AST:
+    if isinstance(value, ast.AST):
+        return copy.deepcopy(value)
     if value is None or isinstance(value, (bool, int, float, str)):
         return ast.Constant(value=value)
     if isinstance(value, list):
-        return ast.List(elts=[_literal_to_ast(item) for item in value], ctx=ast.Load())
+        return ast.List(elts=[_macro_value_to_ast(item) for item in value], ctx=ast.Load())
     if isinstance(value, dict):
         keys = [ast.Constant(value=key) for key in value.keys()]
-        values = [_literal_to_ast(item) for item in value.values()]
+        values = [_macro_value_to_ast(item) for item in value.values()]
         return ast.Dict(keys=keys, values=values)
     raise DSLValidationError("Unsupported macro value for AbstractCodeBlock instantiation.")
 
