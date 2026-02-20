@@ -206,7 +206,7 @@ class SessionSnapshotRenderer {
         : {};
     const stateRecord = state as Record<string, any>;
     const selfState = stateRecord.self;
-    globals.self =
+    globals.role =
       selfState && typeof selfState === 'object'
         ? { ...(selfState as Record<string, any>) }
         : {};

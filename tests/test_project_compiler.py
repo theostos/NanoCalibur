@@ -1791,7 +1791,7 @@ def test_scene_set_interface_accepts_interface_constructor_inline():
 
 def test_scene_set_interface_accepts_interface_variable_from_file(tmp_path):
     hud_path = tmp_path / "hud_h1.html"
-    hud_path.write_text("<div>P1 SCORE: {{self.personal_score}}</div>", encoding="utf-8")
+    hud_path.write_text("<div>P1 SCORE: {{role.personal_score}}</div>", encoding="utf-8")
     source_path = tmp_path / "scene.py"
 
     project = compile_project(
@@ -1807,7 +1807,7 @@ def test_scene_set_interface_accepts_interface_variable_from_file(tmp_path):
     )
 
     assert project.interfaces_by_role == {
-        "human_1": "<div>P1 SCORE: {{self.personal_score}}</div>"
+        "human_1": "<div>P1 SCORE: {{role.personal_score}}</div>"
     }
 
 

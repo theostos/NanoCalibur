@@ -207,7 +207,7 @@ export class CanvasHost {
       state.globals && typeof state.globals === "object"
         ? { ...(state.globals as Record<string, any>) }
         : {};
-    globals.self =
+    globals.role =
       state.self && typeof state.self === "object"
         ? { ...(state.self as Record<string, any>) }
         : {};

@@ -115,7 +115,7 @@ Examples:
 - `Scene` manages actors, rules, map, camera, gravity toggle, spawn actions, and turn progression via `scene.next_turn()`.
 - Keyboard matching is normalized in the runtime (`d`/`D`/`KeyD`, `ArrowUp`/`up`, etc.).
 - You can add game-specific key aliases at scene level with `keyboard_aliases`.
-- Role-scoped UI placeholders can use `{{self.field_name}}` in session mode.
+- Role-scoped UI placeholders can use `{{role.field_name}}` in session mode.
 
 ```python
 game = Game()
@@ -199,7 +199,7 @@ You can update the overlay at runtime from an action with `scene.set_interface(.
 Built-in dynamic placeholders available in interface HTML:
 - `{{__actors_count}}`
 - `{{__scene_elapsed}}`
-- `{{self.<field>}}` for role-scoped values (for example `{{self.personal_score}}`)
+- `{{role.<field>}}` for role-scoped values (for example `{{role.personal_score}}`)
 
 ### Code Blocks (Vibe Coding Workflow)
 
