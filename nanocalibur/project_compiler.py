@@ -114,6 +114,7 @@ class ProjectCompiler:
                 module = ast.parse(preprocessed_source)
             except SyntaxError as exc:
                 raise DSLValidationError(_format_syntax_error(exc, preprocessed_source)) from exc
+            module = self._expand_top_level_static_control_flow(module)
 
             compiler = DSLCompiler()
 
@@ -273,6 +274,117 @@ class ProjectCompiler:
                 roles=roles,
                 contains_next_turn_call=contains_next_turn_call,
             )
+
+    def _expand_top_level_static_control_flow(self, module: ast.Module) -> ast.Module:
+        env: Dict[str, object] = {}
+        max_setup_steps = 20_000
+        max_loop_iterations = 10_000
+        executed_steps = 0
+
+        def expand_block(statements: List[ast.stmt]) -> List[ast.stmt]:
+            out: List[ast.stmt] = []
+            for statement in statements:
+                out.extend(expand_stmt(statement))
+            return out
+
+        def expand_stmt(statement: ast.stmt) -> List[ast.stmt]:
+            nonlocal executed_steps
+            executed_steps += 1
+            if executed_steps > max_setup_steps:
+                raise DSLValidationError(
+                    "Top-level setup expansion exceeded maximum step budget. "
+                    "Simplify setup loops/conditions."
+                )
+
+            with dsl_node_context(statement):
+                if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                    return [statement]
+
+                if isinstance(statement, ast.ClassDef):
+                    env.pop(statement.name, None)
+                    return [statement]
+
+                if isinstance(statement, ast.FunctionDef):
+                    env.pop(statement.name, None)
+                    return [statement]
+
+                if isinstance(statement, ast.If):
+                    try:
+                        condition = _eval_static_expr(statement.test, env)
+                    except DSLValidationError as exc:
+                        raise DSLValidationError(
+                            "Top-level if condition must be statically evaluable."
+                        ) from exc
+                    selected = statement.body if bool(condition) else statement.orelse
+                    return expand_block(selected)
+
+                if isinstance(statement, ast.For):
+                    if not isinstance(statement.target, ast.Name):
+                        raise DSLValidationError(
+                            "Top-level for loop target must be a simple variable name."
+                        )
+                    try:
+                        iterable = _eval_static_expr(statement.iter, env)
+                    except DSLValidationError as exc:
+                        raise DSLValidationError(
+                            "Top-level for iterable must be statically evaluable."
+                        ) from exc
+                    if isinstance(iterable, range):
+                        values = list(iterable)
+                    elif isinstance(iterable, (list, tuple)):
+                        values = list(iterable)
+                    else:
+                        raise DSLValidationError(
+                            "Top-level for only supports iterating over range(...), list, or tuple."
+                        )
+
+                    output: List[ast.stmt] = []
+                    had_previous = statement.target.id in env
+                    previous_value = env.get(statement.target.id)
+                    for idx, value in enumerate(values):
+                        if idx >= max_loop_iterations:
+                            raise DSLValidationError(
+                                "Top-level for exceeded maximum iteration budget."
+                            )
+                        env[statement.target.id] = copy.deepcopy(value)
+                        output.extend(expand_block(statement.body))
+                    if statement.orelse:
+                        output.extend(expand_block(statement.orelse))
+                    if had_previous:
+                        env[statement.target.id] = previous_value
+                    else:
+                        env.pop(statement.target.id, None)
+                    return output
+
+                if isinstance(statement, ast.While):
+                    output: List[ast.stmt] = []
+                    loop_count = 0
+                    while True:
+                        try:
+                            condition = _eval_static_expr(statement.test, env)
+                        except DSLValidationError as exc:
+                            raise DSLValidationError(
+                                "Top-level while condition must be statically evaluable."
+                            ) from exc
+                        if not bool(condition):
+                            break
+                        loop_count += 1
+                        if loop_count > max_loop_iterations:
+                            raise DSLValidationError(
+                                "Top-level while exceeded maximum iteration budget."
+                            )
+                        output.extend(expand_block(statement.body))
+                    if statement.orelse:
+                        output.extend(expand_block(statement.orelse))
+                    return output
+
+                transformed = _substitute_static_names_in_node(statement, env)
+                _update_static_setup_env_from_stmt(transformed, env)
+                return [transformed]
+
+        expanded = ast.Module(body=expand_block(module.body), type_ignores=module.type_ignores)
+        ast.fix_missing_locations(expanded)
+        return expanded
 
     def _discover_game_variable(self, module: ast.Module) -> str:
         name_aliases: Dict[str, str] = {}
@@ -3589,7 +3701,209 @@ def _expect_name(node: ast.AST, label: str) -> str:
     raise DSLValidationError(f"Expected {label} name.")
 
 
-def _eval_static_expr(node: ast.AST):
+class _StaticNameSubstituter(ast.NodeTransformer):
+    def __init__(self, env: Dict[str, object]) -> None:
+        self._env = env
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Load) and node.id in self._env:
+            return ast.copy_location(_static_value_to_ast(self._env[node.id]), node)
+        return node
+
+
+def _substitute_static_names_in_node(node: ast.AST, env: Dict[str, object]) -> ast.AST:
+    return ast.fix_missing_locations(_StaticNameSubstituter(env).visit(copy.deepcopy(node)))
+
+
+def _static_value_to_ast(value: object) -> ast.AST:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return ast.Constant(value=value)
+    if isinstance(value, list):
+        return ast.List(elts=[_static_value_to_ast(item) for item in value], ctx=ast.Load())
+    if isinstance(value, tuple):
+        return ast.Tuple(
+            elts=[_static_value_to_ast(item) for item in value],
+            ctx=ast.Load(),
+        )
+    if isinstance(value, range):
+        return ast.List(
+            elts=[_static_value_to_ast(item) for item in value],
+            ctx=ast.Load(),
+        )
+    if isinstance(value, dict):
+        return ast.Dict(
+            keys=[_static_value_to_ast(key) for key in value.keys()],
+            values=[_static_value_to_ast(item) for item in value.values()],
+        )
+    raise DSLValidationError(
+        f"Unsupported compile-time value type '{type(value).__name__}' in setup expansion."
+    )
+
+
+def _update_static_setup_env_from_stmt(
+    stmt: ast.stmt,
+    env: Dict[str, object],
+) -> None:
+    if isinstance(stmt, ast.Assign):
+        if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            target_name = stmt.targets[0].id
+            try:
+                env[target_name] = copy.deepcopy(_eval_static_expr(stmt.value, env))
+            except DSLValidationError:
+                env.pop(target_name, None)
+        return
+
+    if isinstance(stmt, ast.AnnAssign):
+        if isinstance(stmt.target, ast.Name):
+            target_name = stmt.target.id
+            if stmt.value is None:
+                env.pop(target_name, None)
+            else:
+                try:
+                    env[target_name] = copy.deepcopy(_eval_static_expr(stmt.value, env))
+                except DSLValidationError:
+                    env.pop(target_name, None)
+        return
+
+    if isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
+        target_name = stmt.target.id
+        if target_name not in env:
+            return
+        try:
+            right = _eval_static_expr(stmt.value, env)
+            left = env[target_name]
+            op = stmt.op
+            if isinstance(op, ast.Add):
+                if isinstance(left, list) and isinstance(right, list):
+                    env[target_name] = [*left, *right]
+                elif isinstance(left, dict) and isinstance(right, dict):
+                    env[target_name] = {**left, **right}
+                elif isinstance(left, str) and isinstance(right, str):
+                    env[target_name] = left + right
+                elif isinstance(left, bool) or isinstance(right, bool):
+                    env.pop(target_name, None)
+                elif isinstance(left, (int, float)) and isinstance(right, (int, float)):
+                    env[target_name] = left + right
+                else:
+                    env.pop(target_name, None)
+            elif isinstance(op, ast.Sub):
+                if (
+                    isinstance(left, (int, float))
+                    and isinstance(right, (int, float))
+                    and not isinstance(left, bool)
+                    and not isinstance(right, bool)
+                ):
+                    env[target_name] = left - right
+                else:
+                    env.pop(target_name, None)
+            elif isinstance(op, ast.Mult):
+                if (
+                    isinstance(left, (int, float))
+                    and isinstance(right, (int, float))
+                    and not isinstance(left, bool)
+                    and not isinstance(right, bool)
+                ):
+                    env[target_name] = left * right
+                elif isinstance(left, str) and isinstance(right, int):
+                    env[target_name] = left * right
+                elif isinstance(left, int) and isinstance(right, str):
+                    env[target_name] = left * right
+                elif isinstance(left, list) and isinstance(right, int):
+                    env[target_name] = left * right
+                elif isinstance(left, int) and isinstance(right, list):
+                    env[target_name] = left * right
+                else:
+                    env.pop(target_name, None)
+            elif isinstance(op, ast.Div):
+                if (
+                    isinstance(left, (int, float))
+                    and isinstance(right, (int, float))
+                    and not isinstance(left, bool)
+                    and not isinstance(right, bool)
+                ):
+                    env[target_name] = left / right
+                else:
+                    env.pop(target_name, None)
+            elif isinstance(op, ast.FloorDiv):
+                if (
+                    isinstance(left, (int, float))
+                    and isinstance(right, (int, float))
+                    and not isinstance(left, bool)
+                    and not isinstance(right, bool)
+                ):
+                    env[target_name] = left // right
+                else:
+                    env.pop(target_name, None)
+            elif isinstance(op, ast.Mod):
+                if (
+                    isinstance(left, (int, float))
+                    and isinstance(right, (int, float))
+                    and not isinstance(left, bool)
+                    and not isinstance(right, bool)
+                ):
+                    env[target_name] = left % right
+                elif isinstance(left, str):
+                    env[target_name] = left % right
+                else:
+                    env.pop(target_name, None)
+            else:
+                env.pop(target_name, None)
+        except (DSLValidationError, ZeroDivisionError):
+            env.pop(target_name, None)
+        return
+
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+        call = stmt.value
+        if (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id in env
+        ):
+            receiver_name = call.func.value.id
+            method = call.func.attr
+            try:
+                args = [_eval_static_expr(arg, env) for arg in call.args]
+            except DSLValidationError:
+                return
+            receiver = env.get(receiver_name)
+            if method == "append" and isinstance(receiver, list) and len(args) == 1:
+                env[receiver_name] = [*receiver, args[0]]
+            elif method == "update" and isinstance(receiver, dict) and len(args) == 1:
+                if isinstance(args[0], dict):
+                    env[receiver_name] = {**receiver, **args[0]}
+            elif method == "concat" and len(args) == 1:
+                other = args[0]
+                if isinstance(receiver, list) and isinstance(other, list):
+                    env[receiver_name] = receiver + other
+                elif isinstance(receiver, dict) and isinstance(other, dict):
+                    env[receiver_name] = {**receiver, **other}
+                elif isinstance(receiver, str) and isinstance(other, str):
+                    env[receiver_name] = receiver + other
+            elif method == "pop":
+                if isinstance(receiver, list):
+                    data = list(receiver)
+                    try:
+                        if len(args) == 0:
+                            if not data:
+                                return
+                            data.pop()
+                            env[receiver_name] = data
+                        elif len(args) == 1 and isinstance(args[0], int):
+                            data.pop(args[0])
+                            env[receiver_name] = data
+                    except (IndexError, TypeError):
+                        return
+                elif isinstance(receiver, dict):
+                    data = dict(receiver)
+                    if len(args) == 1:
+                        data.pop(args[0], None)
+                        env[receiver_name] = data
+                    elif len(args) == 2:
+                        data.pop(args[0], args[1])
+                        env[receiver_name] = data
+
+
+def _eval_static_expr(node: ast.AST, env: Optional[Dict[str, object]] = None):
     if isinstance(node, ast.Constant):
         value = node.value
         if value is None:
@@ -3598,27 +3912,60 @@ def _eval_static_expr(node: ast.AST):
             return value
         raise DSLValidationError("Unsupported constant value in setup expression.")
 
+    if isinstance(node, ast.Name):
+        if env is not None and node.id in env:
+            return copy.deepcopy(env[node.id])
+        raise DSLValidationError(
+            f"Unknown name '{node.id}' in setup expression."
+        )
+
     if isinstance(node, ast.List):
-        return [_eval_static_expr(item) for item in node.elts]
+        return [_eval_static_expr(item, env) for item in node.elts]
 
     if isinstance(node, ast.Tuple):
-        return tuple(_eval_static_expr(item) for item in node.elts)
+        return tuple(_eval_static_expr(item, env) for item in node.elts)
 
     if isinstance(node, ast.Dict):
         out: Dict[object, object] = {}
         for key_node, value_node in zip(node.keys, node.values):
             if key_node is None:
                 raise DSLValidationError("Dict unpacking is not supported in setup expressions.")
-            key = _eval_static_expr(key_node)
+            key = _eval_static_expr(key_node, env)
             if not isinstance(key, (str, int, float, bool)):
                 raise DSLValidationError(
                     "Dict keys in setup expressions must be primitive constants."
                 )
-            out[key] = _eval_static_expr(value_node)
+            out[key] = _eval_static_expr(value_node, env)
         return out
 
+    if isinstance(node, ast.JoinedStr):
+        chunks: List[str] = []
+        for value_node in node.values:
+            if isinstance(value_node, ast.Constant) and isinstance(value_node.value, str):
+                chunks.append(value_node.value)
+                continue
+            if isinstance(value_node, ast.FormattedValue):
+                value = _eval_static_expr(value_node.value, env)
+                if value_node.format_spec is not None:
+                    spec_value = _eval_static_expr(value_node.format_spec, env)
+                    spec = str(spec_value)
+                else:
+                    spec = ""
+                if value_node.conversion == ord("r"):
+                    rendered = repr(value)
+                elif value_node.conversion == ord("a"):
+                    rendered = ascii(value)
+                else:
+                    rendered = str(value)
+                if spec:
+                    rendered = format(value, spec)
+                chunks.append(rendered)
+                continue
+            raise DSLValidationError("Unsupported f-string component in setup expression.")
+        return "".join(chunks)
+
     if isinstance(node, ast.UnaryOp):
-        operand = _eval_static_expr(node.operand)
+        operand = _eval_static_expr(node.operand, env)
         if isinstance(node.op, ast.Not):
             return not bool(operand)
         if isinstance(node.op, ast.UAdd):
@@ -3634,8 +3981,8 @@ def _eval_static_expr(node: ast.AST):
         )
 
     if isinstance(node, ast.BinOp):
-        left = _eval_static_expr(node.left)
-        right = _eval_static_expr(node.right)
+        left = _eval_static_expr(node.left, env)
+        right = _eval_static_expr(node.right, env)
 
         if isinstance(node.op, ast.Add):
             if isinstance(left, list) and isinstance(right, list):
@@ -3708,18 +4055,18 @@ def _eval_static_expr(node: ast.AST):
         if not node.values:
             raise DSLValidationError("Empty boolean expression is not supported.")
         if isinstance(node.op, ast.And):
-            current = _eval_static_expr(node.values[0])
+            current = _eval_static_expr(node.values[0], env)
             for value_node in node.values[1:]:
                 if not current:
                     return current
-                current = _eval_static_expr(value_node)
+                current = _eval_static_expr(value_node, env)
             return current
         if isinstance(node.op, ast.Or):
-            current = _eval_static_expr(node.values[0])
+            current = _eval_static_expr(node.values[0], env)
             for value_node in node.values[1:]:
                 if current:
                     return current
-                current = _eval_static_expr(value_node)
+                current = _eval_static_expr(value_node, env)
             return current
         raise DSLValidationError(
             f"Unsupported boolean operator in setup expression: {type(node.op).__name__}"
@@ -3728,8 +4075,8 @@ def _eval_static_expr(node: ast.AST):
     if isinstance(node, ast.Compare):
         if len(node.ops) != 1 or len(node.comparators) != 1:
             raise DSLValidationError("Chained comparisons are not supported in setup expressions.")
-        left = _eval_static_expr(node.left)
-        right = _eval_static_expr(node.comparators[0])
+        left = _eval_static_expr(node.left, env)
+        right = _eval_static_expr(node.comparators[0], env)
         op = node.ops[0]
         if isinstance(op, ast.Eq):
             return left == right
@@ -3751,15 +4098,54 @@ def _eval_static_expr(node: ast.AST):
             f"Unsupported comparison operator in setup expression: {type(op).__name__}"
         )
 
+    if isinstance(node, ast.IfExp):
+        condition = _eval_static_expr(node.test, env)
+        if condition:
+            return _eval_static_expr(node.body, env)
+        return _eval_static_expr(node.orelse, env)
+
     if isinstance(node, ast.Call):
         if node.keywords:
             raise DSLValidationError("Keyword arguments are not supported in setup expression calls.")
+        if isinstance(node.func, ast.Name):
+            args = [_eval_static_expr(arg, env) for arg in node.args]
+            if node.func.id == "str":
+                if len(args) != 1:
+                    raise DSLValidationError("str(...) expects exactly one argument.")
+                return str(args[0])
+            if node.func.id == "int":
+                if len(args) != 1:
+                    raise DSLValidationError("int(...) expects exactly one argument.")
+                return int(args[0])
+            if node.func.id == "float":
+                if len(args) != 1:
+                    raise DSLValidationError("float(...) expects exactly one argument.")
+                return float(args[0])
+            if node.func.id == "bool":
+                if len(args) != 1:
+                    raise DSLValidationError("bool(...) expects exactly one argument.")
+                return bool(args[0])
+            if node.func.id == "len":
+                if len(args) != 1:
+                    raise DSLValidationError("len(...) expects exactly one argument.")
+                return len(args[0])
+            if node.func.id == "range":
+                if len(args) == 1:
+                    return list(range(int(args[0])))
+                if len(args) == 2:
+                    return list(range(int(args[0]), int(args[1])))
+                if len(args) == 3:
+                    return list(range(int(args[0]), int(args[1]), int(args[2])))
+                raise DSLValidationError("range(...) expects 1 to 3 arguments.")
+            raise DSLValidationError(
+                f"Unsupported setup builtin call '{node.func.id}(...)'."
+            )
         if not isinstance(node.func, ast.Attribute):
             raise DSLValidationError(
                 "Only collection helper calls are supported in setup expressions."
             )
-        receiver = _eval_static_expr(node.func.value)
-        args = [_eval_static_expr(arg) for arg in node.args]
+        receiver = _eval_static_expr(node.func.value, env)
+        args = [_eval_static_expr(arg, env) for arg in node.args]
         method = node.func.attr
         if method == "concat":
             if len(args) != 1:

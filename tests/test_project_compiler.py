@@ -268,6 +268,50 @@ def test_project_parses_roles_and_role_scoped_conditions():
     assert tool_rule.condition.tool_docstring == "bot move"
 
 
+def test_project_expands_top_level_role_loop_with_string_builders():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+
+        for k in range(1, 5):
+            game.add_role(
+                Role(
+                    id="human_" + str(k),
+                    required=(k == 1),
+                    kind=RoleKind.HUMAN,
+                )
+            )
+
+        for k in range(1, 3):
+            game.add_role(Role(id=f"dummy_{k}", required=False, kind=RoleKind.AI))
+
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        """
+    )
+
+    assert [role.id for role in project.roles] == [
+        "human_1",
+        "human_2",
+        "human_3",
+        "human_4",
+        "dummy_1",
+        "dummy_2",
+    ]
+    assert [role.required for role in project.roles] == [
+        True,
+        False,
+        False,
+        False,
+        False,
+        False,
+    ]
+
+
 def test_project_parses_role_schema_and_role_bindings():
     project = compile_project(
         """
