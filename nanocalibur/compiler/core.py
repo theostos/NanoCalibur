@@ -192,8 +192,14 @@ class DSLCompiler:
                     "Schema class must inherit from Actor, ActorModel, or Role."
                 )
 
-            if base.id in {"Actor", "ActorModel"}:
-                fields: Dict[str, FieldType] = dict(BASE_ACTOR_FIELDS)
+            if base.id in {"Actor", "ActorModel"} or base.id in self.schemas.actor_fields:
+                # Allow multi-level actor inheritance:
+                # class OwnedActor(Actor): ...
+                # class Unit(OwnedActor): ...
+                if base.id in {"Actor", "ActorModel"}:
+                    fields: Dict[str, FieldType] = dict(BASE_ACTOR_FIELDS)
+                else:
+                    fields = dict(self.schemas.actor_fields[base.id])
                 for stmt in node.body:
                     with dsl_node_context(stmt):
                         if isinstance(stmt, ast.Pass):

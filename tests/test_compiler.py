@@ -55,6 +55,33 @@ def test_compile_valid_schema_and_action():
     assert isinstance(action.body[0].condition, Binary)
 
 
+def test_compile_actor_schema_can_inherit_from_custom_actor_schema():
+    actions = compile_source(
+        """
+        class OwnedActor(Actor):
+            owner_id: str
+
+        class Unit(OwnedActor):
+            hp: int
+
+        def tick(unit: Unit["u1"]):
+            unit.hp = unit.hp + 1
+            unit.owner_id = "player_1"
+        """
+    )
+
+    assert len(actions) == 1
+    action = actions[0]
+    assert action.name == "tick"
+    assert [param.kind for param in action.params] == [BindingKind.ACTOR]
+    assert isinstance(action.body[0], Assign)
+    assert isinstance(action.body[1], Assign)
+    assert isinstance(action.body[0].target, Attr)
+    assert action.body[0].target.field == "hp"
+    assert isinstance(action.body[1].target, Attr)
+    assert action.body[1].target.field == "owner_id"
+
+
 def test_reject_import_statement():
     with pytest.raises(DSLValidationError, match="Unsupported top-level statement"):
         compile_source(

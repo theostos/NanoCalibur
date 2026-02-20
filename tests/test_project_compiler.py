@@ -173,6 +173,43 @@ def test_actor_base_fields_include_velocity_components():
     assert project.actor_schemas["Player"]["vy"] == "float"
 
 
+def test_project_actor_schema_can_inherit_from_custom_actor_schema():
+    project = compile_project(
+        """
+        class OwnedActor(Actor):
+            owner_id: str
+
+        class Unit(OwnedActor):
+            hp: int
+            max_hp: int
+
+        game = Game()
+        game.add_role(Role(id="ai_1", required=False, kind=RoleKind.AI))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(
+            Unit(
+                uid="u1",
+                x=32,
+                y=48,
+                owner_id="player_1",
+                hp=35,
+                max_hp=40,
+            )
+        )
+        """
+    )
+
+    assert "OwnedActor" in project.actor_schemas
+    assert "Unit" in project.actor_schemas
+    assert project.actor_schemas["OwnedActor"]["owner_id"] == "str"
+    assert project.actor_schemas["Unit"]["owner_id"] == "str"
+    assert project.actor_schemas["Unit"]["hp"] == "int"
+    assert project.actor_schemas["Unit"]["max_hp"] == "int"
+    assert project.actors[0].actor_type == "Unit"
+    assert project.actors[0].fields["owner_id"] == "player_1"
+
+
 def test_turn_based_multiplayer_requires_next_turn_call():
     with pytest.raises(DSLValidationError, match="scene.next_turn"):
         compile_project(
