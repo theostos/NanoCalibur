@@ -3,6 +3,7 @@ from nanocalibur.dsl_markers import (
     CodeBlock,
     KeyboardCondition,
     OnToolCall,
+    Role,
     unsafe_condition,
 )
 
@@ -11,8 +12,8 @@ from .scene_entities import Player
 
 AbstractCodeBlock.begin(
     "human_player_controls",
-    role_id=str,
-    hero_uid=str,
+    role=Role,
+    hero=Player,
     key_up=str,
     key_left=str,
     key_down=str,
@@ -21,39 +22,39 @@ AbstractCodeBlock.begin(
 """Reusable movement block for one human role/hero binding."""
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_right, id=role_id))
-def move_right(player: Player[hero_uid]):
+@unsafe_condition(KeyboardCondition.on_press(key_right, role))
+def move_right(player: hero):
     player.vx = player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_left, id=role_id))
-def move_left(player: Player[hero_uid]):
+@unsafe_condition(KeyboardCondition.on_press(key_left, role))
+def move_left(player: hero):
     player.vx = -player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_up, id=role_id))
-def move_up(player: Player[hero_uid]):
+@unsafe_condition(KeyboardCondition.on_press(key_up, role))
+def move_up(player: hero):
     player.vy = -player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.on_press(key_down, id=role_id))
-def move_down(player: Player[hero_uid]):
+@unsafe_condition(KeyboardCondition.on_press(key_down, role))
+def move_down(player: hero):
     player.vy = player.speed
     player.play("run")
 
 
-@unsafe_condition(KeyboardCondition.end_press([key_left, key_right], id=role_id))
-def stop_horizontal(player: Player[hero_uid]):
+@unsafe_condition(KeyboardCondition.end_press([key_left, key_right], role))
+def stop_horizontal(player: hero):
     player.vx = 0
     if player.vy == 0:
         player.play("idle")
 
 
-@unsafe_condition(KeyboardCondition.end_press([key_up, key_down], id=role_id))
-def stop_vertical(player: Player[hero_uid]):
+@unsafe_condition(KeyboardCondition.end_press([key_up, key_down], role))
+def stop_vertical(player: hero):
     player.vy = 0
     if player.vx == 0:
         player.play("idle")
@@ -64,8 +65,8 @@ AbstractCodeBlock.end("human_player_controls")
 
 AbstractCodeBlock.instantiate(
     "human_player_controls",
-    role_id="human_1",
-    hero_uid="hero_1",
+    role=Role["human_1"],
+    hero=Player["hero_1"],
     key_up="z",
     key_left="q",
     key_down="s",
@@ -73,8 +74,8 @@ AbstractCodeBlock.instantiate(
 )
 AbstractCodeBlock.instantiate(
     "human_player_controls",
-    role_id="human_2",
-    hero_uid="hero_2",
+    role=Role["human_2"],
+    hero=Player["hero_2"],
     key_up="i",
     key_left="j",
     key_down="k",
@@ -82,8 +83,8 @@ AbstractCodeBlock.instantiate(
 )
 AbstractCodeBlock.instantiate(
     "human_player_controls",
-    role_id="human_3",
-    hero_uid="hero_3",
+    role=Role["human_3"],
+    hero=Player["hero_3"],
     key_up="ArrowUp",
     key_left="ArrowLeft",
     key_down="ArrowDown",
@@ -91,8 +92,8 @@ AbstractCodeBlock.instantiate(
 )
 AbstractCodeBlock.instantiate(
     "human_player_controls",
-    role_id="human_4",
-    hero_uid="hero_4",
+    role=Role["human_4"],
+    hero=Player["hero_4"],
     key_up="t",
     key_left="f",
     key_down="g",
@@ -104,35 +105,35 @@ CodeBlock.begin("dummy_ai_controls")
 """Optional tool-controlled bot controls (dummy external client role)."""
 
 
-@unsafe_condition(OnToolCall("llm_dummy_move_right", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_right", Role["dummy_1"]))
 def llm_dummy_move_right(bot: Player["llm_dummy"]):
     """Move llm_dummy right."""
     bot.vx = bot.speed
     bot.play("run")
 
 
-@unsafe_condition(OnToolCall("llm_dummy_move_left", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_left", Role["dummy_1"]))
 def llm_dummy_move_left(bot: Player["llm_dummy"]):
     """Move llm_dummy left."""
     bot.vx = -bot.speed
     bot.play("run")
 
 
-@unsafe_condition(OnToolCall("llm_dummy_move_up", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_up", Role["dummy_1"]))
 def llm_dummy_move_up(bot: Player["llm_dummy"]):
     """Move llm_dummy up."""
     bot.vy = -bot.speed
     bot.play("run")
 
 
-@unsafe_condition(OnToolCall("llm_dummy_move_down", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_down", Role["dummy_1"]))
 def llm_dummy_move_down(bot: Player["llm_dummy"]):
     """Move llm_dummy down."""
     bot.vy = bot.speed
     bot.play("run")
 
 
-@unsafe_condition(OnToolCall("llm_dummy_idle", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_idle", Role["dummy_1"]))
 def llm_dummy_idle(bot: Player["llm_dummy"]):
     """Set llm_dummy to idle animation."""
     bot.vx = 0

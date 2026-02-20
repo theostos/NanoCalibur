@@ -1,4 +1,4 @@
-from nanocalibur.dsl_markers import CodeBlock, Game, Multiplayer, Scene
+from nanocalibur.dsl_markers import CodeBlock, Game, Multiplayer, Role, Scene
 
 
 CodeBlock.begin("shared_context")
@@ -35,7 +35,8 @@ scene.set_interface(
   <div>Actors: {{__actors_count}}</div>
   <div>Score: {{score}}</div>
 </div>
-"""
+""",
+    Role["human_1"],
 )
 
 CodeBlock.end("shared_context")

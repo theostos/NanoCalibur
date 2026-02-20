@@ -1,4 +1,4 @@
-from nanocalibur.dsl_markers import Actor, CodeBlock
+from nanocalibur.dsl_markers import Actor, CodeBlock, Sprite
 
 from .scene_shared import scene
 
@@ -25,7 +25,7 @@ scene.add_actor(
         speed=180,
         z=1,
         block_mask=1,
-        sprite="hero",
+        sprite=Sprite["hero"],
     )
 )
 scene.add_actor(
@@ -38,7 +38,7 @@ scene.add_actor(
         speed=170,
         z=1,
         block_mask=1,
-        sprite="hero",
+        sprite=Sprite["hero"],
     )
 )
 scene.add_actor(
@@ -51,7 +51,7 @@ scene.add_actor(
         speed=170,
         z=1,
         block_mask=1,
-        sprite="hero",
+        sprite=Sprite["hero"],
     )
 )
 scene.add_actor(
@@ -64,7 +64,7 @@ scene.add_actor(
         speed=170,
         z=1,
         block_mask=1,
-        sprite="hero",
+        sprite=Sprite["hero"],
     )
 )
 scene.add_actor(
@@ -77,11 +77,11 @@ scene.add_actor(
         speed=140,
         z=1,
         block_mask=1,
-        sprite="hero",
+        sprite=Sprite["hero"],
     )
 )
 
-scene.add_actor(Coin(uid="coin_1", x=320, y=224, active=True, sprite="coin"))
+scene.add_actor(Coin(uid="coin_1", x=320, y=224, active=True, sprite=Sprite["coin"]))
 scene.add_actor(
     Coin(
         uid="coin_pet",
@@ -90,7 +90,7 @@ scene.add_actor(
         block_mask=1,
         parent="hero_1",
         active=True,
-        sprite="coin",
+        sprite=Sprite["coin"],
     )
 )
 

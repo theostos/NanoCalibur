@@ -1,4 +1,4 @@
-from nanocalibur.dsl_markers import CodeBlock, Sprite
+from nanocalibur.dsl_markers import CodeBlock, Resource, Sprite
 
 from .scene_shared import game
 
@@ -6,19 +6,21 @@ from .scene_shared import game
 CodeBlock.begin("resources_and_sprites")
 """Load image resources and bind named sprite clips."""
 
-game.add_resource(
+hero_sheet = Resource(
     "hero_sheet",
     "img/Solaria Demo Pack Update 03/Solaria Demo Pack Update 03/16x16/Sprites/Hero 01.png",
 )
-game.add_resource(
+coin_sheet = Resource(
     "coin_sheet",
     "img/Solaria Demo Pack Update 03/Solaria Demo Pack Update 03/16x16/Sprites/Slime 01.png",
 )
+game.add_resource(hero_sheet)
+game.add_resource(coin_sheet)
 
 game.add_sprite(
     Sprite(
         name="hero",
-        resource="hero_sheet",
+        resource=Resource["hero_sheet"],
         frame_width=16,
         frame_height=16,
         default_clip="idle",
@@ -35,7 +37,7 @@ game.add_sprite(
 game.add_sprite(
     Sprite(
         name="coin",
-        resource="coin_sheet",
+        resource=Resource["coin_sheet"],
         frame_width=16,
         frame_height=16,
         default_clip="idle",
