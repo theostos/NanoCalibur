@@ -786,3 +786,236 @@ def test_parented_actor_touching_parent_does_not_block_parent_motion(tmp_path):
     )
     values = json.loads(proc.stdout.strip())
     assert values["heroX"] == 110
+
+
+def test_parented_actor_blocks_non_parent_actor(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        const physics = new PhysicsSystem({{}});
+        physics.setMap({{
+          width: 20,
+          height: 20,
+          tile_size: 32,
+          tile_grid: Array.from({{ length: 20 }}, () => Array.from({{ length: 20 }}, () => 0)),
+          tile_defs: {{}}
+        }});
+
+        const actors = [
+          {{
+            uid: "hero_parent",
+            type: "Player",
+            x: 100,
+            y: 100,
+            w: 32,
+            h: 32,
+            active: true,
+            block_mask: 1
+          }},
+          {{
+            uid: "coin_pet",
+            type: "Coin",
+            x: 128,
+            y: 100,
+            w: 16,
+            h: 16,
+            active: true,
+            block_mask: 1,
+            parent: "hero_parent"
+          }},
+          {{
+            uid: "hero_other",
+            type: "Player",
+            x: 138,
+            y: 100,
+            w: 32,
+            h: 32,
+            active: true,
+            block_mask: 1
+          }}
+        ];
+
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0);
+        physics.resolvePostActionSolidCollisions();
+        physics.writeBodiesToActors(actors);
+
+        console.log(JSON.stringify({{
+          petX: actors[1].x,
+          otherX: actors[2].x,
+          distance: Math.abs(actors[1].x - actors[2].x)
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["petX"] == 128
+    assert values["distance"] >= 24
+    assert values["otherX"] != 138
+
+
+def test_blocked_parented_child_rolls_back_parent_motion(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        const physics = new PhysicsSystem({{}});
+        physics.setMap({{
+          width: 10,
+          height: 10,
+          tile_size: 32,
+          tile_grid: [
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,1,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0,0,0]
+          ],
+          tile_defs: {{
+            "1": {{
+              block_mask: 2,
+              sprite: null,
+              color: {{ r: 40, g: 40, b: 40 }}
+            }}
+          }}
+        }});
+
+        const actors = [
+          {{
+            uid: "hero",
+            type: "Player",
+            x: 120,
+            y: 112,
+            w: 32,
+            h: 32,
+            vx: 100,
+            vy: 0,
+            active: true,
+            block_mask: 1
+          }},
+          {{
+            uid: "coin_pet",
+            type: "Coin",
+            x: 152,
+            y: 112,
+            w: 16,
+            h: 16,
+            vx: 0,
+            vy: 0,
+            active: true,
+            block_mask: 1,
+            parent: "hero"
+          }}
+        ];
+
+        // Frame 1
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0.1);
+        physics.writeBodiesToActors(actors);
+        actors[1].x += 10;
+        physics.syncBodiesFromActors(actors, true);
+        physics.resolvePostActionSolidCollisions();
+        physics.writeBodiesToActors(actors);
+
+        const afterFirst = {{
+          heroX: actors[0].x,
+          petX: actors[1].x,
+          heroVx: actors[0].vx
+        }};
+
+        // Frame 2 with same attempted movement; should remain stable.
+        actors[0].vx = 100;
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0.1);
+        physics.writeBodiesToActors(actors);
+        actors[1].x += 10;
+        physics.syncBodiesFromActors(actors, true);
+        physics.resolvePostActionSolidCollisions();
+        physics.writeBodiesToActors(actors);
+
+        console.log(JSON.stringify({{
+          afterFirst,
+          afterSecond: {{
+            heroX: actors[0].x,
+            petX: actors[1].x,
+            heroVx: actors[0].vx
+          }}
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["afterFirst"]["heroX"] == 120
+    assert values["afterFirst"]["petX"] == 152
+    assert values["afterFirst"]["heroVx"] == 0
+    assert values["afterSecond"]["heroX"] == 120
+    assert values["afterSecond"]["petX"] == 152
+    assert values["afterSecond"]["heroVx"] == 0

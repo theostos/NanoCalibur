@@ -141,6 +141,7 @@ export class PhysicsSystem {
   }
 
   private resolvePostActionTileBlocking(): void {
+    const constrainedAttachmentRoots = new Set<string>();
     for (const body of this.bodies.values()) {
       if (!body.config.enabled || !body.active || body.blockMask === null) {
         continue;
@@ -152,6 +153,17 @@ export class PhysicsSystem {
       body.y = body.prevY;
       body.vx = 0;
       body.vy = 0;
+      if (body.parentUid) {
+        constrainedAttachmentRoots.add(body.parentUid);
+      }
+    }
+
+    if (constrainedAttachmentRoots.size === 0) {
+      return;
+    }
+
+    for (const rootUid of constrainedAttachmentRoots) {
+      this.rollbackAttachmentTreeToPrevious(rootUid);
     }
   }
 
@@ -171,6 +183,9 @@ export class PhysicsSystem {
         for (let j = i + 1; j < candidates.length; j += 1) {
           const b = candidates[j];
           if (a.blockMask !== b.blockMask) {
+            continue;
+          }
+          if (this.areBodiesDirectlyAttached(a, b)) {
             continue;
           }
 
@@ -249,6 +264,9 @@ export class PhysicsSystem {
         }
         const bodyB = this.bodies.get(b.uid);
         if (!bodyB || !this.isBodyActorMaskCollisionEnabled(bodyB)) {
+          continue;
+        }
+        if (this.areBodiesDirectlyAttached(bodyA, bodyB)) {
           continue;
         }
         if (bodyA.blockMask !== bodyB.blockMask) {
@@ -528,9 +546,15 @@ export class PhysicsSystem {
       body.active &&
       body.config.enabled &&
       body.config.collidable &&
-      !body.parentUid &&
       body.blockMask !== null
     );
+  }
+
+  private areBodiesDirectlyAttached(
+    a: PhysicsBodyRuntime,
+    b: PhysicsBodyRuntime,
+  ): boolean {
+    return a.parentUid === b.uid || b.parentUid === a.uid;
   }
 
   private resolveSeparationDirection(
@@ -620,6 +644,33 @@ export class PhysicsSystem {
     const previous = onX ? body.prevX : body.prevY;
     const velocity = onX ? body.vx : body.vy;
     return Math.abs(current - previous) > EPSILON || Math.abs(velocity) > EPSILON;
+  }
+
+  private rollbackAttachmentTreeToPrevious(rootUid: string): void {
+    const visited = new Set<string>();
+    const queue: string[] = [rootUid];
+
+    while (queue.length > 0) {
+      const uid = queue.shift()!;
+      if (visited.has(uid)) {
+        continue;
+      }
+      visited.add(uid);
+
+      const body = this.bodies.get(uid);
+      if (body) {
+        body.x = body.prevX;
+        body.y = body.prevY;
+        body.vx = 0;
+        body.vy = 0;
+      }
+
+      for (const candidate of this.bodies.values()) {
+        if (candidate.parentUid === uid && !visited.has(candidate.uid)) {
+          queue.push(candidate.uid);
+        }
+      }
+    }
   }
 
   private resolveActorMask(actor: ActorState): number | null {
