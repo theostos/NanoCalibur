@@ -90,8 +90,8 @@ class Actor:
     active: bool
     block_mask: int | None
     z: float
-    parent: str
-    sprite: str
+    parent: str | None
+    sprite: str | None
 
     def __class_getitem__(cls, item):
         """Allow ``Actor[...]`` syntax in type annotations."""
@@ -110,8 +110,8 @@ class Actor:
         z: float = 0.0,
         active: bool = True,
         block_mask: int | None = None,
-        parent: str | None = None,
-        sprite: str | None = None,
+        parent: "str | type[Actor] | None" = None,
+        sprite: "str | type[Sprite] | None" = None,
         **_fields: Any,
     ) -> None:
         """Describe an actor instance payload for scene/game registration."""
@@ -125,7 +125,7 @@ class Actor:
         """Request destruction/despawn of this actor."""
         return None
 
-    def attached_to(self, _parent: "Actor | str"):
+    def attached_to(self, _parent: "str | type[Actor]"):
         """Attach this actor to a parent actor (or parent uid)."""
         return None
 
@@ -175,7 +175,11 @@ class Scene:
         """Attach a camera instance to this scene."""
         return None
 
-    def set_interface(self, _html: str, _role=None):
+    def set_interface(
+        self,
+        _html: str,
+        _role: "str | type[Role] | None" = None,
+    ):
         """Configure an HTML overlay for one role (or role subclass selector)."""
         return None
 
@@ -224,13 +228,13 @@ class Sprite:
         self,
         *,
         name: str | None = None,
-        uid=None,
-        actor_type=None,
-        bind=None,
-        resource: str,
+        uid: str | None = None,
+        actor_type: "type[Actor] | None" = None,
+        bind: "str | type[Actor] | None" = None,
+        resource: "str | Resource | type[Resource]",
         frame_width: int,
         frame_height: int,
-        clips,
+        clips: dict[str, Any],
         default_clip: str | None = None,
         symbol: str | None = None,
         description: str | None = None,
@@ -286,7 +290,7 @@ class Role:
 
     id: str
     required: bool
-    kind: str
+    kind: RoleKind | str
 
     def __class_getitem__(cls, item):
         """Allow ``Role[...]`` syntax in type annotations."""
@@ -339,7 +343,11 @@ class Game:
         """Declare a multiplayer role that can join sessions."""
         return None
 
-    def add_resource(self, _resource: "Resource"):
+    def add_resource(
+        self,
+        _resource_or_name: "Resource | str",
+        _path: str | None = None,
+    ):
         """Declare an image resource."""
         return None
 
@@ -395,18 +403,45 @@ class KeyboardCondition:
     """Keyboard input condition helpers."""
 
     @staticmethod
-    def begin_press(_key: str | list[str], _role=None):
-        """Trigger when a key is pressed this frame."""
+    def begin_press(
+        _key: str | list[str],
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ):
+        """Trigger when a key is pressed this frame.
+
+        Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
+        for compatibility with existing code.
+        """
         return None
 
     @staticmethod
-    def on_press(_key: str | list[str], _role=None):
-        """Trigger while a key is held."""
+    def on_press(
+        _key: str | list[str],
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ):
+        """Trigger while a key is held.
+
+        Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
+        for compatibility with existing code.
+        """
         return None
 
     @staticmethod
-    def end_press(_key: str | list[str], _role=None):
-        """Trigger when a key is released this frame."""
+    def end_press(
+        _key: str | list[str],
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ):
+        """Trigger when a key is released this frame.
+
+        Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
+        for compatibility with existing code.
+        """
         return None
 
 
@@ -449,18 +484,45 @@ class MouseCondition:
     """Mouse input condition helpers."""
 
     @staticmethod
-    def begin_click(_button: str = "left", _role=None):
-        """Trigger when a mouse button is pressed this frame."""
+    def begin_click(
+        _button: str = "left",
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ):
+        """Trigger when a mouse button is pressed this frame.
+
+        Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
+        for compatibility with existing code.
+        """
         return None
 
     @staticmethod
-    def on_click(_button: str = "left", _role=None):
-        """Trigger while a mouse button is held."""
+    def on_click(
+        _button: str = "left",
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ):
+        """Trigger while a mouse button is held.
+
+        Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
+        for compatibility with existing code.
+        """
         return None
 
     @staticmethod
-    def end_click(_button: str = "left", _role=None):
-        """Trigger when a mouse button is released this frame."""
+    def end_click(
+        _button: str = "left",
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ):
+        """Trigger when a mouse button is released this frame.
+
+        Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
+        for compatibility with existing code.
+        """
         return None
 
 
@@ -482,7 +544,7 @@ class Camera:
     def __init__(
         self,
         _name: str,
-        _role,
+        _role: "str | type[Role]",
         *,
         x: float = 0.0,
         y: float = 0.0,
@@ -557,7 +619,7 @@ class Tile:
         *,
         block_mask: int | None = None,
         color: Color | None = None,
-        sprite: str | None = None,
+        sprite: "str | Sprite | type[Sprite] | None" = None,
     ):
         return None
 
@@ -577,10 +639,17 @@ def OnLogicalCondition(_predicate, _selector):
     return None
 
 
-def OnToolCall(_name: str, _role=None):
+def OnToolCall(
+    _name: str,
+    _role: "str | type[Role] | None" = None,
+    *,
+    id: str | None = None,
+):
     """Condition helper exposing an action as an external LLM-callable tool.
 
     The tool description is read from the bound action function docstring.
+    Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
+    for compatibility with existing code.
     """
     return None
 
