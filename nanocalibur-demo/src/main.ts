@@ -73,10 +73,6 @@ class SessionSnapshotRenderer {
   render(snapshot: SessionSnapshot): void {
     this.latestState = (snapshot.state || {}) as InterpreterState;
     this.latestSnapshotAtMs = performance.now();
-    if (!this.ready) {
-      return;
-    }
-    this.renderFrame();
   }
 
   private renderLoop = (): void => {
@@ -184,15 +180,18 @@ class SessionSnapshotRenderer {
     if (
       nextState.camera &&
       typeof nextState.camera === 'object' &&
-      nextState.camera.mode === 'follow' &&
       typeof nextState.camera.target_uid === 'string'
     ) {
       const target = actors.find((actor) => actor.uid === nextState.camera?.target_uid);
       if (target && typeof target.x === 'number' && typeof target.y === 'number') {
+        const offsetX =
+          typeof nextState.camera.offset_x === 'number' ? nextState.camera.offset_x : 0;
+        const offsetY =
+          typeof nextState.camera.offset_y === 'number' ? nextState.camera.offset_y : 0;
         nextState.camera = {
           ...nextState.camera,
-          x: target.x,
-          y: target.y,
+          x: target.x + offsetX,
+          y: target.y + offsetY,
         };
       }
     }
