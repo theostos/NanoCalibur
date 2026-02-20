@@ -822,6 +822,7 @@ async function startSessionBrowserClient(
   }, 1500);
 
   let snapshotPollInFlight = false;
+  let snapshotPollFailureCount = 0;
   const snapshotPollHandle = window.setInterval(() => {
     if (snapshotPollInFlight) {
       return;
@@ -832,11 +833,12 @@ async function startSessionBrowserClient(
     snapshotPollInFlight = true;
     void requestJson(
       config.baseUrl,
-      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      `/sessions/${encodeURIComponent(sessionId)}/snapshot?access_token=${encodeURIComponent(accessToken)}`,
       'GET',
       undefined,
       { 'x-role-token': accessToken },
     ).then((payload) => {
+      snapshotPollFailureCount = 0;
       if (!payload || typeof payload !== 'object') {
         return;
       }
@@ -848,8 +850,12 @@ async function startSessionBrowserClient(
       if (hasSnapshotSceneProgress(latestSnapshot, candidate)) {
         renderSnapshot(candidate);
       }
-    }).catch((_error) => {
+    }).catch((error) => {
       // SSE is still the primary path; polling is only a compatibility fallback.
+      snapshotPollFailureCount += 1;
+      if (snapshotPollFailureCount === 1 || snapshotPollFailureCount % 10 === 0) {
+        console.warn('Session snapshot polling fallback failed.', error);
+      }
     }).finally(() => {
       snapshotPollInFlight = false;
     });
@@ -1057,7 +1063,7 @@ async function startSessionBrowserClient(
   }, inputPulseMs);
 
   const streamResponse = await fetch(
-    `${config.baseUrl}/sessions/${encodeURIComponent(sessionId)}/stream`,
+    `${config.baseUrl}/sessions/${encodeURIComponent(sessionId)}/stream?access_token=${encodeURIComponent(accessToken)}`,
     {
       method: 'GET',
       headers: {
