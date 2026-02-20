@@ -6,6 +6,7 @@ import pytest
 from nanocalibur.errors import DSLValidationError
 from nanocalibur.game_model import (
     ButtonConditionSpec,
+    CollisionConditionSpec,
     CollisionMode,
     GlobalValueKind,
     InputPhase,
@@ -1171,6 +1172,95 @@ def test_condition_decorator_adds_rule_without_add_rule_call():
     assert isinstance(project.rules[0].condition, KeyboardConditionSpec)
     assert project.rules[0].condition.phase == InputPhase.BEGIN
     assert project.rules[0].condition.key == "g"
+
+
+def test_remote_condition_decorator_adds_rule_without_add_rule_call():
+    project = compile_project(
+        """
+        @remote_condition(KeyboardCondition.begin_press("g", id="human_1"))
+        def enable_gravity(scene: Scene):
+            Scene.enable_gravity(scene)
+
+        game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        game.set_scene(Scene(gravity=False))
+        """
+    )
+
+    assert len(project.rules) == 1
+    assert project.rules[0].action_name == "enable_gravity"
+    assert isinstance(project.rules[0].condition, KeyboardConditionSpec)
+    assert project.rules[0].condition.phase == InputPhase.BEGIN
+    assert project.rules[0].condition.key == "g"
+
+
+def test_local_condition_decorator_adds_overlap_rule():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        class Coin(Actor):
+            pass
+
+        @local_condition(OnOverlap(Player["hero"], Coin))
+        def collect(player: Player, coin: Coin):
+            coin.destroy()
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_actor(Coin(uid="coin_1", x=0, y=0))
+        """
+    )
+
+    assert len(project.rules) == 1
+    assert project.rules[0].action_name == "collect"
+    assert isinstance(project.rules[0].condition, CollisionConditionSpec)
+    assert project.rules[0].condition.mode == CollisionMode.OVERLAP
+
+
+def test_local_condition_warns_when_used_with_remote_condition_kind():
+    with pytest.warns(UserWarning, match="client-event-driven"):
+        project = compile_project(
+            """
+            @local_condition(KeyboardCondition.begin_press("g", id="human_1"))
+            def enable_gravity(scene: Scene):
+                Scene.enable_gravity(scene)
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            game.set_scene(Scene(gravity=False))
+            """
+        )
+
+    assert len(project.rules) == 1
+
+
+def test_remote_condition_warns_when_used_with_local_condition_kind():
+    with pytest.warns(UserWarning, match="server-evaluated"):
+        project = compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            class Coin(Actor):
+                pass
+
+            @remote_condition(OnOverlap(Player["hero"], Coin))
+            def collect(player: Player, coin: Coin):
+                coin.destroy()
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_actor(Coin(uid="coin_1", x=0, y=0))
+            """
+        )
+
+    assert len(project.rules) == 1
 
 
 def test_condition_decorator_supports_tool_calling():

@@ -572,6 +572,32 @@ def condition(_condition_expr) -> Callable[[F], F]:
     return _decorate
 
 
+def local_condition(_condition_expr) -> Callable[[F], F]:
+    """Attach a server-evaluated condition marker to an action function.
+
+    Intended for conditions resolved from server authoritative state
+    (for example overlap/contact/logical conditions).
+    """
+
+    def _decorate(fn: F) -> F:
+        return fn
+
+    return _decorate
+
+
+def remote_condition(_condition_expr) -> Callable[[F], F]:
+    """Attach a client-input-driven condition marker to an action function.
+
+    Intended for conditions that originate from client-emitted events
+    (for example keyboard/mouse/tool/button conditions).
+    """
+
+    def _decorate(fn: F) -> F:
+        return fn
+
+    return _decorate
+
+
 def callable(fn: F) -> F:
     """Mark a helper function callable from actions/predicates expressions."""
     return fn

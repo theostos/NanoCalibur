@@ -82,6 +82,7 @@ from nanocalibur.typesys import DictType, FieldType, ListType, Prim, PrimType
 COLLISION_LEFT_BINDING_UID = "__nanocalibur_collision_left__"
 COLLISION_RIGHT_BINDING_UID = "__nanocalibur_collision_right__"
 LOGICAL_TARGET_BINDING_UID = "__nanocalibur_logical_target__"
+CONDITION_DECORATOR_NAMES = {"condition", "local_condition", "remote_condition"}
 
 
 class ProjectCompiler:
@@ -478,7 +479,8 @@ class ProjectCompiler:
                 if self._has_plain_decorator(node, "callable"):
                     if self._has_condition_decorator(node):
                         raise DSLValidationError(
-                            f"Function '{node.name}' cannot use both @callable and @condition decorators."
+                            f"Function '{node.name}' cannot use both @callable and "
+                            "@condition/@local_condition/@remote_condition decorators."
                         )
                     normalized = self._normalize_callable_function(node, compiler)
                     normalized = self._strip_function_docstring(normalized)
@@ -724,7 +726,9 @@ class ProjectCompiler:
                         pass
                     elif node.decorator_list:
                         raise DSLValidationError(
-                            f"Unsupported decorators on function '{node.name}'. Use @condition(...) for actions or @callable for helper functions."
+                            f"Unsupported decorators on function '{node.name}'. Use "
+                            "@condition(...), @local_condition(...), or @remote_condition(...) "
+                            "for actions, or @callable for helper functions."
                         )
                     elif node.name not in predicates:
                         warnings.warn(
@@ -1826,7 +1830,10 @@ class ProjectCompiler:
         for decorator in fn.decorator_list:
             if not isinstance(decorator, ast.Call):
                 continue
-            if isinstance(decorator.func, ast.Name) and decorator.func.id == "condition":
+            if (
+                isinstance(decorator.func, ast.Name)
+                and decorator.func.id in CONDITION_DECORATOR_NAMES
+            ):
                 return True
         return False
 
@@ -1884,7 +1891,7 @@ class ProjectCompiler:
                 continue
             if (
                 isinstance(decorator.func, ast.Name)
-                and decorator.func.id == "condition"
+                and decorator.func.id in CONDITION_DECORATOR_NAMES
             ):
                 removed = True
                 continue
@@ -1924,12 +1931,17 @@ class ProjectCompiler:
             with dsl_node_context(decorator):
                 if not isinstance(decorator, ast.Call):
                     raise DSLValidationError(
-                        f"Unsupported decorator on action '{node.name}'. Use @condition(...)."
+                        f"Unsupported decorator on action '{node.name}'. "
+                        "Use @condition(...), @local_condition(...), or @remote_condition(...)."
                     )
-                if isinstance(decorator.func, ast.Name) and decorator.func.id == "condition":
+                if (
+                    isinstance(decorator.func, ast.Name)
+                    and decorator.func.id in CONDITION_DECORATOR_NAMES
+                ):
                     if len(decorator.args) != 1 or decorator.keywords:
                         raise DSLValidationError(
-                            "@condition(...) expects exactly one positional condition argument."
+                            f"@{decorator.func.id}(...) expects exactly one positional "
+                            "condition argument."
                         )
                     raw_condition = decorator.args[0]
                     if isinstance(raw_condition, ast.Call):
@@ -1940,17 +1952,66 @@ class ProjectCompiler:
                         resolved_condition_arg = _resolve_name_aliases_in_node(
                             raw_condition, name_aliases
                         )
-                    conditions.append(
-                        self._resolve_condition_arg(
-                            resolved_condition_arg, condition_vars, compiler, predicates
-                        )
+                    condition = self._resolve_condition_arg(
+                        resolved_condition_arg, condition_vars, compiler, predicates
                     )
+                    self._validate_condition_decorator_scope(
+                        decorator_name=decorator.func.id,
+                        condition=condition,
+                        action_name=node.name,
+                        node=decorator,
+                    )
+                    conditions.append(condition)
                     continue
 
                 raise DSLValidationError(
-                    f"Unsupported decorator on action '{node.name}'. Use @condition(...)."
+                    f"Unsupported decorator on action '{node.name}'. "
+                    "Use @condition(...), @local_condition(...), or @remote_condition(...)."
                 )
         return conditions
+
+    def _validate_condition_decorator_scope(
+        self,
+        *,
+        decorator_name: str,
+        condition: ConditionSpec,
+        action_name: str,
+        node: ast.AST,
+    ) -> None:
+        if decorator_name not in {"local_condition", "remote_condition"}:
+            return
+
+        local_safe = isinstance(condition, (CollisionConditionSpec, LogicalConditionSpec))
+        remote_unsafe = isinstance(
+            condition,
+            (
+                KeyboardConditionSpec,
+                MouseConditionSpec,
+                ToolConditionSpec,
+                ButtonConditionSpec,
+            ),
+        )
+
+        if decorator_name == "local_condition" and not local_safe:
+            warnings.warn(
+                format_dsl_diagnostic(
+                    f"@local_condition on action '{action_name}' wraps a client-event-driven "
+                    "condition. Use @remote_condition(...) for Keyboard/Mouse/Tool/Button.",
+                    node=node,
+                ),
+                stacklevel=2,
+            )
+            return
+
+        if decorator_name == "remote_condition" and not remote_unsafe:
+            warnings.warn(
+                format_dsl_diagnostic(
+                    f"@remote_condition on action '{action_name}' wraps a server-evaluated "
+                    "condition. Use @local_condition(...) for OnOverlap/OnContact/OnLogicalCondition.",
+                    node=node,
+                ),
+                stacklevel=2,
+            )
 
     def _resolve_condition_arg(
         self,

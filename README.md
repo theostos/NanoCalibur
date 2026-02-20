@@ -98,7 +98,11 @@ Rule declaration styles:
 - `scene.add_rule(condition_expr, action_fn)` (preferred)
 - `game.add_rule(condition_expr, action_fn)` (legacy-compatible)
 - `@condition(condition_expr)` decorator on action functions
+- `@local_condition(condition_expr)` marker for server-evaluated conditions (`OnOverlap`/`OnContact`/`OnLogicalCondition`)
+- `@remote_condition(condition_expr)` marker for client-input-driven conditions (`KeyboardCondition`/`MouseCondition`/`OnToolCall`/`OnButton`)
 - `@callable` decorator on helper functions that can be called inside action/predicate expressions
+
+`@local_condition` and `@remote_condition` do not change runtime translation; they add intent metadata and compiler warnings on mismatches.
 
 Examples:
 - `OnOverlap(Player["hero"], Coin)` for actor-vs-actor overlap
