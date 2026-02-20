@@ -83,7 +83,7 @@ COLLISION_LEFT_BINDING_UID = "__nanocalibur_collision_left__"
 COLLISION_RIGHT_BINDING_UID = "__nanocalibur_collision_right__"
 LOGICAL_TARGET_BINDING_UID = "__nanocalibur_logical_target__"
 LEGACY_CONDITION_DECORATOR = "condition"
-CONDITION_DECORATOR_NAMES = {"local_condition", "remote_condition"}
+CONDITION_DECORATOR_NAMES = {"safe_condition", "unsafe_condition"}
 
 
 class ProjectCompiler:
@@ -481,7 +481,7 @@ class ProjectCompiler:
                     if self._has_condition_decorator(node):
                         raise DSLValidationError(
                             f"Function '{node.name}' cannot use both @callable and "
-                            "@local_condition/@remote_condition (or legacy @condition) decorators."
+                            "@safe_condition/@unsafe_condition (or legacy @condition) decorators."
                         )
                     normalized = self._normalize_callable_function(node, compiler)
                     normalized = self._strip_function_docstring(normalized)
@@ -728,7 +728,7 @@ class ProjectCompiler:
                     elif node.decorator_list:
                         raise DSLValidationError(
                             f"Unsupported decorators on function '{node.name}'. Use "
-                            "@local_condition(...) or @remote_condition(...) "
+                            "@safe_condition(...) or @unsafe_condition(...) "
                             "for actions, or @callable for helper functions."
                         )
                     elif node.name not in predicates:
@@ -1935,7 +1935,7 @@ class ProjectCompiler:
                 if not isinstance(decorator, ast.Call):
                     raise DSLValidationError(
                         f"Unsupported decorator on action '{node.name}'. "
-                        "Use @local_condition(...) or @remote_condition(...)."
+                        "Use @safe_condition(...) or @unsafe_condition(...)."
                     )
                 if (
                     isinstance(decorator.func, ast.Name)
@@ -1943,8 +1943,8 @@ class ProjectCompiler:
                 ):
                     raise DSLValidationError(
                         "The @condition(...) decorator is no longer supported. "
-                        "Use @remote_condition(...) for KeyboardCondition/MouseCondition/"
-                        "OnToolCall/OnButton, and use @local_condition(...) for "
+                        "Use @unsafe_condition(...) for KeyboardCondition/MouseCondition/"
+                        "OnToolCall/OnButton, and use @safe_condition(...) for "
                         "OnOverlap/OnContact/OnLogicalCondition."
                     )
                 if (
@@ -1979,7 +1979,7 @@ class ProjectCompiler:
 
                 raise DSLValidationError(
                     f"Unsupported decorator on action '{node.name}'. "
-                    "Use @local_condition(...) or @remote_condition(...)."
+                    "Use @safe_condition(...) or @unsafe_condition(...)."
                 )
         return conditions
 
@@ -1991,7 +1991,7 @@ class ProjectCompiler:
         action_name: str,
         node: ast.AST,
     ) -> None:
-        if decorator_name not in {"local_condition", "remote_condition"}:
+        if decorator_name not in {"safe_condition", "unsafe_condition"}:
             return
 
         local_safe = isinstance(condition, (CollisionConditionSpec, LogicalConditionSpec))
@@ -2005,21 +2005,21 @@ class ProjectCompiler:
             ),
         )
 
-        if decorator_name == "local_condition" and not local_safe:
+        if decorator_name == "safe_condition" and not local_safe:
             condition_name = self._condition_decorator_label(condition)
             raise DSLValidationError(
-                f"@local_condition on action '{action_name}' cannot wrap {condition_name}. "
+                f"@safe_condition on action '{action_name}' cannot wrap {condition_name}. "
                 f"{condition_name} is client-event-driven (remote). "
-                "Fix: replace @local_condition(...) with @remote_condition(...).",
+                "Fix: replace @safe_condition(...) with @unsafe_condition(...).",
                 node=node,
             )
 
-        if decorator_name == "remote_condition" and not remote_unsafe:
+        if decorator_name == "unsafe_condition" and not remote_unsafe:
             condition_name = self._condition_decorator_label(condition)
             raise DSLValidationError(
-                f"@remote_condition on action '{action_name}' cannot wrap {condition_name}. "
+                f"@unsafe_condition on action '{action_name}' cannot wrap {condition_name}. "
                 f"{condition_name} is server-evaluated (local). "
-                "Fix: replace @remote_condition(...) with @local_condition(...).",
+                "Fix: replace @unsafe_condition(...) with @safe_condition(...).",
                 node=node,
             )
 

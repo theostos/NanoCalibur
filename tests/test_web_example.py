@@ -207,7 +207,7 @@ def test_build_game_resolves_local_relative_imports(tmp_path):
             CodeBlock.begin("controls")
             \"\"\"controls\"\"\"
 
-            @remote_condition(KeyboardCondition.on_press("ArrowRight", id="human_1"))
+            @unsafe_condition(KeyboardCondition.on_press("ArrowRight", id="human_1"))
             def move_right(player: Player["main_character"]):
                 player.x = player.x + player.speed
 

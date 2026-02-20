@@ -551,7 +551,7 @@ def OnButton(_name: str):
     """Condition helper for UI button clicks.
 
     Usage:
-        ``@remote_condition(OnButton("spawn_bonus"))``
+        ``@unsafe_condition(OnButton("spawn_bonus"))``
     """
     return None
 
@@ -559,7 +559,7 @@ def OnButton(_name: str):
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def local_condition(_condition_expr) -> Callable[[F], F]:
+def safe_condition(_condition_expr) -> Callable[[F], F]:
     """Attach a server-evaluated condition marker to an action function.
 
     Intended for conditions resolved from server authoritative state
@@ -572,7 +572,7 @@ def local_condition(_condition_expr) -> Callable[[F], F]:
     return _decorate
 
 
-def remote_condition(_condition_expr) -> Callable[[F], F]:
+def unsafe_condition(_condition_expr) -> Callable[[F], F]:
     """Attach a client-input-driven condition marker to an action function.
 
     Intended for conditions that originate from client-emitted events

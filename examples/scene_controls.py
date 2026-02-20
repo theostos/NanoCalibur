@@ -3,7 +3,7 @@ from nanocalibur.dsl_markers import (
     CodeBlock,
     KeyboardCondition,
     OnToolCall,
-    remote_condition,
+    unsafe_condition,
 )
 
 from .scene_entities import Player
@@ -21,38 +21,38 @@ AbstractCodeBlock.begin(
 """Reusable movement block for one human role/hero binding."""
 
 
-@remote_condition(KeyboardCondition.on_press(key_right, id=role_id))
+@unsafe_condition(KeyboardCondition.on_press(key_right, id=role_id))
 def move_right(player: Player[hero_uid]):
     player.vx = player.speed
     player.play("run")
 
 
-@remote_condition(KeyboardCondition.on_press(key_left, id=role_id))
+@unsafe_condition(KeyboardCondition.on_press(key_left, id=role_id))
 def move_left(player: Player[hero_uid]):
     player.vx = -player.speed
     player.play("run")
 
 
-@remote_condition(KeyboardCondition.on_press(key_up, id=role_id))
+@unsafe_condition(KeyboardCondition.on_press(key_up, id=role_id))
 def move_up(player: Player[hero_uid]):
     player.vy = -player.speed
     player.play("run")
 
 
-@remote_condition(KeyboardCondition.on_press(key_down, id=role_id))
+@unsafe_condition(KeyboardCondition.on_press(key_down, id=role_id))
 def move_down(player: Player[hero_uid]):
     player.vy = player.speed
     player.play("run")
 
 
-@remote_condition(KeyboardCondition.end_press([key_left, key_right], id=role_id))
+@unsafe_condition(KeyboardCondition.end_press([key_left, key_right], id=role_id))
 def stop_horizontal(player: Player[hero_uid]):
     player.vx = 0
     if player.vy == 0:
         player.play("idle")
 
 
-@remote_condition(KeyboardCondition.end_press([key_up, key_down], id=role_id))
+@unsafe_condition(KeyboardCondition.end_press([key_up, key_down], id=role_id))
 def stop_vertical(player: Player[hero_uid]):
     player.vy = 0
     if player.vx == 0:
@@ -104,35 +104,35 @@ CodeBlock.begin("dummy_ai_controls")
 """Optional tool-controlled bot controls (dummy external client role)."""
 
 
-@remote_condition(OnToolCall("llm_dummy_move_right", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_right", id="dummy_1"))
 def llm_dummy_move_right(bot: Player["llm_dummy"]):
     """Move llm_dummy right."""
     bot.vx = bot.speed
     bot.play("run")
 
 
-@remote_condition(OnToolCall("llm_dummy_move_left", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_left", id="dummy_1"))
 def llm_dummy_move_left(bot: Player["llm_dummy"]):
     """Move llm_dummy left."""
     bot.vx = -bot.speed
     bot.play("run")
 
 
-@remote_condition(OnToolCall("llm_dummy_move_up", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_up", id="dummy_1"))
 def llm_dummy_move_up(bot: Player["llm_dummy"]):
     """Move llm_dummy up."""
     bot.vy = -bot.speed
     bot.play("run")
 
 
-@remote_condition(OnToolCall("llm_dummy_move_down", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_move_down", id="dummy_1"))
 def llm_dummy_move_down(bot: Player["llm_dummy"]):
     """Move llm_dummy down."""
     bot.vy = bot.speed
     bot.play("run")
 
 
-@remote_condition(OnToolCall("llm_dummy_idle", id="dummy_1"))
+@unsafe_condition(OnToolCall("llm_dummy_idle", id="dummy_1"))
 def llm_dummy_idle(bot: Player["llm_dummy"]):
     """Set llm_dummy to idle animation."""
     bot.vx = 0
