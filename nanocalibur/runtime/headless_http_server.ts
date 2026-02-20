@@ -16,6 +16,11 @@ interface SessionViewer {
   roleId: string | null;
 }
 
+interface SessionStreamSubscriber {
+  res: any;
+  viewer: SessionViewer;
+}
+
 export class HeadlessHttpServer {
   private readonly host: HeadlessHost;
   private readonly sessionManager: SessionManager | null;
@@ -23,6 +28,8 @@ export class HeadlessHttpServer {
   private singleHostSessionClaimed = false;
   private server: any | null = null;
   private port: number | null = null;
+  private readonly streamSubscribersBySession = new Map<string, Set<SessionStreamSubscriber>>();
+  private readonly streamTickersBySession = new Map<string, any>();
 
   constructor(
     host: HeadlessHost,
@@ -67,6 +74,9 @@ export class HeadlessHttpServer {
   }
 
   async stop(): Promise<void> {
+    this.stopAllSessionStreamTickers();
+    this.closeAllSessionStreamSubscribers();
+
     if (!this.server) {
       return;
     }
@@ -441,41 +451,12 @@ export class HeadlessHttpServer {
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
-      this.writeSseEvent(res, "snapshot", {
-        session_id: sessionId,
-        frame: this.sessionManager.getSessionFrameForRole(sessionId, viewer.roleId),
-        state: this.scopeStateForViewer(
-          this.sessionManager.getSessionState(sessionId),
-          viewer,
-        ),
-      });
-
-      const session = this.sessionManager.getSession(sessionId);
-      const stepSeconds =
-        session && session.runtime
-          ? session.runtime.getDefaultStepSeconds()
-          : 1 / 20;
-      const intervalMs = Math.max(10, Math.round(stepSeconds * 1000));
-      const interval = setInterval(() => {
-        try {
-          const result = this.sessionManager!.tickSession(sessionId, stepSeconds);
-          this.writeSseEvent(res, "snapshot", {
-            session_id: sessionId,
-            frame: this.sessionManager!.getSessionFrameForRole(sessionId, viewer.roleId),
-            state: this.scopeStateForViewer(result.state, viewer),
-          });
-        } catch (_error) {
-          clearInterval(interval);
-          try {
-            res.end();
-          } catch (_ignored) {
-            // ignore broken connection writes
-          }
-        }
-      }, intervalMs);
-
+      const subscriber: SessionStreamSubscriber = { res, viewer };
+      this.registerSessionStreamSubscriber(sessionId, subscriber);
+      this.sendSnapshotToSubscriber(sessionId, subscriber);
+      this.ensureSessionStreamTicker(sessionId);
       req.on("close", () => {
-        clearInterval(interval);
+        this.unregisterSessionStreamSubscriber(sessionId, subscriber);
       });
       return true;
     }
@@ -739,6 +720,153 @@ export class HeadlessHttpServer {
   private writeSseEvent(res: any, eventName: string, payload: Record<string, any>): void {
     res.write(`event: ${eventName}\n`);
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }
+
+  private buildSessionSnapshotPayload(
+    sessionId: string,
+    viewer: SessionViewer,
+    stateOverride?: Record<string, any>,
+  ): Record<string, any> {
+    if (!this.sessionManager) {
+      throw new Error("Session manager is not available.");
+    }
+    const state = stateOverride || this.sessionManager.getSessionState(sessionId);
+    return {
+      session_id: sessionId,
+      frame: this.sessionManager.getSessionFrameForRole(sessionId, viewer.roleId),
+      state: this.scopeStateForViewer(state, viewer),
+    };
+  }
+
+  private sendSnapshotToSubscriber(
+    sessionId: string,
+    subscriber: SessionStreamSubscriber,
+    stateOverride?: Record<string, any>,
+  ): void {
+    this.writeSseEvent(
+      subscriber.res,
+      "snapshot",
+      this.buildSessionSnapshotPayload(sessionId, subscriber.viewer, stateOverride),
+    );
+  }
+
+  private registerSessionStreamSubscriber(
+    sessionId: string,
+    subscriber: SessionStreamSubscriber,
+  ): void {
+    const existing = this.streamSubscribersBySession.get(sessionId);
+    if (existing) {
+      existing.add(subscriber);
+      return;
+    }
+    this.streamSubscribersBySession.set(sessionId, new Set([subscriber]));
+  }
+
+  private unregisterSessionStreamSubscriber(
+    sessionId: string,
+    subscriber: SessionStreamSubscriber,
+  ): void {
+    const subscribers = this.streamSubscribersBySession.get(sessionId);
+    if (!subscribers) {
+      return;
+    }
+    subscribers.delete(subscriber);
+    if (subscribers.size === 0) {
+      this.streamSubscribersBySession.delete(sessionId);
+      this.stopSessionStreamTicker(sessionId);
+    }
+  }
+
+  private ensureSessionStreamTicker(sessionId: string): void {
+    if (!this.sessionManager || this.streamTickersBySession.has(sessionId)) {
+      return;
+    }
+
+    const session = this.sessionManager.getSession(sessionId);
+    const stepSeconds =
+      session && session.runtime
+        ? session.runtime.getDefaultStepSeconds()
+        : 1 / 20;
+    const intervalMs = Math.max(10, Math.round(stepSeconds * 1000));
+    const interval = setInterval(() => {
+      this.tickAndBroadcastSessionSnapshot(sessionId, stepSeconds);
+    }, intervalMs);
+    this.streamTickersBySession.set(sessionId, interval);
+  }
+
+  private stopSessionStreamTicker(sessionId: string): void {
+    const interval = this.streamTickersBySession.get(sessionId);
+    if (!interval) {
+      return;
+    }
+    clearInterval(interval);
+    this.streamTickersBySession.delete(sessionId);
+  }
+
+  private stopAllSessionStreamTickers(): void {
+    for (const interval of this.streamTickersBySession.values()) {
+      clearInterval(interval);
+    }
+    this.streamTickersBySession.clear();
+  }
+
+  private closeAllSessionStreamSubscribers(): void {
+    for (const subscribers of this.streamSubscribersBySession.values()) {
+      for (const subscriber of subscribers) {
+        try {
+          subscriber.res.end();
+        } catch (_ignored) {
+          // ignore broken pipe on shutdown
+        }
+      }
+    }
+    this.streamSubscribersBySession.clear();
+  }
+
+  private tickAndBroadcastSessionSnapshot(
+    sessionId: string,
+    stepSeconds: number,
+  ): void {
+    if (!this.sessionManager) {
+      this.stopSessionStreamTicker(sessionId);
+      return;
+    }
+
+    const subscribers = this.streamSubscribersBySession.get(sessionId);
+    if (!subscribers || subscribers.size === 0) {
+      this.stopSessionStreamTicker(sessionId);
+      return;
+    }
+
+    let state: Record<string, any>;
+    try {
+      const result = this.sessionManager.tickSession(sessionId, stepSeconds);
+      state = result.state as Record<string, any>;
+    } catch (_error) {
+      this.stopSessionStreamTicker(sessionId);
+      for (const subscriber of subscribers) {
+        try {
+          subscriber.res.end();
+        } catch (_ignored) {
+          // ignore broken connection writes
+        }
+      }
+      this.streamSubscribersBySession.delete(sessionId);
+      return;
+    }
+
+    for (const subscriber of Array.from(subscribers)) {
+      try {
+        this.sendSnapshotToSubscriber(sessionId, subscriber, state);
+      } catch (_error) {
+        this.unregisterSessionStreamSubscriber(sessionId, subscriber);
+        try {
+          subscriber.res.end();
+        } catch (_ignored) {
+          // ignore broken connection writes
+        }
+      }
+    }
   }
 
   private applyCorsHeaders(res: any): void {

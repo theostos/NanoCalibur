@@ -37,6 +37,238 @@ interface SessionSummary {
   status?: string;
 }
 
+interface SessionRoleSpec {
+  id?: string;
+  type?: string;
+}
+
+interface RoleLocalBundle {
+  localState: Record<string, any>;
+  roleType: string | null;
+}
+
+function deepCloneValue<T>(value: T): T {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value);
+  }
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {
+    return value;
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepCloneLocalState(value: Record<string, any>): Record<string, any> {
+  if (!isPlainRecord(value)) {
+    return {};
+  }
+  const cloned = deepCloneValue(value);
+  if (!isPlainRecord(cloned)) {
+    return { ...value };
+  }
+  return cloned;
+}
+
+function mergeLocalStateDefaults(
+  defaults: Record<string, any>,
+  overrides: Record<string, any>,
+): Record<string, any> {
+  const out = deepCloneLocalState(defaults);
+  for (const [key, override] of Object.entries(overrides)) {
+    const current = out[key];
+    if (isPlainRecord(current) && isPlainRecord(override)) {
+      out[key] = mergeLocalStateDefaults(current, override);
+      continue;
+    }
+    out[key] = deepCloneValue(override);
+  }
+  return out;
+}
+
+function sessionRoleLocalStorageKey(sessionId: string, roleId: string): string {
+  return `nanocalibur.local.${sessionId}.${roleId}`;
+}
+
+function readRoleLocalStateFromStorage(
+  sessionId: string,
+  roleId: string,
+): Record<string, any> {
+  let storage: Storage | null = null;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return {};
+  }
+  if (!storage) {
+    return {};
+  }
+  const storageKey = sessionRoleLocalStorageKey(sessionId, roleId);
+  try {
+    const raw = storage.getItem(storageKey);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return isPlainRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeRoleLocalStateToStorage(
+  sessionId: string,
+  roleId: string,
+  localState: Record<string, any>,
+): void {
+  let storage: Storage | null = null;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return;
+  }
+  if (!storage) {
+    return;
+  }
+  const storageKey = sessionRoleLocalStorageKey(sessionId, roleId);
+  try {
+    storage.setItem(storageKey, JSON.stringify(localState));
+  } catch {
+    // Ignore quota/security errors and keep in-memory state.
+  }
+}
+
+function resolveSessionRoleType(
+  spec: Record<string, any>,
+  roleId: string,
+): string | null {
+  const roles = Array.isArray(spec.roles) ? (spec.roles as SessionRoleSpec[]) : [];
+  const matched = roles.find((role) => role && role.id === roleId);
+  if (!matched || typeof matched.type !== 'string' || !matched.type) {
+    return null;
+  }
+  return matched.type;
+}
+
+function resolveRoleLocalDefaults(
+  spec: Record<string, any>,
+  roleType: string | null,
+): Record<string, any> {
+  if (!roleType) {
+    return {};
+  }
+  const defaultsByRoleType =
+    spec.role_local_defaults && typeof spec.role_local_defaults === 'object'
+      ? (spec.role_local_defaults as Record<string, unknown>)
+      : {};
+  const defaults = defaultsByRoleType[roleType];
+  return isPlainRecord(defaults) ? deepCloneLocalState(defaults) : {};
+}
+
+function buildRoleLocalBundle(
+  spec: Record<string, any>,
+  sessionId: string,
+  roleId: string,
+): RoleLocalBundle {
+  const roleType = resolveSessionRoleType(spec, roleId);
+  const defaults = resolveRoleLocalDefaults(spec, roleType);
+  const stored = readRoleLocalStateFromStorage(sessionId, roleId);
+  const localState = mergeLocalStateDefaults(defaults, stored);
+  writeRoleLocalStateToStorage(sessionId, roleId, localState);
+  return {
+    localState,
+    roleType,
+  };
+}
+
+function keyboardTokenAliases(token: string): string[] {
+  if (typeof token !== 'string' || token.length === 0) {
+    return [];
+  }
+  const out = new Set<string>();
+  const lower = token.toLowerCase();
+  out.add(token);
+  out.add(lower);
+
+  if (token.length === 1 && /^[a-zA-Z]$/.test(token)) {
+    out.add(token.toUpperCase());
+    out.add(token.toLowerCase());
+    out.add(`Key${token.toUpperCase()}`);
+  } else {
+    const codeMatch = /^Key([a-zA-Z])$/.exec(token);
+    if (codeMatch) {
+      const letter = codeMatch[1];
+      out.add(letter.toLowerCase());
+      out.add(letter.toUpperCase());
+      out.add(`Key${letter.toUpperCase()}`);
+    }
+  }
+
+  if (lower === 'arrowup' || lower === 'up') {
+    out.add('ArrowUp');
+    out.add('arrowup');
+    out.add('up');
+  } else if (lower === 'arrowdown' || lower === 'down') {
+    out.add('ArrowDown');
+    out.add('arrowdown');
+    out.add('down');
+  } else if (lower === 'arrowleft' || lower === 'left') {
+    out.add('ArrowLeft');
+    out.add('arrowleft');
+    out.add('left');
+  } else if (lower === 'arrowright' || lower === 'right') {
+    out.add('ArrowRight');
+    out.add('arrowright');
+    out.add('right');
+  } else if (lower === 'space' || lower === 'spacebar' || token === ' ') {
+    out.add(' ');
+    out.add('Space');
+    out.add('space');
+    out.add('Spacebar');
+  }
+  return [...out];
+}
+
+function resolveLogicalKeyboardTokens(
+  localState: Record<string, any>,
+  physicalTokens: string[],
+): string[] {
+  const keybindsRaw = localState.keybinds;
+  if (!keybindsRaw || typeof keybindsRaw !== 'object') {
+    return [];
+  }
+  const keybinds = keybindsRaw as Record<string, unknown>;
+
+  const expandedPhysical = new Set<string>();
+  for (const token of physicalTokens) {
+    for (const alias of keyboardTokenAliases(token)) {
+      expandedPhysical.add(alias.toLowerCase());
+    }
+  }
+
+  const logical: string[] = [];
+  for (const [logicalToken, boundToken] of Object.entries(keybinds)) {
+    if (typeof logicalToken !== 'string' || logicalToken.length === 0) {
+      continue;
+    }
+    if (typeof boundToken !== 'string' || boundToken.length === 0) {
+      continue;
+    }
+    const aliases = keyboardTokenAliases(boundToken).map((item) => item.toLowerCase());
+    if (aliases.some((alias) => expandedPhysical.has(alias))) {
+      logical.push(logicalToken);
+    }
+  }
+  return uniqueStrings(logical);
+}
+
 class SessionSnapshotRenderer {
   private readonly canvas: HTMLCanvasElement;
   private readonly animation: AnimationSystem;
@@ -44,9 +276,12 @@ class SessionSnapshotRenderer {
   private readonly renderer: CanvasRenderer;
   private interfaceOverlay: InterfaceOverlay | null;
   private interfaceHtml: string;
+  private localState: Record<string, any> = {};
   private ready = false;
   private latestState: InterpreterState | null = null;
   private latestSnapshotAtMs = 0;
+  private readonly smoothedPositionsByUid = new Map<string, { x: number; y: number }>();
+  private lastRenderAtMs = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -73,6 +308,10 @@ class SessionSnapshotRenderer {
   render(snapshot: SessionSnapshot): void {
     this.latestState = (snapshot.state || {}) as InterpreterState;
     this.latestSnapshotAtMs = performance.now();
+  }
+
+  setLocalState(nextLocalState: Record<string, any>): void {
+    this.localState = deepCloneLocalState(nextLocalState);
   }
 
   private renderLoop = (): void => {
@@ -109,14 +348,23 @@ class SessionSnapshotRenderer {
     const nowMs = performance.now();
     const elapsedSeconds = Math.max(
       0,
-      Math.min(0.25, (nowMs - this.latestSnapshotAtMs) / 1000),
+      Math.min(0.08, (nowMs - this.latestSnapshotAtMs) / 1000),
     );
+    const renderDeltaMs =
+      this.lastRenderAtMs > 0
+        ? Math.max(1, Math.min(100, nowMs - this.lastRenderAtMs))
+        : 16.67;
+    this.lastRenderAtMs = nowMs;
+    const smoothAlpha = Math.min(0.4, Math.max(0.2, renderDeltaMs / 80));
+
     const sourceActors = Array.isArray(this.latestState.actors)
       ? (this.latestState.actors as ActorState[])
       : [];
+    const aliveUids = new Set<string>();
     const sourceActorsByUid = new Map<string, ActorState>();
     for (const actor of sourceActors) {
       if (typeof actor.uid === 'string' && actor.uid.length > 0) {
+        aliveUids.add(actor.uid);
         sourceActorsByUid.set(actor.uid, actor);
       }
     }
@@ -168,10 +416,35 @@ class SessionSnapshotRenderer {
     const actors = sourceActors.map((actor) => {
       const cloned = { ...actor };
       const projected = projectActor(actor);
-      cloned.x = projected.x;
-      cloned.y = projected.y;
+      const uid = typeof actor.uid === 'string' ? actor.uid : '';
+      if (!uid) {
+        cloned.x = projected.x;
+        cloned.y = projected.y;
+        return cloned;
+      }
+
+      const previousSmoothed = this.smoothedPositionsByUid.get(uid);
+      let nextX = projected.x;
+      let nextY = projected.y;
+      if (previousSmoothed) {
+        const dx = projected.x - previousSmoothed.x;
+        const dy = projected.y - previousSmoothed.y;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq <= 128 * 128) {
+          nextX = previousSmoothed.x + dx * smoothAlpha;
+          nextY = previousSmoothed.y + dy * smoothAlpha;
+        }
+      }
+      this.smoothedPositionsByUid.set(uid, { x: nextX, y: nextY });
+      cloned.x = nextX;
+      cloned.y = nextY;
       return cloned;
     });
+    for (const cachedUid of Array.from(this.smoothedPositionsByUid.keys())) {
+      if (!aliveUids.has(cachedUid)) {
+        this.smoothedPositionsByUid.delete(cachedUid);
+      }
+    }
     const nextState = {
       ...this.latestState,
       actors,
@@ -210,6 +483,7 @@ class SessionSnapshotRenderer {
       selfState && typeof selfState === 'object'
         ? { ...(selfState as Record<string, any>) }
         : {};
+    globals.local = deepCloneLocalState(this.localState);
     globals.__actors_count = Array.isArray(state.actors) ? state.actors.length : 0;
     globals.__scene_elapsed =
       state.scene && typeof state.scene.elapsed === 'number'
@@ -421,8 +695,11 @@ function browserKeyboardTokens(event: KeyboardEvent): string[] {
 
 function mapBrowserKeyDownToCommand(
   event: KeyboardEvent,
+  localState: Record<string, any>,
 ): Record<string, any> | null {
-  const tokens = browserKeyboardTokens(event);
+  const physicalTokens = browserKeyboardTokens(event);
+  const logicalTokens = resolveLogicalKeyboardTokens(localState, physicalTokens);
+  const tokens = uniqueStrings([...physicalTokens, ...logicalTokens]);
   if (tokens.length === 0) {
     return null;
   }
@@ -431,8 +708,11 @@ function mapBrowserKeyDownToCommand(
 
 function mapBrowserKeyUpToCommand(
   event: KeyboardEvent,
+  localState: Record<string, any>,
 ): Record<string, any> | null {
-  const tokens = browserKeyboardTokens(event);
+  const physicalTokens = browserKeyboardTokens(event);
+  const logicalTokens = resolveLogicalKeyboardTokens(localState, physicalTokens);
+  const tokens = uniqueStrings([...physicalTokens, ...logicalTokens]);
   if (tokens.length === 0) {
     return null;
   }
@@ -462,6 +742,7 @@ async function startSessionBrowserClient(
   const sessionId = joined.session_id;
   const accessToken = joined.access_token;
   const sessionSpec = createNanoCaliburInterpreter().getSpec();
+  const roleLocal = buildRoleLocalBundle(sessionSpec, sessionId, joined.role_id);
   const rendererOptions = mergeSpecOptions(
     DEFAULT_CANVAS_OPTIONS,
     sessionSpec as Record<string, any>,
@@ -484,6 +765,7 @@ async function startSessionBrowserClient(
       return '';
     })(),
   );
+  sessionRenderer.setLocalState(roleLocal.localState);
   void sessionRenderer.start().catch((error) => {
     console.error('Failed to preload session renderer assets.', error);
   });
@@ -577,7 +859,7 @@ async function startSessionBrowserClient(
     if (event.repeat) {
       return;
     }
-    const command = mapBrowserKeyDownToCommand(event);
+    const command = mapBrowserKeyDownToCommand(event, roleLocal.localState);
     if (!command) {
       return;
     }
@@ -588,7 +870,7 @@ async function startSessionBrowserClient(
   });
 
   window.addEventListener('keyup', (event) => {
-    const command = mapBrowserKeyUpToCommand(event);
+    const command = mapBrowserKeyUpToCommand(event, roleLocal.localState);
     if (!command) {
       return;
     }
