@@ -1,13 +1,10 @@
-from .constants import (
-    CALLABLE_EXPR_PREFIX,
-    BASE_ACTOR_DEFAULT_OVERRIDES,
-    BASE_ACTOR_NO_DEFAULT_FIELDS,
-)
-from .core import DSLCompiler
+"""Public compiler entry points.
 
-__all__ = [
-    "CALLABLE_EXPR_PREFIX",
-    "BASE_ACTOR_DEFAULT_OVERRIDES",
-    "BASE_ACTOR_NO_DEFAULT_FIELDS",
-    "DSLCompiler",
-]
+Internal compiler constants are intentionally not re-exported from this module.
+Use :class:`nanocalibur.compiler.core.DSLCompiler` as the stable API.
+"""
+
+from nanocalibur.compiler.core import DSLCompiler
+
+__all__ = ["DSLCompiler"]
+

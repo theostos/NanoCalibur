@@ -392,17 +392,17 @@ def test_ts_emits_collection_helpers_for_list_and_dict_operations():
 def test_ts_emits_role_lookup_binding():
     ts = compile_to_ts(
         """
-        class HumanRole(Role):
+        class HeroRole(Role):
             score: int
 
-        def increment(self_role: HumanRole["human_1"]):
+        def increment(self_role: HeroRole["human_1"]):
             self_role.score = self_role.score + 1
         """
     )
 
     assert 'getRoleById?: (id: string) => any;' in ts
     assert 'let self_role = (ctx.getRoleById ? ctx.getRoleById("human_1") : null);' in ts
-    assert 'if (self_role && self_role.type !== "HumanRole") { self_role = null; }' in ts
+    assert 'if (self_role && self_role.type !== "HeroRole") { self_role = null; }' in ts
 
 
 def test_ts_emits_callable_helpers_and_invocations():

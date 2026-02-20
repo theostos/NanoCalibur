@@ -1,0 +1,20 @@
+site_name: NanoCalibur
+site_description: Deterministic Python DSL game engine targeting browser and headless runtimes
+docs_dir: docs
+theme:
+  name: mkdocs
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+nav:
+  - Overview: index.md
+  - Quickstart: quickstart.md
+  - Concepts: concepts.md
+  - DSL Reference: dsl-reference.md
+  - Runtime & Sessions: runtime-sessions.md
+  - API Reference: api.md
+  - Blank Web Canvas Tutorial: blank-web-canvas-tutorial.md
+  - LLM Quick Reference: llm-quick-reference.md

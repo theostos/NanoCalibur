@@ -1,17 +1,72 @@
 # NanoCalibur
 
-NanoCalibur is a deterministic Python DSL compiler for tiny 2D games.
+NanoCalibur is a tiny deterministic 2D game engine pipeline built around a Python DSL.
 
-Core guarantees:
-- Python source is parsed with `ast` and never executed.
-- Only a restricted DSL subset is accepted.
-- Compilation is deterministic (`AST -> IR -> TS + JSON spec`).
+## 10-Line Overview
+
+1. Write gameplay in Python DSL (`nanocalibur.dsl_markers`).
+2. Source is parsed by AST and never executed.
+3. Compiler outputs deterministic `game_spec.json` + IR + generated TypeScript.
+4. Runtime supports browser canvas and headless HTTP/session mode.
+5. Multiplayer is role-based (`Role`, `HumanRole`, AI/hybrid slots).
+6. Conditions are split into `safe` (authoritative) and `unsafe` (client/tool).
+7. Camera is explicit and role-scoped.
+8. Symbolic rendering supports LLM/RL agents.
+9. Local role state (`Local[...]`) is client-owned (not server authoritative).
+10. Build with `nanocalibur-build-game` and run in any web project.
+
+## 60-Second Hello World
+
+```bash
+cat > main.py <<'PY'
+from nanocalibur.dsl_markers import *
+
+class Player(Actor):
+    speed: int
+
+def move_right(player: Player["hero"]):
+    player.vx = player.speed
+
+game = Game()
+scene = Scene(gravity=False)
+game.set_scene(scene)
+game.add_role(HumanRole(id="human_1", required=True, kind=RoleKind.HUMAN))
+scene.add_actor(Player(uid="hero", x=64, y=64, speed=120))
+scene.add_rule(KeyboardCondition.on_press("move_right", Role["human_1"]), move_right)
+cam = Camera("cam_h1", Role["human_1"], width=30, height=18)
+cam.follow("hero")
+scene.add_camera(cam)
+PY
+
+nanocalibur-build-game ./main.py --project ./nanocalibur-demo
+```
+
+## Core Concepts
+
+| Concept | Contract |
+|---|---|
+| Coordinates | World origin top-left, `+x` right, `+y` down; actor `x/y` are center coordinates in pixels. |
+| Time | Physics uses seconds (`vx/vy` in px/s); `scene.elapsed` is tick-based integer time. |
+| Rule model | Condition -> action; deterministic fixed-step execution. |
+| Safety split | `@safe_condition` for authoritative checks; `@unsafe_condition` for client/tool/input events. |
+| Ownership | Server owns globals/actors/server role fields; `Local[...]` role fields are client-owned only. |
+| Rendering | Browser canvas rendering + symbolic grid rendering for remote agents. |
+| Multiplayer | Explicit roles, role-scoped conditions, role-scoped cameras/interfaces. |
+
+## Learn More
+
+- Human docs: `docs/` (serve with `mkdocs serve`)
+- API reference: `docs/api.md`
+- LLM guide: `LLM.md`
+- Agent maintenance guide: `agent.md`
+- Multi-file example: `examples/scene.py` + `examples/scene_*.py`
+- Tiny runnable examples: `examples/tiny/`
 
 ## Repository Structure
 
 ```text
 nanocalibur/
-  compiler.py          # Action + predicate compiler (AST -> IR)
+  compiler/            # Function-body compiler components (AST -> IR)
   project_compiler.py  # Full game project compiler
   exporter.py          # JSON + TS export pipeline
   ts_generator.py      # IR -> TypeScript codegen
@@ -26,6 +81,19 @@ examples/
   scene.py             # End-to-end DSL scene example
 tests/
   ...                  # Unit and end-to-end tests
+```
+
+## Documentation
+
+- Human docs (MkDocs): `docs/` + `mkdocs.yml`
+- LLM guide: `LLM.md`
+- Maintenance-agent guide: `agent.md`
+
+Build/serve docs:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve
 ```
 
 ## DSL Overview
@@ -116,6 +184,7 @@ Examples:
 - Keyboard matching is normalized in the runtime (`d`/`D`/`KeyD`, `ArrowUp`/`up`, etc.).
 - You can add game-specific key aliases at scene level with `keyboard_aliases`.
 - Role-scoped UI placeholders can use `{{role.field_name}}` in session mode.
+- Client-local role placeholders can use `{{local.field_name}}` (for example `{{local.keybinds.move_up}}`).
 
 ```python
 game = Game()
@@ -130,18 +199,32 @@ game.set_scene(scene)
 
 ### Role Schemas
 
-Role schemas are declared like actors, but inherit from `Role` and only support primitive/List fields.
+Role schemas inherit from `Role` (or from built-in `HumanRole`) and support server fields plus client-local fields.
+
+- Built-in immutable `HumanRole` exists by default with:
+- `keybinds: Local[Dict[str, str]]` (client-owned, not synced by server)
+- default keybinds:
+- `move_up=z`, `move_left=q`, `move_down=s`, `move_right=d`
+
+Use local fields with `Local[...]` and initialize with `local(...)`:
 
 ```python
-class HumanRole(Role):
+class HeroRole(HumanRole):
     score: int
-    inventory: List[str]
+    quickbar: Local[List[str]] = local(["dash", "heal"])
 
-game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=0))
+game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score=0))
 
-def add_point(self_role: HumanRole["human_1"]):
+def add_point(self_role: HeroRole["human_1"]):
     self_role.score = self_role.score + 1
 ```
+
+Local-field rules:
+- `Local[...]` fields are never stored/synced by server state.
+- they are available to client/UI logic (`local.*` placeholders).
+- compiler error if a `Local[...]` field is used in server-authoritative logic (actions/predicates/callables).
+- `add_role(...)` cannot set local-field values (client owns them).
+- client keyboard input can target logical tokens (for example `KeyboardCondition.on_press("move_up", id="human_1")`) and map them through `local.keybinds`.
 
 ### Multiplayer Loop Configuration
 
@@ -200,6 +283,7 @@ Built-in dynamic placeholders available in interface HTML:
 - `{{__actors_count}}`
 - `{{__scene_elapsed}}`
 - `{{role.<field>}}` for role-scoped values (for example `{{role.personal_score}}`)
+- `{{local.<field>}}` for client-local role values (for example `{{local.keybinds.move_up}}`)
 
 ### Code Blocks (Vibe Coding Workflow)
 
@@ -285,10 +369,10 @@ Generated files:
 
 ## Build Web Bundle
 
-Use `nanocalibur/build_game.py` to compile a Python game entry file and generate a browser-ready TypeScript bundle.
+Use `nanocalibur-build-game` (installed CLI) to compile a Python game entry file and generate a browser-ready TypeScript bundle.
 
 ```bash
-python nanocalibur/build_game.py examples/scene.py --project ./my-web-game
+nanocalibur-build-game examples/scene.py --project ./my-web-game
 ```
 
 This generates a bundle (default `build/nanocalibur_generated/src/nanocalibur_generated`) and, with `--project`, copies it to:

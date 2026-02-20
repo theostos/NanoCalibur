@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import urllib.request
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Type
 
 
 class NanoCaliburHTTPClient:
@@ -14,6 +14,11 @@ class NanoCaliburHTTPClient:
         self.base_url = base_url.rstrip("/")
 
     def list_tools(self) -> list[Dict[str, Any]]:
+        """List externally callable tools exposed by the runtime.
+
+        Returns:
+            Tool metadata dictionaries as returned by ``GET /tools``.
+        """
         payload = self._request("GET", "/tools")
         tools = payload.get("tools")
         if not isinstance(tools, list):
@@ -25,6 +30,19 @@ class NanoCaliburHTTPClient:
         name: str,
         arguments: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Invoke one tool call by name.
+
+        Args:
+            name: Registered tool name.
+            arguments: Optional JSON-serializable tool arguments.
+
+        Returns:
+            Decoded JSON response payload.
+
+        Raises:
+            ValueError: If ``name`` is empty.
+            URLError: If the HTTP request fails.
+        """
         if not isinstance(name, str) or not name:
             raise ValueError("Tool name must be a non-empty string.")
         payload = {
@@ -34,12 +52,22 @@ class NanoCaliburHTTPClient:
         return self._request("POST", "/tools/call", payload)
 
     def get_state(self) -> Dict[str, Any]:
+        """Fetch authoritative runtime state from ``GET /state``."""
         return self._request("GET", "/state")
 
     def get_frame(self) -> Dict[str, Any]:
+        """Fetch symbolic frame payload from ``GET /frame``."""
         return self._request("GET", "/frame")
 
     def step(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Advance one headless simulation step.
+
+        Args:
+            payload: Optional input payload accepted by ``POST /step``.
+
+        Returns:
+            Decoded JSON response payload.
+        """
         return self._request("POST", "/step", payload or {})
 
     def _request(
@@ -71,8 +99,8 @@ def build_fastmcp_from_http(
     base_url: str,
     *,
     server_name: str = "NanoCalibur",
-    mcp_cls: Optional[type] = None,
-):
+    mcp_cls: Optional[Type[Any]] = None,
+) -> Any:
     """Create a FastMCP server proxying tools from a NanoCalibur HTTP server.
 
     Parameters
@@ -83,6 +111,15 @@ def build_fastmcp_from_http(
         Name passed to FastMCP constructor.
     mcp_cls:
         Optional FastMCP-compatible class override (useful for tests).
+
+    Returns:
+        Configured MCP server instance.
+
+    Raises:
+        RuntimeError: If ``fastmcp`` is unavailable or registration API is unsupported.
+
+    Example:
+        >>> mcp = build_fastmcp_from_http("http://127.0.0.1:7070")
     """
 
     if mcp_cls is None:

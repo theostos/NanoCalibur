@@ -1,6 +1,6 @@
 import ast
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from nanocalibur.errors import DSLValidationError, dsl_node_context, dsl_source_context
 from nanocalibur.ir import (
@@ -69,9 +69,16 @@ class ActionScope:
 
 
 class DSLCompiler:
+    """Compile DSL function bodies and schema declarations into IR.
+
+    This compiler is intentionally AST-driven and does not execute user Python
+    code. It is primarily used by :class:`nanocalibur.project_compiler.ProjectCompiler`.
+    """
+
     def __init__(self, global_actor_types: Optional[Dict[str, Optional[str]]] = None):
         """Create a DSL compiler for action/predicate source snippets."""
         self.schemas = SchemaRegistry()
+        self._register_builtin_schemas()
         self.global_actor_types: Dict[str, Optional[str]] = dict(global_actor_types or {})
         self.callable_signatures: Dict[str, int] = {}
 
@@ -86,10 +93,28 @@ class DSLCompiler:
     ) -> List[ActionIR]:
         """Compile DSL source into action IR nodes.
 
-        This pass also registers actor schemas declared in the same source.
+        Args:
+            source: Python DSL source containing class and function declarations.
+            global_actor_types: Optional map of global actor-ref names to actor types.
+
+        Returns:
+            Ordered list of compiled action IR nodes.
+
+        Raises:
+            DSLValidationError: If unsupported syntax or invalid DSL constructs are found.
+
+        Side Effects:
+            Resets and repopulates internal schema registry on each call.
+
+        Example:
+            >>> compiler = DSLCompiler()
+            >>> actions = compiler.compile("class P(Actor):\\n    pass\\n\\ndef a(p: P):\\n    p.x = p.x + 1")
+            >>> len(actions)
+            1
         """
         # Reset per-compilation state for deterministic behavior across calls.
         self.schemas = SchemaRegistry()
+        self._register_builtin_schemas()
         if global_actor_types is not None:
             self.global_actor_types = dict(global_actor_types)
 
@@ -130,6 +155,26 @@ class DSLCompiler:
                         )
 
             return actions
+
+    def _register_builtin_schemas(self) -> None:
+        self.schemas.register_role(
+            "HumanRole",
+            {},
+            local_fields={
+                "keybinds": DictType(
+                    key=PrimType(Prim.STR),
+                    value=PrimType(Prim.STR),
+                )
+            },
+            local_defaults={
+                "keybinds": {
+                    "move_up": "z",
+                    "move_left": "q",
+                    "move_down": "s",
+                    "move_right": "d",
+                }
+            },
+        )
 
     def _register_actor_schema(self, node: ast.ClassDef) -> None:
         with dsl_node_context(node):
@@ -176,8 +221,25 @@ class DSLCompiler:
                 self.schemas.register_actor(node.name, fields)
                 return
 
-            if base.id == "Role":
-                fields: Dict[str, FieldType] = {}
+            if base.id == "Role" or base.id in self.schemas.role_fields:
+                inherited_fields = (
+                    dict(self.schemas.role_fields.get(base.id, {}))
+                    if base.id != "Role"
+                    else {}
+                )
+                inherited_local_fields = (
+                    dict(self.schemas.role_local_fields.get(base.id, {}))
+                    if base.id != "Role"
+                    else {}
+                )
+                inherited_local_defaults = (
+                    self.schemas.role_local_defaults_for(base.id)
+                    if base.id != "Role"
+                    else {}
+                )
+                fields: Dict[str, FieldType] = inherited_fields
+                local_fields: Dict[str, FieldType] = inherited_local_fields
+                local_defaults: Dict[str, Any] = inherited_local_defaults
                 reserved = {"id", "required", "kind"}
                 for stmt in node.body:
                     with dsl_node_context(stmt):
@@ -186,10 +248,6 @@ class DSLCompiler:
                         if not isinstance(stmt, ast.AnnAssign):
                             raise DSLValidationError(
                                 "Role schema body can only contain annotated fields."
-                            )
-                        if stmt.value is not None:
-                            raise DSLValidationError(
-                                "Role schema fields cannot have default values."
                             )
                         if not isinstance(stmt.target, ast.Name):
                             raise DSLValidationError(
@@ -200,18 +258,101 @@ class DSLCompiler:
                             raise DSLValidationError(
                                 f"Role schema field '{field_name}' is reserved."
                             )
-                        if field_name in fields:
+                        if field_name in fields or field_name in local_fields:
                             raise DSLValidationError(
                                 f"Duplicate field '{field_name}' in role '{node.name}'."
                             )
-                        fields[field_name] = self._parse_field_type(stmt.annotation)
-                self.schemas.register_role(node.name, fields)
+                        (
+                            field_type,
+                            is_local,
+                            local_default,
+                        ) = self._parse_role_field_declaration(stmt, node.name)
+                        if is_local:
+                            local_fields[field_name] = field_type
+                            local_defaults[field_name] = local_default
+                        else:
+                            fields[field_name] = field_type
+                self.schemas.register_role(
+                    node.name,
+                    fields,
+                    local_fields=local_fields,
+                    local_defaults=local_defaults,
+                )
                 return
 
             raise DSLValidationError("Only Actor, ActorModel, or Role subclasses are allowed.")
 
     def _parse_field_type(self, annotation: ast.AST) -> FieldType:
         return self._parse_container_field_type(annotation)
+
+    def _parse_role_field_declaration(
+        self,
+        stmt: ast.AnnAssign,
+        role_name: str,
+    ) -> tuple[FieldType, bool, Any]:
+        field_type, is_local = self._parse_role_field_type(stmt.annotation)
+        if is_local:
+            default_value = self._parse_local_role_field_default(
+                stmt.value,
+                field_type,
+                source_name=f"Role '{role_name}' local field",
+            )
+            return field_type, True, default_value
+
+        if stmt.value is not None:
+            raise DSLValidationError(
+                "Role schema fields cannot have default values."
+            )
+        return field_type, False, None
+
+    def _parse_role_field_type(self, annotation: ast.AST) -> tuple[FieldType, bool]:
+        if (
+            isinstance(annotation, ast.Subscript)
+            and isinstance(annotation.value, ast.Name)
+            and annotation.value.id == "Local"
+        ):
+            return self._parse_container_field_type(annotation.slice), True
+        return self._parse_container_field_type(annotation), False
+
+    def _parse_local_role_field_default(
+        self,
+        default_node: ast.AST | None,
+        field_type: FieldType,
+        *,
+        source_name: str,
+    ) -> Any:
+        if default_node is None:
+            return self._default_value_for_field_type(field_type)
+        if not isinstance(default_node, ast.Call):
+            raise DSLValidationError(
+                f"{source_name} must be initialized with local(...)."
+            )
+        if not isinstance(default_node.func, ast.Name) or default_node.func.id != "local":
+            raise DSLValidationError(
+                f"{source_name} must be initialized with local(...)."
+            )
+        if any(keyword.arg is None for keyword in default_node.keywords):
+            raise DSLValidationError("local(...) does not support **kwargs expansion.")
+        if default_node.keywords:
+            raise DSLValidationError("local(...) does not accept keyword arguments.")
+        if len(default_node.args) > 1:
+            raise DSLValidationError("local(...) accepts zero or one positional argument.")
+        if len(default_node.args) == 0:
+            return self._default_value_for_field_type(field_type)
+        return _parse_typed_literal_value(default_node.args[0], field_type, source_name)
+
+    def _default_value_for_field_type(self, field_type: FieldType) -> Any:
+        if isinstance(field_type, PrimType):
+            if field_type.prim == Prim.BOOL:
+                return False
+            if field_type.prim == Prim.STR:
+                return ""
+            return 0
+        if isinstance(field_type, ListType):
+            return []
+        if isinstance(field_type, DictType):
+            return {}
+        raise DSLValidationError("Unsupported Local[...] field type.")
 
     def _parse_container_field_type(self, node: ast.AST) -> FieldType:
         if isinstance(node, ast.Name) and node.id in _PRIM_NAMES:
@@ -1745,6 +1886,11 @@ class DSLCompiler:
         actor_type = scope.actor_var_types.get(obj_name)
         role_type = scope.role_var_types.get(obj_name)
         if role_type is not None:
+            if self.schemas.has_role_local_field(role_type, expr.attr):
+                raise DSLValidationError(
+                    f"Role '{role_type}' field '{expr.attr}' is Local[...] (client-owned) "
+                    "and cannot be used in server logic. Use local.* in interface/client bindings."
+                )
             if not self.schemas.has_role_field(role_type, expr.attr):
                 raise DSLValidationError(
                     f"Role '{role_type}' has no field '{expr.attr}'."

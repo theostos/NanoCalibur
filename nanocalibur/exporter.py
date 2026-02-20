@@ -25,6 +25,7 @@ from nanocalibur.game_model import (
     SpriteSpec,
     ToolConditionSpec,
 )
+from nanocalibur.errors import DSLValidationError
 from nanocalibur.project_compiler import ProjectCompiler
 from nanocalibur.ts_generator import TSGenerator
 from nanocalibur.ir import ParamBinding
@@ -37,7 +38,35 @@ def compile_project(
     require_code_blocks: bool = False,
     unboxed_disable_flag: str = "--allow-unboxed",
 ) -> ProjectSpec:
-    """Compile DSL source into a :class:`ProjectSpec`."""
+    """Compile DSL source into a validated project spec.
+
+    Args:
+        source: Full Python DSL source text.
+        source_path: Optional source file path used for diagnostics and relative assets.
+        require_code_blocks: Whether to require top-level statements to be wrapped in
+            ``CodeBlock``/``AbstractCodeBlock`` structures.
+        unboxed_disable_flag: Flag name shown in diagnostics to disable strict block
+            filtering.
+
+    Returns:
+        Compiled project specification.
+
+    Raises:
+        DSLValidationError: If the source violates DSL constraints.
+
+    Side Effects:
+        None.
+
+    Example:
+        >>> spec = compile_project("game = Game()\\nscene = Scene()\\ngame.set_scene(scene)")
+        >>> isinstance(spec, ProjectSpec)
+        True
+    """
+    if not source.strip():
+        raise DSLValidationError(
+            "Source is empty. Provide DSL code containing at least "
+            "'game = Game()', 'scene = Scene()', and 'game.set_scene(scene)'."
+        )
     return ProjectCompiler().compile(
         source,
         source_path=source_path,
@@ -47,10 +76,30 @@ def compile_project(
 
 
 def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
-    """Serialize a :class:`ProjectSpec` into the JSON game spec payload."""
+    """Serialize a project spec into the runtime JSON payload.
+
+    Args:
+        project: Compiled project specification.
+
+    Returns:
+        Dictionary matching ``game_spec.json`` schema.
+
+    Raises:
+        TypeError: If an unknown condition type is encountered.
+
+    Side Effects:
+        None.
+
+    Example:
+        >>> spec = project_to_dict(compile_project("game = Game()\\nscene = Scene()\\ngame.set_scene(scene)"))
+        >>> "actors" in spec
+        True
+    """
     return {
         "schemas": project.actor_schemas,
         "role_schemas": project.role_schemas,
+        "role_local_schemas": project.role_local_schemas,
+        "role_local_defaults": project.role_local_defaults,
         "globals": [_global_to_dict(g) for g in project.globals],
         "actors": [
             {
@@ -109,7 +158,29 @@ def export_project(
     require_code_blocks: bool = False,
     unboxed_disable_flag: str = "--allow-unboxed",
 ) -> ProjectSpec:
-    """Compile and write spec/IR/TypeScript outputs to ``output_dir``."""
+    """Compile source and write generated artifacts to disk.
+
+    Args:
+        source: Full Python DSL source text.
+        output_dir: Output directory for generated files.
+        source_path: Optional source file path for diagnostics and relative assets.
+        require_code_blocks: Whether code must be boxed with ``CodeBlock``.
+        unboxed_disable_flag: Flag name shown in strict code-block diagnostics.
+
+    Returns:
+        Compiled project specification.
+
+    Raises:
+        DSLValidationError: If DSL source is invalid.
+        OSError: If output files cannot be written.
+
+    Side Effects:
+        Writes ``game_spec.json``, ``game_ir.json``, and ``game_logic.ts`` into
+        ``output_dir``.
+
+    Example:
+        >>> _ = export_project("game = Game()\\nscene = Scene()\\ngame.set_scene(scene)", "build/tmp")
+    """
     project = compile_project(
         source,
         source_path=source_path,
@@ -142,7 +213,22 @@ def export_project(
 
 
 def project_to_ir_dict(project: ProjectSpec) -> Dict[str, Any]:
-    """Serialize action/predicate IR payloads."""
+    """Serialize compiled IR for debugging and toolchain integrations.
+
+    Args:
+        project: Compiled project specification.
+
+    Returns:
+        Dictionary with serialized actions, predicates, and callables IR lists.
+
+    Side Effects:
+        None.
+
+    Example:
+        >>> ir = project_to_ir_dict(compile_project("game = Game()\\nscene = Scene()\\ngame.set_scene(scene)"))
+        >>> sorted(ir.keys())
+        ['actions', 'callables', 'predicates']
+    """
     return {
         "actions": [_serialize_ir(action) for action in project.actions],
         "predicates": [_serialize_ir(predicate) for predicate in project.predicates],

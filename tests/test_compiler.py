@@ -313,17 +313,17 @@ def test_accept_plain_typed_actor_binding():
 def test_accept_role_binding_with_explicit_id_and_field_access():
     actions = compile_source(
         """
-        class HumanRole(Role):
+        class HeroRole(Role):
             score: int
 
-        def increment(self_role: HumanRole["human_1"]):
+        def increment(self_role: HeroRole["human_1"]):
             self_role.score = self_role.score + 1
         """
     )
 
     increment = actions[0]
     assert increment.params[0].kind == BindingKind.ROLE
-    assert increment.params[0].role_type == "HumanRole"
+    assert increment.params[0].role_type == "HeroRole"
     assert increment.params[0].role_selector is not None
     assert increment.params[0].role_selector.id == "human_1"
     assign = increment.body[0]
@@ -336,10 +336,10 @@ def test_reject_role_binding_index_selector():
     with pytest.raises(DSLValidationError, match="does not support index selectors"):
         compile_source(
             """
-            class HumanRole(Role):
+            class HeroRole(Role):
                 score: int
 
-            def bad(self_role: HumanRole[-1]):
+            def bad(self_role: HeroRole[-1]):
                 self_role.score = self_role.score + 1
             """
         )

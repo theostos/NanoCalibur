@@ -5,11 +5,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, cast
 
-from nanocalibur.compiler import (
+from nanocalibur.compiler import DSLCompiler
+from nanocalibur.compiler.constants import (
     BASE_ACTOR_DEFAULT_OVERRIDES,
     BASE_ACTOR_NO_DEFAULT_FIELDS,
     CALLABLE_EXPR_PREFIX,
-    DSLCompiler,
 )
 from nanocalibur.codeblocks import preprocess_code_blocks
 from nanocalibur.errors import (
@@ -137,7 +137,9 @@ CONDITION_DECORATOR_NAMES = {"safe_condition", "unsafe_condition"}
 IMMUTABLE_DSL_CLASS_NAMES = {
     "Actor",
     "ActorModel",
+    "Local",
     "Role",
+    "HumanRole",
     "Scene",
     "Game",
     "Sprite",
@@ -158,6 +160,13 @@ IMMUTABLE_DSL_CLASS_NAMES = {
 
 
 class ProjectCompiler:
+    """Compile full DSL modules into :class:`ProjectSpec`.
+
+    This compiler resolves scene setup, roles, camera bindings, conditions, and
+    references between actions/predicates/callables. Source is parsed from AST and
+    never executed.
+    """
+
     def __init__(self) -> None:
         self._source_dir = Path.cwd()
 
@@ -169,7 +178,30 @@ class ProjectCompiler:
         require_code_blocks: bool = False,
         unboxed_disable_flag: str = "--allow-unboxed",
     ) -> ProjectSpec:
-        """Compile a full DSL project source into structured project metadata."""
+        """Compile a DSL module into validated metadata and IR inputs.
+
+        Args:
+            source: Full Python DSL source text.
+            source_path: Optional path used for diagnostics and relative file resolution.
+            require_code_blocks: Whether top-level setup must be wrapped in
+                ``CodeBlock`` / ``AbstractCodeBlock``.
+            unboxed_disable_flag: Flag name displayed in code-block warnings.
+
+        Returns:
+            Compiled project specification.
+
+        Raises:
+            DSLValidationError: If source contains unsupported syntax or invalid DSL.
+
+        Side Effects:
+            Emits warnings for ignored DSL fragments and non-fatal misuse.
+
+        Example:
+            >>> compiler = ProjectCompiler()
+            >>> spec = compiler.compile("game = Game()\\nscene = Scene()\\ngame.set_scene(scene)")
+            >>> spec.scene is not None
+            True
+        """
         if source_path is not None:
             self._source_dir = Path(source_path).resolve().parent
         else:
@@ -302,12 +334,38 @@ class ProjectCompiler:
                 }
                 for actor_type, fields in compiler.schemas.actor_fields.items()
             }
+            used_role_types = {
+                role.role_type
+                for role in roles
+                if isinstance(role.role_type, str) and role.role_type and role.role_type != "Role"
+            }
+            for action in actions.values():
+                for param in action.params:
+                    if param.role_type:
+                        used_role_types.add(param.role_type)
+            for predicate in predicates.values():
+                for param in predicate.params:
+                    if param.role_type:
+                        used_role_types.add(param.role_type)
             role_schemas = {
                 role_type: {
                     field_name: _field_type_label(field_type)
                     for field_name, field_type in fields.items()
                 }
                 for role_type, fields in compiler.schemas.role_fields.items()
+                if role_type in used_role_types
+            }
+            role_local_schemas = {
+                role_type: {
+                    field_name: _field_type_label(field_type)
+                    for field_name, field_type in fields.items()
+                }
+                for role_type, fields in compiler.schemas.role_local_fields.items()
+                if role_type in used_role_types and fields
+            }
+            role_local_defaults = {
+                role_type: compiler.schemas.role_local_defaults_for(role_type)
+                for role_type in role_local_schemas.keys()
             }
             contains_next_turn_call = any(
                 _action_contains_next_turn(action) for action in actions.values()
@@ -333,6 +391,8 @@ class ProjectCompiler:
             return ProjectSpec(
                 actor_schemas=actor_schemas,
                 role_schemas=role_schemas,
+                role_local_schemas=role_local_schemas,
+                role_local_defaults=role_local_defaults,
                 globals=globals_spec,
                 actors=actors,
                 rules=rules,
@@ -2099,6 +2159,13 @@ class ProjectCompiler:
 
         kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
         role_schema_fields = compiler.schemas.role_fields.get(role_type, {})
+        role_local_fields = compiler.schemas.role_local_fields.get(role_type, {})
+        local_arg_names = sorted(name for name in role_local_fields.keys() if name in kwargs)
+        if local_arg_names:
+            raise DSLValidationError(
+                f"{role_type}(...) local fields {local_arg_names} are client-owned Local[...] "
+                "and cannot be provided in add_role(...). Configure them on the client side."
+            )
         allowed = {"id", "required", "kind", *role_schema_fields.keys()}
         unexpected = sorted(set(kwargs.keys()) - allowed)
         if unexpected:

@@ -82,9 +82,15 @@ def _extract_local_import_paths(
 
 def _collect_game_source(main_path: Path) -> str:
     if not main_path.exists():
-        raise FileNotFoundError(f"Game entry file not found: {main_path}")
+        raise FileNotFoundError(
+            f"Game entry file not found: {main_path}. "
+            "Pass a valid Python file path, for example './main.py'."
+        )
     if not main_path.is_file():
-        raise FileNotFoundError(f"Game entry path is not a file: {main_path}")
+        raise FileNotFoundError(
+            f"Game entry path is not a file: {main_path}. "
+            "Pass a Python source file, not a directory."
+        )
 
     project_root = main_path.parent.resolve()
     visited: set[Path] = set()
@@ -97,7 +103,13 @@ def _collect_game_source(main_path: Path) -> str:
         visited.add(path)
 
         source = path.read_text(encoding="utf-8")
-        module = ast.parse(source)
+        try:
+            module = ast.parse(source)
+        except SyntaxError as exc:
+            raise ValueError(
+                f"Python syntax error in '{path}': line {exc.lineno}, column {exc.offset}. "
+                "Fix syntax before running nanocalibur-build-game."
+            ) from exc
 
         deps: list[Path] = []
         kept_body: list[ast.stmt] = []
@@ -137,6 +149,24 @@ def build_web_input(
     *,
     require_code_blocks: bool,
 ) -> Path:
+    """Compile a Python game entrypoint into a generated web runtime bundle.
+
+    Args:
+        main_path: Path to the Python game entry file (typically ``main.py``).
+        output_dir: Target directory where generated files are written.
+        require_code_blocks: Whether strict ``CodeBlock`` filtering is enabled.
+
+    Returns:
+        Path to the generated ``src/nanocalibur_generated`` directory.
+
+    Raises:
+        FileNotFoundError: If entry file or referenced templates are missing.
+        DSLValidationError: If game DSL compilation fails.
+        OSError: If output files cannot be created or copied.
+
+    Side Effects:
+        Writes generated JSON/TS files to disk and copies runtime templates.
+    """
     source = _collect_game_source(main_path)
     src_dir = output_dir / "src"
     generated_dir = src_dir / GENERATED_DIR_NAME
@@ -182,6 +212,19 @@ def build_web_input(
 
 
 def sync_into_web_project(bundle_dir: Path, project_dir: Path) -> Path:
+    """Copy a generated bundle into an existing web project.
+
+    Args:
+        bundle_dir: Directory returned by :func:`build_web_input`.
+        project_dir: Web project root that contains a ``src`` directory.
+
+    Returns:
+        Destination ``<project>/src/nanocalibur_generated`` directory.
+
+    Raises:
+        FileNotFoundError: If ``<project>/src`` does not exist.
+        OSError: If copy operations fail.
+    """
     src_dir = project_dir / "src"
     if not src_dir.exists():
         raise FileNotFoundError(f"Web project src directory not found: {src_dir}")
@@ -231,6 +274,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """CLI entrypoint for ``nanocalibur-build-game``."""
     args = _parse_args()
 
     main_path = Path(args.main).resolve()

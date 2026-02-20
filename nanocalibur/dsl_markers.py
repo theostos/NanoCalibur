@@ -64,6 +64,17 @@ class Global:
         return None
 
 
+class Local:
+    """Client-owned role field marker.
+
+    ``Local[...]`` fields are local-only and not synchronized to server state.
+    They are intended for interface/client logic.
+    """
+
+    def __class_getitem__(cls, item):
+        return cls
+
+
 class Actor:
     """Actor base class and binding marker used in DSL.
 
@@ -121,15 +132,15 @@ class Actor:
         """Request playback of a named animation clip on this actor."""
         return None
 
-    def destroy(self):
+    def destroy(self) -> None:
         """Request destruction/despawn of this actor."""
         return None
 
-    def attached_to(self, _parent: "str | Actor"):
+    def attached_to(self, _parent: "str | Actor") -> None:
         """Attach this actor to a parent actor (or parent uid)."""
         return None
 
-    def detached(self):
+    def detached(self) -> None:
         """Detach this actor from any parent."""
         return None
 
@@ -155,23 +166,23 @@ class Scene:
         *,
         gravity: bool = False,
         keyboard_aliases: dict[str, str | list[str]] | None = None,
-    ):
+    ) -> None:
         """Declare scene-level runtime options."""
         return None
 
-    def add_actor(self, _actor: Actor):
+    def add_actor(self, _actor: Actor) -> None:
         """Declare an initial actor instance inside this scene."""
         return None
 
-    def add_rule(self, _condition, _action: Callable[..., Any]):
+    def add_rule(self, _condition: Any, _action: Callable[..., Any]) -> None:
         """Register a rule mapping condition to action inside this scene."""
         return None
 
-    def set_map(self, _map):
+    def set_map(self, _map: Any) -> None:
         """Configure the tile map for this scene."""
         return None
 
-    def add_camera(self, _camera: "Camera"):
+    def add_camera(self, _camera: "Camera") -> None:
         """Attach a camera instance to this scene."""
         return None
 
@@ -179,7 +190,7 @@ class Scene:
         self,
         _html_or_interface: "str | Interface",
         _role: "str | Role | type[Role] | None" = None,
-    ):
+    ) -> None:
         """Configure an HTML overlay for one role.
 
         Accepted forms:
@@ -189,19 +200,19 @@ class Scene:
         """
         return None
 
-    def enable_gravity(self):
+    def enable_gravity(self) -> None:
         """Enable gravity in the current scene."""
         return None
 
-    def disable_gravity(self):
+    def disable_gravity(self) -> None:
         """Disable gravity in the current scene."""
         return None
 
-    def spawn(self, _actor: Actor):
+    def spawn(self, _actor: Actor) -> None:
         """Spawn a new actor instance inside the current scene."""
         return None
 
-    def next_turn(self):
+    def next_turn(self) -> None:
         """Advance the session turn in turn-based or hybrid loop modes."""
         return None
 
@@ -249,7 +260,7 @@ class Sprite:
         flip_x: bool = True,
         offset_x: float = 0.0,
         offset_y: float = 0.0,
-    ):
+    ) -> None:
         """Build a sprite declaration payload for the compiler."""
         return None
 
@@ -261,7 +272,7 @@ class Resource:
         """Allow ``Resource[...]`` selector syntax."""
         return cls
 
-    def __init__(self, _name: str, _path: str):
+    def __init__(self, _name: str, _path: str) -> None:
         return None
 
 
@@ -278,7 +289,7 @@ class Interface:
         _role: "str | type[Role] | None" = None,
         *,
         from_file: bool = True,
-    ):
+    ) -> None:
         return None
 
 
@@ -296,7 +307,7 @@ class Multiplayer:
         hybrid_window_ms: int = 500,
         game_time_scale: float = 1.0,
         max_catchup_steps: int = 1,
-    ):
+    ) -> None:
         return None
 
 
@@ -326,14 +337,20 @@ class Role:
         required: bool = True,
         kind: RoleKind | str = RoleKind.HYBRID,
         **_fields: Any,
-    ):
+    ) -> None:
         return None
+
+
+class HumanRole(Role):
+    """Built-in non-editable human role schema with client-local key bindings."""
+
+    keybinds: Local[dict[str, str]]
 
 
 class Game:
     """Top-level DSL game container."""
 
-    def add_global(self, _name_or_global, _value: Any = None):
+    def add_global(self, _name_or_global: Any, _value: Any = None) -> None:
         """Declare a global variable.
 
         Accepted forms:
@@ -342,27 +359,27 @@ class Game:
         """
         return None
 
-    def add_actor(self, _actor: Actor):
+    def add_actor(self, _actor: Actor) -> None:
         """Legacy shortcut for scene-level actor declaration."""
         return None
 
-    def add_rule(self, _condition, _action: Callable[..., Any]):
+    def add_rule(self, _condition: Any, _action: Callable[..., Any]) -> None:
         """Legacy shortcut for scene-level rule declaration."""
         return None
 
-    def set_map(self, _map):
+    def set_map(self, _map: Any) -> None:
         """Legacy shortcut for scene-level map configuration."""
         return None
 
-    def set_scene(self, _scene: Scene):
+    def set_scene(self, _scene: Scene) -> None:
         """Configure scene runtime settings."""
         return None
 
-    def set_multiplayer(self, _multiplayer: Multiplayer):
+    def set_multiplayer(self, _multiplayer: Multiplayer) -> None:
         """Configure multiplayer loop and pacing defaults."""
         return None
 
-    def add_role(self, _role: Role):
+    def add_role(self, _role: Role) -> None:
         """Declare a multiplayer role that can join sessions."""
         return None
 
@@ -370,11 +387,11 @@ class Game:
         self,
         _resource_or_name: "Resource | str",
         _path: str | None = None,
-    ):
+    ) -> None:
         """Declare an image resource."""
         return None
 
-    def add_sprite(self, _sprite: "Sprite"):
+    def add_sprite(self, _sprite: "Sprite") -> None:
         """Declare sprite animation bindings."""
         return None
 
@@ -383,7 +400,7 @@ class CodeBlock:
     """Top-level structural block marker for DSL authoring."""
 
     @staticmethod
-    def begin(_id: str):
+    def begin(_id: str) -> None:
         """Start a code block identified by ``_id``.
 
         Put a docstring string literal immediately after this call to describe the block.
@@ -391,7 +408,7 @@ class CodeBlock:
         return None
 
     @staticmethod
-    def end(_id: str | None = None):
+    def end(_id: str | None = None) -> None:
         """Close the current code block."""
         return None
 
@@ -408,7 +425,7 @@ class AbstractCodeBlock(CodeBlock):
         return None
 
     @staticmethod
-    def begin(_id: str, **_params):
+    def begin(_id: str, **_params: Any) -> "AbstractCodeBlock":
         """Start an abstract code block template.
 
         Supported keywords:
@@ -420,12 +437,12 @@ class AbstractCodeBlock(CodeBlock):
         return AbstractCodeBlock()
 
     @staticmethod
-    def end(_id: str | None = None):
+    def end(_id: str | None = None) -> None:
         """Close the current abstract code block template."""
         return None
 
     @staticmethod
-    def instantiate(_id: str | None = None, **_values):
+    def instantiate(_id: str | None = None, **_values: Any) -> None:
         """Instantiate an abstract block by id with constant values."""
         return None
 
@@ -439,7 +456,7 @@ class KeyboardCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
-    ):
+    ) -> None:
         """Trigger when a key is pressed this frame.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
@@ -453,7 +470,7 @@ class KeyboardCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
-    ):
+    ) -> None:
         """Trigger while a key is held.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
@@ -467,7 +484,7 @@ class KeyboardCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
-    ):
+    ) -> None:
         """Trigger when a key is released this frame.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
@@ -507,7 +524,7 @@ class Random:
 class GlobalVariable:
     """Named global declaration payload for ``game.add_global``."""
 
-    def __init__(self, _type, _name: str, _value: Any):
+    def __init__(self, _type: Any, _name: str, _value: Any) -> None:
         return None
 
 
@@ -520,7 +537,7 @@ class MouseCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
-    ):
+    ) -> None:
         """Trigger when a mouse button is pressed this frame.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
@@ -534,7 +551,7 @@ class MouseCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
-    ):
+    ) -> None:
         """Trigger while a mouse button is held.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
@@ -548,7 +565,7 @@ class MouseCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
-    ):
+    ) -> None:
         """Trigger when a mouse button is released this frame.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
@@ -568,7 +585,7 @@ class Camera:
     height: int | None
     target_uid: str | None
 
-    def __class_getitem__(cls, item):
+    def __class_getitem__(cls, item: Any):
         """Allow ``Camera[\"camera_name\"]`` syntax in type annotations."""
         return cls
 
@@ -581,19 +598,19 @@ class Camera:
         y: float = 0.0,
         width: int | None = None,
         height: int | None = None,
-    ):
+    ) -> None:
         """Declare a named camera scoped to one role."""
         return None
 
-    def follow(self, _uid: str):
+    def follow(self, _uid: str) -> None:
         """Attach the camera to follow an actor uid."""
         return None
 
-    def detach(self):
+    def detach(self) -> None:
         """Detach camera from current follow target."""
         return None
 
-    def translate(self, _dx: float, _dy: float):
+    def translate(self, _dx: float, _dy: float) -> None:
         """Translate camera position (or follow offset if attached)."""
         return None
 
@@ -615,7 +632,7 @@ class TileMap:
         tile_size: int,
         grid: list[list[int]] | str,
         tiles: dict[int, "Tile"],
-    ):
+    ) -> None:
         """Declare map size, tile size, and tile palette grid."""
         return None
 
@@ -634,7 +651,7 @@ class Color:
         *,
         symbol: str | None = None,
         description: str | None = None,
-    ):
+    ) -> None:
         return None
 
 
@@ -651,21 +668,21 @@ class Tile:
         block_mask: int | None = None,
         color: Color | None = None,
         sprite: "str | type[Sprite] | None" = None,
-    ):
+    ) -> None:
         return None
 
 
-def OnOverlap(_left, _right):
+def OnOverlap(_left: Any, _right: Any) -> None:
     """Condition helper for overlap checks between two selectors."""
     return None
 
 
-def OnContact(_left, _right):
+def OnContact(_left: Any, _right: Any) -> None:
     """Condition helper for blocking-contact checks between two selectors."""
     return None
 
 
-def OnLogicalCondition(_predicate, _selector):
+def OnLogicalCondition(_predicate: Callable[..., Any], _selector: Any) -> None:
     """Condition helper applying a predicate to selected actors."""
     return None
 
@@ -675,7 +692,7 @@ def OnToolCall(
     _role: "str | type[Role] | None" = None,
     *,
     id: str | None = None,
-):
+) -> None:
     """Condition helper exposing an action as an external LLM-callable tool.
 
     The tool description is read from the bound action function docstring.
@@ -685,7 +702,7 @@ def OnToolCall(
     return None
 
 
-def OnButton(_name: str):
+def OnButton(_name: str) -> None:
     """Condition helper for UI button clicks.
 
     Usage:
@@ -697,7 +714,7 @@ def OnButton(_name: str):
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def safe_condition(_condition_expr) -> Callable[[F], F]:
+def safe_condition(_condition_expr: Any) -> Callable[[F], F]:
     """Attach a server-evaluated condition marker to an action function.
 
     Intended for conditions resolved from server authoritative state
@@ -710,7 +727,7 @@ def safe_condition(_condition_expr) -> Callable[[F], F]:
     return _decorate
 
 
-def unsafe_condition(_condition_expr) -> Callable[[F], F]:
+def unsafe_condition(_condition_expr: Any) -> Callable[[F], F]:
     """Attach a client-input-driven condition marker to an action function.
 
     Intended for conditions that originate from client-emitted events
@@ -726,3 +743,44 @@ def unsafe_condition(_condition_expr) -> Callable[[F], F]:
 def callable(fn: F) -> F:
     """Mark a helper function callable from actions/predicates expressions."""
     return fn
+
+
+def local(_value: Any = None) -> Any:
+    """Declare a default value for ``Local[...]`` role fields."""
+    return _value
+
+
+__all__ = [
+    "AbstractCodeBlock",
+    "Actor",
+    "Camera",
+    "CodeBlock",
+    "Color",
+    "Game",
+    "Global",
+    "GlobalVariable",
+    "HumanRole",
+    "Interface",
+    "KeyboardCondition",
+    "Local",
+    "MouseCondition",
+    "Multiplayer",
+    "OnButton",
+    "OnContact",
+    "OnLogicalCondition",
+    "OnOverlap",
+    "OnToolCall",
+    "Random",
+    "Resource",
+    "Role",
+    "RoleKind",
+    "Scene",
+    "Sprite",
+    "Tick",
+    "Tile",
+    "TileMap",
+    "callable",
+    "local",
+    "safe_condition",
+    "unsafe_condition",
+]

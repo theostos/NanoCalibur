@@ -2,7 +2,8 @@ import ast
 import copy
 from typing import Dict, List, Optional, Tuple, cast
 
-from nanocalibur.compiler import CALLABLE_EXPR_PREFIX, DSLCompiler
+from nanocalibur.compiler import DSLCompiler
+from nanocalibur.compiler.constants import CALLABLE_EXPR_PREFIX
 from nanocalibur.errors import DSLValidationError
 from nanocalibur.game_model import InputPhase
 from nanocalibur.ir import (

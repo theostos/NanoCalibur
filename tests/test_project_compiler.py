@@ -315,34 +315,34 @@ def test_project_expands_top_level_role_loop_with_string_builders():
 def test_project_parses_role_schema_and_role_bindings():
     project = compile_project(
         """
-        class HumanRole(Role):
+        class HeroRole(Role):
             score: int
             buffs: List[List[int]]
 
         class Player(Actor):
             pass
 
-        def add_score(self_role: HumanRole["human_1"]):
+        def add_score(self_role: HeroRole["human_1"]):
             self_role.score = self_role.score + 1
 
-        def can_win(player: Player, self_role: HumanRole["human_1"]) -> bool:
+        def can_win(player: Player, self_role: HeroRole["human_1"]) -> bool:
             return self_role.score >= 10
 
         game = Game()
         scene = Scene(gravity=False)
         game.set_scene(scene)
-        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=3))
+        game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score=3))
         scene.add_actor(Player(uid="hero", x=0, y=0))
         scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), add_score)
         scene.add_rule(OnLogicalCondition(can_win, Player), add_score)
         """
     )
 
-    assert "HumanRole" in project.role_schemas
-    assert project.role_schemas["HumanRole"]["score"] == "int"
-    assert project.role_schemas["HumanRole"]["buffs"] == "list[list[int]]"
+    assert "HeroRole" in project.role_schemas
+    assert project.role_schemas["HeroRole"]["score"] == "int"
+    assert project.role_schemas["HeroRole"]["buffs"] == "list[list[int]]"
     assert project.roles[0].id == "human_1"
-    assert project.roles[0].role_type == "HumanRole"
+    assert project.roles[0].role_type == "HeroRole"
     assert project.roles[0].fields["score"] == 3
     assert project.roles[0].fields["buffs"] == []
 
@@ -350,13 +350,13 @@ def test_project_parses_role_schema_and_role_bindings():
     assert add_score.params[0].kind == BindingKind.ROLE
     assert add_score.params[0].role_selector is not None
     assert add_score.params[0].role_selector.id == "human_1"
-    assert add_score.params[0].role_type == "HumanRole"
+    assert add_score.params[0].role_type == "HeroRole"
 
 
 def test_project_supports_dict_field_types_for_roles_actors_and_globals():
     project = compile_project(
         """
-        class HumanRole(Role):
+        class HeroRole(Role):
             score_by_mode: Dict[str, int]
 
         class Player(Actor):
@@ -366,12 +366,12 @@ def test_project_supports_dict_field_types_for_roles_actors_and_globals():
         scene = Scene(gravity=False)
         game.set_scene(scene)
         game.add_global("score_by_mode", {"solo": 1} + {"duo": 2})
-        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score_by_mode={"solo": 5}))
+        game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score_by_mode={"solo": 5}))
         scene.add_actor(Player(uid="hero", inventory={"coins": [1] + [2, 3]}))
         """
     )
 
-    assert project.role_schemas["HumanRole"]["score_by_mode"] == "dict[str, int]"
+    assert project.role_schemas["HeroRole"]["score_by_mode"] == "dict[str, int]"
     assert project.actor_schemas["Player"]["inventory"] == "dict[str, list[int]]"
     global_by_name = {g.name: g for g in project.globals}
     assert global_by_name["score_by_mode"].kind == GlobalValueKind.DICT
@@ -380,23 +380,135 @@ def test_project_supports_dict_field_types_for_roles_actors_and_globals():
     assert project.actors[0].fields["inventory"] == {"coins": [1, 2, 3]}
 
 
+def test_project_exposes_builtin_humanrole_local_keybind_schema():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        def move_right(player: Player["hero"]):
+            player.x = player.x + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("move_right", id="human_1"), move_right)
+        """
+    )
+
+    assert project.role_schemas["HumanRole"] == {}
+    assert project.role_local_schemas["HumanRole"]["keybinds"] == "dict[str, str]"
+    assert project.role_local_defaults["HumanRole"]["keybinds"] == {
+        "move_up": "z",
+        "move_left": "q",
+        "move_down": "s",
+        "move_right": "d",
+    }
+
+
+def test_project_supports_local_fields_in_role_schemas_and_defaults():
+    project = compile_project(
+        """
+        class HeroRole(HumanRole):
+            score: int
+            quickbar: Local[List[str]] = local(["dash", "heal"])
+
+        class Player(Actor):
+            pass
+
+        def move_right(player: Player["hero"], self_role: HeroRole["human_1"]):
+            if self_role.score >= 0:
+                player.x = player.x + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score=1))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("move_right", id="human_1"), move_right)
+        """
+    )
+
+    assert project.role_schemas["HeroRole"]["score"] == "int"
+    assert project.role_local_schemas["HeroRole"]["keybinds"] == "dict[str, str]"
+    assert project.role_local_schemas["HeroRole"]["quickbar"] == "list[str]"
+    assert project.role_local_defaults["HeroRole"]["quickbar"] == ["dash", "heal"]
+    assert project.role_local_defaults["HeroRole"]["keybinds"]["move_up"] == "z"
+
+
+def test_project_rejects_local_field_provided_in_add_role():
+    with pytest.raises(DSLValidationError, match="client-owned Local"):
+        compile_project(
+            """
+            class HeroRole(HumanRole):
+                quickbar: Local[List[str]] = local(["dash"])
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, quickbar=["heal"]))
+            """
+        )
+
+
+def test_project_rejects_local_role_fields_in_server_logic():
+    with pytest.raises(DSLValidationError, match="Local\\[\\.\\.\\.\\] \\(client-owned\\)"):
+        compile_project(
+            """
+            class HeroRole(HumanRole):
+                profile: Local[Dict[str, str]] = local({"lang": "fr"})
+
+            class Player(Actor):
+                pass
+
+            def bad(self_role: HeroRole["human_1"], player: Player["hero"]):
+                if self_role.profile["lang"] == "fr":
+                    player.x = player.x + 1
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN))
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            scene.add_rule(KeyboardCondition.on_press("move_right", id="human_1"), bad)
+            """
+        )
+
+
+def test_project_requires_local_initializer_for_local_role_fields():
+    with pytest.raises(DSLValidationError, match="must be initialized with local\\(\\.\\.\\.\\)"):
+        compile_project(
+            """
+            class HeroRole(HumanRole):
+                quickbar: Local[List[str]] = ["dash"]
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN))
+            """
+        )
+
+
 def test_role_binding_requires_declared_role_id():
     with pytest.raises(DSLValidationError, match="references unknown role id 'human_2'"):
         compile_project(
             """
-            class HumanRole(Role):
+            class HeroRole(Role):
                 score: int
 
             class Player(Actor):
                 pass
 
-            def add_score(self_role: HumanRole["human_2"]):
+            def add_score(self_role: HeroRole["human_2"]):
                 self_role.score = self_role.score + 1
 
             game = Game()
             scene = Scene(gravity=False)
             game.set_scene(scene)
-            game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=3))
+            game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score=3))
             scene.add_actor(Player(uid="hero", x=0, y=0))
             scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), add_score)
             """
@@ -404,10 +516,10 @@ def test_role_binding_requires_declared_role_id():
 
 
 def test_role_binding_rejects_type_mismatch_with_declared_role():
-    with pytest.raises(DSLValidationError, match="expects role type 'HumanRole'"):
+    with pytest.raises(DSLValidationError, match="expects role type 'HeroRole'"):
         compile_project(
             """
-            class HumanRole(Role):
+            class HeroRole(Role):
                 score: int
 
             class AIRole(Role):
@@ -416,7 +528,7 @@ def test_role_binding_rejects_type_mismatch_with_declared_role():
             class Player(Actor):
                 pass
 
-            def add_score(self_role: HumanRole["human_1"]):
+            def add_score(self_role: HeroRole["human_1"]):
                 self_role.score = self_role.score + 1
 
             game = Game()

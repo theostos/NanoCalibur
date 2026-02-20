@@ -385,21 +385,21 @@ def test_export_project_serializes_roles_and_role_scoped_conditions(tmp_path):
 def test_export_project_serializes_role_schemas_and_fields(tmp_path):
     source = textwrap.dedent(
         """
-        class HumanRole(Role):
+        class HeroRole(Role):
             score: int
             cards: List[str]
 
         class Player(Actor):
             pass
 
-        def move(player: Player["hero"], self_role: HumanRole["human_1"]):
+        def move(player: Player["hero"], self_role: HeroRole["human_1"]):
             if self_role.score > 0:
                 player.x = player.x + 1
 
         game = Game()
         scene = Scene(gravity=False)
         game.set_scene(scene)
-        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score=2))
+        game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score=2))
         scene.add_actor(Player(uid="hero", x=0, y=0))
         scene.add_rule(KeyboardCondition.on_press("d", id="human_1"), move)
         """
@@ -407,16 +407,16 @@ def test_export_project_serializes_role_schemas_and_fields(tmp_path):
 
     export_project(source, str(tmp_path))
     spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
-    assert spec["role_schemas"]["HumanRole"]["score"] == "int"
-    assert spec["role_schemas"]["HumanRole"]["cards"] == "list[str]"
-    assert spec["roles"][0]["type"] == "HumanRole"
+    assert spec["role_schemas"]["HeroRole"]["score"] == "int"
+    assert spec["role_schemas"]["HeroRole"]["cards"] == "list[str]"
+    assert spec["roles"][0]["type"] == "HeroRole"
     assert spec["roles"][0]["fields"] == {"score": 2, "cards": []}
 
 
 def test_export_project_serializes_dict_types_and_values(tmp_path):
     source = textwrap.dedent(
         """
-        class HumanRole(Role):
+        class HeroRole(Role):
             score_by_mode: Dict[str, int]
 
         class Player(Actor):
@@ -426,7 +426,7 @@ def test_export_project_serializes_dict_types_and_values(tmp_path):
         scene = Scene(gravity=False)
         game.set_scene(scene)
         game.add_global("score_by_mode", {"solo": 1} + {"duo": 2})
-        game.add_role(HumanRole(id="human_1", kind=RoleKind.HUMAN, score_by_mode={"solo": 4}))
+        game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score_by_mode={"solo": 4}))
         scene.add_actor(Player(uid="hero", inventory={"coins": [1, 2]}))
         """
     )
@@ -434,7 +434,40 @@ def test_export_project_serializes_dict_types_and_values(tmp_path):
     export_project(source, str(tmp_path))
     spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
     assert spec["schemas"]["Player"]["inventory"] == "dict[str, list[int]]"
-    assert spec["role_schemas"]["HumanRole"]["score_by_mode"] == "dict[str, int]"
+    assert spec["role_schemas"]["HeroRole"]["score_by_mode"] == "dict[str, int]"
     globals_by_name = {entry["name"]: entry for entry in spec["globals"]}
     assert globals_by_name["score_by_mode"]["kind"] == "dict"
     assert globals_by_name["score_by_mode"]["value"] == {"solo": 1, "duo": 2}
+
+
+def test_export_project_serializes_role_local_schemas_and_defaults(tmp_path):
+    source = textwrap.dedent(
+        """
+        class HeroRole(HumanRole):
+            score: int
+            quickbar: Local[List[str]] = local(["dash"])
+
+        class Player(Actor):
+            pass
+
+        def move(player: Player["hero"], self_role: HeroRole["human_1"]):
+            if self_role.score >= 0:
+                player.x = player.x + 1
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(HeroRole(id="human_1", kind=RoleKind.HUMAN, score=2))
+        scene.add_actor(Player(uid="hero", x=0, y=0))
+        scene.add_rule(KeyboardCondition.on_press("move_right", id="human_1"), move)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    assert spec["role_schemas"]["HeroRole"]["score"] == "int"
+    assert spec["role_local_schemas"]["HeroRole"]["keybinds"] == "dict[str, str]"
+    assert spec["role_local_schemas"]["HeroRole"]["quickbar"] == "list[str]"
+    assert spec["role_local_defaults"]["HeroRole"]["quickbar"] == ["dash"]
+    assert spec["role_local_defaults"]["HeroRole"]["keybinds"]["move_left"] == "q"

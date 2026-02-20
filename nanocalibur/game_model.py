@@ -266,6 +266,8 @@ class ProjectSpec:
     resources: List[ResourceSpec]
     sprites: List[SpriteSpec]
     scene: Optional[SceneSpec]
+    role_local_schemas: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    role_local_defaults: Dict[str, Dict[str, StructuredValue]] = field(default_factory=dict)
     interface_html: Optional[str] = None
     interfaces_by_role: Dict[str, str] = field(default_factory=dict)
     multiplayer: Optional[MultiplayerSpec] = None

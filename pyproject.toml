@@ -10,5 +10,25 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 
+[project.scripts]
+nanocalibur-build-game = "nanocalibur.build_game:main"
+nc-build-game = "nanocalibur.build_game:main"
+
+[project.optional-dependencies]
+docs = [
+  "mkdocs>=1.6",
+  "mkdocstrings[python]>=0.26",
+]
+
+[tool.setuptools.package-data]
+nanocalibur = [
+  "runtime/*.ts",
+  "runtime/canvas/*.ts",
+  "templates/web_bundle/*",
+]
+
+[tool.setuptools.packages.find]
+include = ["nanocalibur*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
