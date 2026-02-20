@@ -1,4 +1,4 @@
-from nanocalibur.dsl_markers import CodeBlock, Game, Interface, Multiplayer, Role, Scene
+from nanocalibur.dsl_markers import CodeBlock, Game, Multiplayer, Scene
 
 
 CodeBlock.begin("shared_context")
@@ -27,9 +27,6 @@ game.set_multiplayer(
     )
 )
 
-game.add_global("score", 0)
-
-human_1_hud = Interface("ui/hud_human_1.html", Role["human_1"])
-scene.set_interface(human_1_hud)
+game.add_global("global_score", 0)
 
 CodeBlock.end("shared_context")

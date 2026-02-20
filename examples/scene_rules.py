@@ -11,6 +11,7 @@ from nanocalibur.dsl_markers import (
 )
 
 from .scene_entities import Coin, Player
+from .scene_roles import HeroRole
 
 
 CodeBlock.begin("gameplay_rules")
@@ -18,31 +19,55 @@ CodeBlock.begin("gameplay_rules")
 
 
 @safe_condition(OnOverlap(Player["hero_1"], Coin))
-def collect_coin_for_player_1(hero: Player, coin: Coin, score: Global["score", int]):
+def collect_coin_for_player_1(
+    hero: Player,
+    coin: Coin,
+    role: HeroRole["human_1"],
+    global_score: Global["global_score", int],
+):
     if coin.active and coin.uid != "coin_pet":
         coin.destroy()
-        score = score + 1
+        role.score = role.score + 1
+        global_score = global_score + 1
 
 
 @safe_condition(OnOverlap(Player["hero_2"], Coin))
-def collect_coin_for_player_2(hero: Player, coin: Coin, score: Global["score", int]):
+def collect_coin_for_player_2(
+    hero: Player,
+    coin: Coin,
+    role: HeroRole["human_2"],
+    global_score: Global["global_score", int],
+):
     if coin.active and coin.uid != "coin_pet":
         coin.destroy()
-        score = score + 1
+        role.score = role.score + 1
+        global_score = global_score + 1
 
 
 @safe_condition(OnOverlap(Player["hero_3"], Coin))
-def collect_coin_for_player_3(hero: Player, coin: Coin, score: Global["score", int]):
+def collect_coin_for_player_3(
+    hero: Player,
+    coin: Coin,
+    role: HeroRole["human_3"],
+    global_score: Global["global_score", int],
+):
     if coin.active and coin.uid != "coin_pet":
         coin.destroy()
-        score = score + 1
+        role.score = role.score + 1
+        global_score = global_score + 1
 
 
 @safe_condition(OnOverlap(Player["hero_4"], Coin))
-def collect_coin_for_player_4(hero: Player, coin: Coin, score: Global["score", int]):
+def collect_coin_for_player_4(
+    hero: Player,
+    coin: Coin,
+    role: HeroRole["human_4"],
+    global_score: Global["global_score", int],
+):
     if coin.active and coin.uid != "coin_pet":
         coin.destroy()
-        score = score + 1
+        role.score = role.score + 1
+        global_score = global_score + 1
 
 
 @unsafe_condition(KeyboardCondition.begin_press("g", id="human_1"))

@@ -190,7 +190,7 @@ Rules:
 scene.set_interface("<div>Score: {{score}}</div><div>Actors: {{__actors_count}}</div>")
 
 # File-backed and role-scoped
-hud_h1 = Interface("ui/hud_human_1.html", Role["human_1"])
+hud_h1 = Interface("ui/hud_human.html", Role["human_1"])
 scene.set_interface(hud_h1)
 ```
 
