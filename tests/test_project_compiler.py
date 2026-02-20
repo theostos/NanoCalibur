@@ -54,6 +54,8 @@ def test_compile_project_with_conditions_map_and_camera():
 
         game = Game()
         game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
         game.add_global("heal", 2)
         game.add_global("is_dead", False)
         game.add_actor(Player, "main_character", life=3, x=10, y=20)
@@ -73,7 +75,9 @@ def test_compile_project_with_conditions_map_and_camera():
                 tiles={1: Tile(color=Color(50, 50, 50))},
             )
         )
-        game.set_camera(Camera.follow("main_character"))
+        main_camera = Camera("main_camera", Role["human_1"])
+        main_camera.follow("main_character")
+        scene.add_camera(main_camera)
         """
     )
 
@@ -83,8 +87,8 @@ def test_compile_project_with_conditions_map_and_camera():
     assert len(project.rules) == 3
     assert project.tile_map is not None
     assert project.tile_map.tile_grid == [[1, 0], [0, 1]]
-    assert project.camera is not None
-    assert project.camera.target_uid == "main_character"
+    assert len(project.cameras) == 1
+    assert project.cameras[0].target_uid == "main_character"
     assert [predicate.name for predicate in project.predicates] == ["is_dead"]
     assert isinstance(project.rules[0].condition, KeyboardConditionSpec)
     assert project.rules[0].condition.phase == InputPhase.ON
@@ -237,6 +241,7 @@ def test_project_parses_roles_and_role_scoped_conditions():
             player.x = player.x + 2
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
@@ -534,7 +539,9 @@ def test_compile_project_with_scene_managed_actors_rules_map_and_camera():
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=10, y=20, speed=2))
         scene.add_rule(KeyboardCondition.on_press("D", id="human_1"), move_right)
-        scene.set_camera(Camera.follow("hero"))
+        follow_camera = Camera("follow_camera", Role["human_1"])
+        follow_camera.follow("hero")
+        scene.add_camera(follow_camera)
         scene.set_map(
             TileMap(
                 tile_size=16,
@@ -549,8 +556,8 @@ def test_compile_project_with_scene_managed_actors_rules_map_and_camera():
     assert project.scene.gravity_enabled is False
     assert len(project.actors) == 1
     assert len(project.rules) == 1
-    assert project.camera is not None
-    assert project.camera.target_uid == "hero"
+    assert len(project.cameras) == 1
+    assert project.cameras[0].target_uid == "hero"
     assert project.tile_map is not None
     assert project.tile_map.tile_size == 16
 
@@ -760,6 +767,7 @@ def test_scene_set_map_and_camera_accept_named_variables():
             speed: int
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=10, y=20, speed=2))
@@ -773,18 +781,85 @@ def test_scene_set_map_and_camera_accept_named_variables():
             ],
             tiles={1: Tile(color=Color(90, 90, 90))},
         )
-        follow_camera = Camera.follow("hero")
+        follow_camera = Camera("follow_camera", Role["human_1"])
+        follow_camera.follow("hero")
 
         scene.set_map(tile_map)
-        scene.set_camera(follow_camera)
+        scene.add_camera(follow_camera)
         """
     )
 
     assert project.tile_map is not None
     assert project.tile_map.tile_size == 16
     assert project.tile_map.tile_grid == [[1, 0, 0], [0, 0, 0], [0, 0, 1]]
-    assert project.camera is not None
-    assert project.camera.target_uid == "hero"
+    assert len(project.cameras) == 1
+    assert project.cameras[0].target_uid == "hero"
+
+
+def test_camera_binding_is_name_based_in_actions_and_predicates():
+    project = compile_project(
+        """
+        class Player(Actor):
+            speed: int
+
+        def move_with_camera(player: Player["hero"], cam: Camera["main_cam"]):
+            cam.translate(player.speed, 0)
+
+        def camera_ready(cam: Camera["main_cam"], player: Player["hero"]) -> bool:
+            return cam.x >= player.x
+
+        game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=10, y=20, speed=2))
+        cam = Camera("main_cam", Role["human_1"])
+        scene.add_camera(cam)
+        scene.add_rule(KeyboardCondition.on_press("D", id="human_1"), move_with_camera)
+        scene.add_rule(OnLogicalCondition(camera_ready, Player["hero"]), move_with_camera)
+        """
+    )
+
+    action = next(item for item in project.actions if item.name == "move_with_camera")
+    predicate = next(item for item in project.predicates if item.name == "camera_ready")
+    assert any(param.kind == BindingKind.CAMERA for param in action.params)
+    assert any(param.kind == BindingKind.CAMERA for param in predicate.params)
+
+
+def test_set_camera_is_removed_with_explicit_error():
+    with pytest.raises(DSLValidationError, match="set_camera\\(\\.\\.\\.\\) was removed"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.set_camera(Camera("cam", Role["human_1"]))
+            """
+        )
+
+
+def test_human_role_without_camera_warns():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            game.add_role(Role(id="dummy_1", required=False, kind=RoleKind.AI))
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0))
+            ai_cam = Camera("ai_cam", Role["dummy_1"])
+            scene.add_camera(ai_cam)
+            """
+        )
+    assert any("has no camera" in str(item.message) for item in caught)
 
 
 def test_tile_map_grid_parses_non_zero_tiles():
@@ -1060,6 +1135,9 @@ def test_game_set_map_and_camera_accept_named_variables():
             speed: int
 
         game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
         game.add_actor(Player(uid="hero", x=10, y=20, speed=2))
 
         tile_map = TileMap(
@@ -1070,10 +1148,10 @@ def test_game_set_map_and_camera_accept_named_variables():
             ],
             tiles={1: Tile(color=Color(60, 60, 60))},
         )
-        fixed_camera = Camera.fixed(100, 200)
+        fixed_camera = Camera("fixed_camera", Role["human_1"], x=100, y=200)
 
         game.set_map(tile_map)
-        game.set_camera(fixed_camera)
+        scene.add_camera(fixed_camera)
         """
     )
 
@@ -1082,9 +1160,9 @@ def test_game_set_map_and_camera_accept_named_variables():
     assert project.tile_map.height == 2
     assert project.tile_map.tile_size == 24
     assert project.tile_map.tile_grid == [[1, 0], [0, 0]]
-    assert project.camera is not None
-    assert project.camera.x == 100
-    assert project.camera.y == 200
+    assert len(project.cameras) == 1
+    assert project.cameras[0].x == 100
+    assert project.cameras[0].y == 200
 
 
 def test_scene_methods_require_game_set_scene_binding():

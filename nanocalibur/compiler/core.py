@@ -23,6 +23,7 @@ from nanocalibur.ir import (
     ParamBinding,
     PredicateIR,
     Range,
+    CameraSelector,
     RoleSelector,
     SubscriptExpr,
     Unary,
@@ -61,6 +62,7 @@ class ActionScope:
     actor_var_types: Dict[str, str]
     actor_list_var_types: Dict[str, Optional[str]]
     role_var_types: Dict[str, str]
+    camera_vars: Set[str]
     scene_vars: Set[str]
     tick_vars: Set[str]
     spawn_actor_templates: Dict[str, tuple[str, Expr, Expr]]
@@ -257,6 +259,7 @@ class DSLCompiler:
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
             role_var_types: Dict[str, str] = {}
+            camera_vars: Set[str] = set()
             for param in params:
                 if param.kind == BindingKind.ACTOR and param.actor_type is not None:
                     actor_var_types[param.name] = param.actor_type
@@ -264,6 +267,8 @@ class DSLCompiler:
                     actor_list_var_types[param.name] = param.actor_list_type
                 if param.kind == BindingKind.ROLE and param.role_type is not None:
                     role_var_types[param.name] = param.role_type
+                if param.kind == BindingKind.CAMERA:
+                    camera_vars.add(param.name)
                 if (
                     param.kind == BindingKind.GLOBAL
                     and param.global_name in self.global_actor_types
@@ -276,6 +281,7 @@ class DSLCompiler:
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
                 role_var_types=role_var_types,
+                camera_vars=camera_vars,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
                 spawn_actor_templates={},
@@ -313,6 +319,7 @@ class DSLCompiler:
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
             role_var_types: Dict[str, str] = {}
+            camera_vars: Set[str] = set()
             for param in params:
                 if param.kind == BindingKind.ACTOR and param.actor_type is not None:
                     actor_var_types[param.name] = param.actor_type
@@ -320,6 +327,8 @@ class DSLCompiler:
                     actor_list_var_types[param.name] = param.actor_list_type
                 if param.kind == BindingKind.ROLE and param.role_type is not None:
                     role_var_types[param.name] = param.role_type
+                if param.kind == BindingKind.CAMERA:
+                    camera_vars.add(param.name)
                 if (
                     param.kind == BindingKind.GLOBAL
                     and param.global_name in self.global_actor_types
@@ -348,6 +357,7 @@ class DSLCompiler:
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
                 role_var_types=role_var_types,
+                camera_vars=camera_vars,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
                 spawn_actor_templates={},
@@ -374,6 +384,7 @@ class DSLCompiler:
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
             role_var_types: Dict[str, str] = {}
+            camera_vars: Set[str] = set()
             scene_vars: Set[str] = set()
             tick_vars: Set[str] = set()
 
@@ -394,6 +405,8 @@ class DSLCompiler:
                             actor_var_types[arg.arg] = ann.id
                         elif ann.id in self.schemas.role_fields:
                             role_var_types[arg.arg] = ann.id
+                        elif ann.id == "Camera":
+                            camera_vars.add(arg.arg)
                         continue
 
                     if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
@@ -406,6 +419,8 @@ class DSLCompiler:
                             actor_var_types[arg.arg] = head
                         elif head in self.schemas.role_fields:
                             role_var_types[arg.arg] = head
+                        elif head == "Camera":
+                            camera_vars.add(arg.arg)
                         elif head in {"List", "list"} and isinstance(ann.slice, ast.Name):
                             if ann.slice.id == "Actor":
                                 actor_list_var_types[arg.arg] = None
@@ -429,6 +444,7 @@ class DSLCompiler:
                 actor_var_types=actor_var_types,
                 actor_list_var_types=actor_list_var_types,
                 role_var_types=role_var_types,
+                camera_vars=camera_vars,
                 scene_vars=scene_vars,
                 tick_vars=tick_vars,
                 spawn_actor_templates={},
@@ -473,6 +489,8 @@ class DSLCompiler:
                     actor_selector=ActorSelector(uid=ann.id),
                     actor_type=ann.id,
                 )
+            if isinstance(ann, ast.Name) and ann.id == "Camera":
+                raise DSLValidationError('Camera binding must be Camera["camera_name"].')
             if isinstance(ann, ast.Name) and ann.id == "Role":
                 raise DSLValidationError('Role binding must be Role["role_id"].')
             if isinstance(ann, ast.Name) and ann.id in self.schemas.role_fields:
@@ -538,6 +556,24 @@ class DSLCompiler:
                     name=arg.arg,
                     kind=BindingKind.ROLE,
                     role_selector=RoleSelector(id=role_id),
+                )
+
+            if head == "Camera":
+                camera_name: Optional[str] = None
+                if isinstance(selector, ast.Constant) and isinstance(selector.value, str):
+                    camera_name = selector.value
+                elif _parse_int_literal(selector) is not None:
+                    raise DSLValidationError(
+                        'Camera binding does not support index selectors. Use Camera["camera_name"].'
+                    )
+                if camera_name is None:
+                    raise DSLValidationError('Camera binding must be Camera["camera_name"].')
+                if not camera_name:
+                    raise DSLValidationError("Camera binding name must be non-empty.")
+                return ParamBinding(
+                    name=arg.arg,
+                    kind=BindingKind.CAMERA,
+                    camera_selector=CameraSelector(name=camera_name),
                 )
 
             # Typed actor binding using actor schema name as the binding head:
@@ -755,6 +791,9 @@ class DSLCompiler:
             if method == "detached":
                 return self._compile_actor_instance_detach_call(expr, scope, owner)
 
+        if owner in scope.camera_vars:
+            return self._compile_camera_instance_call(expr, scope, owner)
+
         if owner in scope.scene_vars:
             return self._compile_scene_instance_call(expr, scope, owner)
 
@@ -765,6 +804,55 @@ class DSLCompiler:
             return self._compile_collection_call_stmt(expr, scope, owner)
 
         raise DSLValidationError("Unsupported call statement in action body.")
+
+    def _compile_camera_instance_call(
+        self,
+        expr: ast.Call,
+        scope: ActionScope,
+        owner: str,
+    ) -> CallStmt:
+        method = expr.func.attr
+        if method == "follow":
+            if expr.keywords:
+                raise DSLValidationError(
+                    f"{owner}.follow(...) does not accept keyword arguments."
+                )
+            if len(expr.args) != 1:
+                raise DSLValidationError(f"{owner}.follow(...) expects one target uid.")
+            target_expr = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+            if isinstance(target_expr, Const) and not isinstance(target_expr.value, str):
+                raise DSLValidationError(f"{owner}.follow(...) target uid must be a string.")
+            return CallStmt(name="camera_follow", args=[Var(owner), target_expr])
+
+        if method == "detach":
+            if expr.keywords or expr.args:
+                raise DSLValidationError(
+                    f"{owner}.detach(...) does not accept arguments."
+                )
+            return CallStmt(name="camera_detach", args=[Var(owner)])
+
+        if method == "translate":
+            if expr.keywords:
+                raise DSLValidationError(
+                    f"{owner}.translate(...) does not accept keyword arguments."
+                )
+            if len(expr.args) != 2:
+                raise DSLValidationError(
+                    f"{owner}.translate(...) expects dx and dy arguments."
+                )
+            return CallStmt(
+                name="camera_translate",
+                args=[
+                    Var(owner),
+                    self._compile_expr(expr.args[0], scope, allow_range_call=False),
+                    self._compile_expr(expr.args[1], scope, allow_range_call=False),
+                ],
+            )
+
+        raise DSLValidationError(
+            f"Unsupported camera method '{owner}.{method}(...)'. "
+            "Supported methods: follow, detach, translate."
+        )
 
     def _compile_actor_instance_attach_call(
         self, expr: ast.Call, scope: ActionScope, owner: str
@@ -1519,6 +1607,23 @@ class DSLCompiler:
                 )
             return Attr(obj=obj_name, field="elapsed")
 
+        if obj_name in scope.camera_vars:
+            if expr.attr not in {
+                "name",
+                "role_id",
+                "x",
+                "y",
+                "width",
+                "height",
+                "target_uid",
+                "offset_x",
+                "offset_y",
+            }:
+                raise DSLValidationError(
+                    f"Camera has no field '{expr.attr}'."
+                )
+            return Attr(obj=obj_name, field=expr.attr)
+
         actor_type = scope.actor_var_types.get(obj_name)
         role_type = scope.role_var_types.get(obj_name)
         if role_type is not None:
@@ -1558,6 +1663,10 @@ class DSLCompiler:
                 scope.role_var_types[target_name] = scope.role_var_types[value.name]
             else:
                 scope.role_var_types.pop(target_name, None)
+            if value.name in scope.camera_vars:
+                scope.camera_vars.add(target_name)
+            else:
+                scope.camera_vars.discard(target_name)
             if value.name in scope.spawn_actor_templates:
                 scope.spawn_actor_templates[target_name] = scope.spawn_actor_templates[
                     value.name
@@ -1569,6 +1678,7 @@ class DSLCompiler:
         scope.actor_var_types.pop(target_name, None)
         scope.actor_list_var_types.pop(target_name, None)
         scope.role_var_types.pop(target_name, None)
+        scope.camera_vars.discard(target_name)
         scope.spawn_actor_templates.pop(target_name, None)
 
     def _iterated_actor_type(self, iterable, scope: ActionScope) -> Optional[str]:

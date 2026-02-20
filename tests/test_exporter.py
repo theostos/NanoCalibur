@@ -25,6 +25,8 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
 
         game = Game()
         game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
         game.add_global("heal", 2)
         game.add_actor(Player, "main_character", life=1, x=5, y=6)
         game.add_rule(KeyboardCondition.on_press("A", id="human_1"), heal)
@@ -36,7 +38,8 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
                 tiles={1: Tile(block_mask=2, color=Color(90, 90, 90))},
             )
         )
-        game.set_camera(Camera.fixed(100, 200))
+        fixed_camera = Camera("fixed_camera", Role["human_1"], x=100, y=200)
+        scene.add_camera(fixed_camera)
         """
     )
 
@@ -58,7 +61,9 @@ def test_export_project_writes_spec_and_logic_files(tmp_path):
     assert spec["map"]["tile_size"] == 16
     assert spec["map"]["tile_grid"] == [[0, 1], [0, 0]]
     assert spec["map"]["tile_defs"]["1"]["block_mask"] == 2
-    assert spec["camera"]["mode"] == "fixed"
+    assert spec["cameras"][0]["name"] == "fixed_camera"
+    assert spec["cameras"][0]["x"] == 100
+    assert spec["cameras"][0]["y"] == 200
     assert any(
         rule["condition"]["kind"] == "keyboard" and rule["condition"]["phase"] == "on"
         for rule in spec["rules"]

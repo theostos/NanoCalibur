@@ -8,7 +8,6 @@ from nanocalibur.game_model import (
     AnimationClipSpec,
     ActorRefValue,
     ButtonConditionSpec,
-    CameraMode,
     CameraSpec,
     CollisionConditionSpec,
     ConditionSpec,
@@ -64,7 +63,7 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
         "rules": [_rule_to_dict(rule) for rule in project.rules],
         "tools": _tools_to_dict(project.rules),
         "map": _map_to_dict(project.tile_map),
-        "camera": _camera_to_dict(project.camera),
+        "cameras": [_camera_to_dict(camera) for camera in project.cameras],
         "scene": _scene_to_dict(project.scene),
         "multiplayer": _multiplayer_to_dict(project.multiplayer),
         "roles": [_role_to_dict(role) for role in project.roles],
@@ -253,18 +252,17 @@ def _map_to_dict(map_spec):
     }
 
 
-def _camera_to_dict(camera: CameraSpec | None):
-    if camera is None:
-        return None
-    if camera.mode == CameraMode.FIXED:
-        return {
-            "mode": camera.mode.value,
-            "x": camera.x,
-            "y": camera.y,
-        }
+def _camera_to_dict(camera: CameraSpec):
     return {
-        "mode": camera.mode.value,
+        "name": camera.name,
+        "role_id": camera.role_id,
+        "x": camera.x,
+        "y": camera.y,
+        "width": camera.width,
+        "height": camera.height,
         "target_uid": camera.target_uid,
+        "offset_x": camera.offset_x,
+        "offset_y": camera.offset_y,
     }
 
 
@@ -355,6 +353,12 @@ def _param_binding_to_dict(param: ParamBinding) -> Dict[str, Any]:
     else:
         payload["role_selector"] = {
             "id": param.role_selector.id,
+        }
+    if param.camera_selector is None:
+        payload["camera_selector"] = None
+    else:
+        payload["camera_selector"] = {
+            "name": param.camera_selector.name,
         }
     return payload
 

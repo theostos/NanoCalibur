@@ -54,17 +54,22 @@ export interface RuntimeSceneContext {
   setGravityEnabled?: (enabled: boolean) => void;
   setInterfaceHtml?: (html: string) => void;
   spawnActor?: (actorType: string, uid: string, fields?: Record<string, any>) => any;
+  followCamera?: (camera: any, targetUid: string) => void;
+  detachCamera?: (camera: any) => void;
+  translateCamera?: (camera: any, dx: number, dy: number) => void;
   nextTurn?: () => void;
 }
 
 export interface GameContext {
   globals: Record<string, any>;
   actors: any[];
+  cameras?: Record<string, any>;
   roles?: Record<string, any>;
   self?: any;
   tick: number;
   elapsed?: number;
   getActorByUid?: (uid: string) => any;
+  getCameraByName?: (name: string) => any;
   getRoleById?: (id: string) => any;
   playAnimation?: (actor: any, clipName: string) => void;
   destroyActor?: (actor: any) => void;
@@ -295,6 +300,34 @@ function __nc_dict_items(base: any): any[] {
                     )
                     continue
 
+                if param.kind == BindingKind.CAMERA:
+                    selector = param.camera_selector
+                    if selector is None:
+                        raise DSLValidationError(
+                            f"Camera binding missing selector for '{param.name}'."
+                        )
+                    lines.extend(
+                        self._emit_camera_binding_lines(
+                            param_name=param.name,
+                            camera_name=selector.name,
+                        )
+                    )
+                    continue
+
+                if param.kind == BindingKind.CAMERA:
+                    selector = param.camera_selector
+                    if selector is None:
+                        raise DSLValidationError(
+                            f"Camera binding missing selector for '{param.name}'."
+                        )
+                    lines.extend(
+                        self._emit_camera_binding_lines(
+                            param_name=param.name,
+                            camera_name=selector.name,
+                        )
+                    )
+                    continue
+
                 if param.kind == BindingKind.ACTOR_LIST:
                     if param.actor_list_type is None:
                         lines.append(f"  let {param.name} = ctx.actors;")
@@ -428,6 +461,16 @@ function __nc_dict_items(base: any): any[] {
                 f"  if ({param_name} && {param_name}.type !== {escaped_type}) {{ {param_name} = null; }}"
             )
         return out
+
+    def _emit_camera_binding_lines(
+        self,
+        param_name: str,
+        camera_name: str,
+    ) -> list[str]:
+        escaped_name = json.dumps(camera_name)
+        return [
+            f"  let {param_name} = (ctx.getCameraByName ? ctx.getCameraByName({escaped_name}) : (ctx.cameras ? ctx.cameras[{escaped_name}] : null));"
+        ]
 
     def _emit_predicate(self, predicate: PredicateIR, typed: bool, exported: bool):
         previous_tick_vars = getattr(self, "_tick_vars", set())
@@ -578,6 +621,56 @@ function __nc_dict_items(base: any): any[] {
                 return [
                     pad + "if (ctx.scene && ctx.scene.nextTurn) {",
                     pad + "  ctx.scene.nextTurn();",
+                    pad + "}",
+                ]
+            if stmt.name == "camera_follow":
+                if len(stmt.args) != 2:
+                    raise DSLValidationError(
+                        "camera_follow call must have exactly 2 arguments."
+                    )
+                camera_expr = self._emit_expr(stmt.args[0])
+                target_expr = self._emit_expr(stmt.args[1])
+                return [
+                    pad + f"if ({camera_expr}) {{",
+                    pad + "  if (ctx.scene && ctx.scene.followCamera) {",
+                    pad + f"    ctx.scene.followCamera({camera_expr}, String({target_expr}));",
+                    pad + "  } else {",
+                    pad + f"    {camera_expr}.target_uid = String({target_expr});",
+                    pad + "  }",
+                    pad + "}",
+                ]
+            if stmt.name == "camera_detach":
+                if len(stmt.args) != 1:
+                    raise DSLValidationError(
+                        "camera_detach call must have exactly 1 argument."
+                    )
+                camera_expr = self._emit_expr(stmt.args[0])
+                return [
+                    pad + f"if ({camera_expr}) {{",
+                    pad + "  if (ctx.scene && ctx.scene.detachCamera) {",
+                    pad + f"    ctx.scene.detachCamera({camera_expr});",
+                    pad + "  } else {",
+                    pad + f"    {camera_expr}.target_uid = null;",
+                    pad + "  }",
+                    pad + "}",
+                ]
+            if stmt.name == "camera_translate":
+                if len(stmt.args) != 3:
+                    raise DSLValidationError(
+                        "camera_translate call must have exactly 3 arguments."
+                    )
+                camera_expr = self._emit_expr(stmt.args[0])
+                dx_expr = self._emit_expr(stmt.args[1])
+                dy_expr = self._emit_expr(stmt.args[2])
+                return [
+                    pad + f"if ({camera_expr}) {{",
+                    pad + "  if (ctx.scene && ctx.scene.translateCamera) {",
+                    pad
+                    + f"    ctx.scene.translateCamera({camera_expr}, Number({dx_expr}), Number({dy_expr}));",
+                    pad + "  } else {",
+                    pad + f"    {camera_expr}.x = Number({camera_expr}.x || 0) + Number({dx_expr});",
+                    pad + f"    {camera_expr}.y = Number({camera_expr}.y || 0) + Number({dy_expr});",
+                    pad + "  }",
                     pad + "}",
                 ]
             if stmt.name == "list_append":

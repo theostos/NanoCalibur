@@ -159,11 +159,6 @@ class TileSpec:
     sprite: Optional[str] = None
 
 
-class CameraMode(Enum):
-    FIXED = "fixed"
-    FOLLOW = "follow"
-
-
 class MultiplayerLoopMode(Enum):
     REAL_TIME = "real_time"
     TURN_BASED = "turn_based"
@@ -183,10 +178,15 @@ class RoleKind(StrEnum):
 
 @dataclass(frozen=True)
 class CameraSpec:
-    mode: CameraMode
-    x: Optional[int] = None
-    y: Optional[int] = None
+    name: str
+    role_id: str
+    x: float = 0.0
+    y: float = 0.0
+    width: Optional[int] = None
+    height: Optional[int] = None
     target_uid: Optional[str] = None
+    offset_x: float = 0.0
+    offset_y: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -259,7 +259,7 @@ class ProjectSpec:
     actors: List[ActorInstanceSpec]
     rules: List[RuleSpec]
     tile_map: Optional[TileMapSpec]
-    camera: Optional[CameraSpec]
+    cameras: List[CameraSpec]
     actions: List[ActionIR]
     predicates: List[PredicateIR]
     callables: List[CallableIR]

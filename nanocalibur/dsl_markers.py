@@ -171,8 +171,8 @@ class Scene:
         """Configure the tile map for this scene."""
         return None
 
-    def set_camera(self, _camera):
-        """Configure camera behavior for this scene."""
+    def add_camera(self, _camera: "Camera"):
+        """Attach a camera instance to this scene."""
         return None
 
     def set_interface(self, _html: str):
@@ -310,10 +310,6 @@ class Game:
 
     def set_map(self, _map):
         """Legacy shortcut for scene-level map configuration."""
-        return None
-
-    def set_camera(self, _camera):
-        """Legacy shortcut for scene-level camera configuration."""
         return None
 
     def set_scene(self, _scene: Scene):
@@ -454,16 +450,43 @@ class MouseCondition:
 
 
 class Camera:
-    """Camera configuration helpers."""
+    """Camera declaration and runtime control helpers."""
 
-    @staticmethod
-    def fixed(_x: int, _y: int):
-        """Lock camera to fixed world coordinates."""
+    name: str
+    role_id: str
+    x: float
+    y: float
+    width: int | None
+    height: int | None
+    target_uid: str | None
+
+    def __class_getitem__(cls, item):
+        """Allow ``Camera[\"camera_name\"]`` syntax in type annotations."""
+        return cls
+
+    def __init__(
+        self,
+        _name: str,
+        _role,
+        *,
+        x: float = 0.0,
+        y: float = 0.0,
+        width: int | None = None,
+        height: int | None = None,
+    ):
+        """Declare a named camera scoped to one role."""
         return None
 
-    @staticmethod
-    def follow(_uid: str):
-        """Follow an actor by uid."""
+    def follow(self, _uid: str):
+        """Attach the camera to follow an actor uid."""
+        return None
+
+    def detach(self):
+        """Detach camera from current follow target."""
+        return None
+
+    def translate(self, _dx: float, _dy: float):
+        """Translate camera position (or follow offset if attached)."""
         return None
 
 

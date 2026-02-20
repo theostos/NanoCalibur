@@ -24,7 +24,6 @@ from nanocalibur.game_model import (
     ActorRefValue,
     ActorSelectorSpec,
     ButtonConditionSpec,
-    CameraMode,
     CameraSpec,
     CollisionMode,
     ColorSpec,
@@ -134,7 +133,7 @@ class ProjectCompiler:
                 actors,
                 rules,
                 tile_map,
-                camera,
+                cameras,
                 resources,
                 sprites,
                 scene,
@@ -240,6 +239,8 @@ class ProjectCompiler:
             )
             self._validate_condition_role_ids(rules, roles)
             self._validate_role_bindings(actions, predicates, roles)
+            self._validate_camera_bindings(actions, predicates, cameras)
+            self._validate_role_cameras(roles, cameras)
             if (
                 multiplayer is not None
                 and multiplayer.default_loop
@@ -260,7 +261,7 @@ class ProjectCompiler:
                 actors=actors,
                 rules=rules,
                 tile_map=tile_map,
-                camera=camera,
+                cameras=cameras,
                 actions=list(actions.values()),
                 predicates=list(predicates.values()),
                 callables=list(callables.values()),
@@ -527,7 +528,7 @@ class ProjectCompiler:
         List[ActorInstanceSpec],
         List[RuleSpec],
         Optional[TileMapSpec],
-        Optional[CameraSpec],
+        List[CameraSpec],
         List[ResourceSpec],
         List[SpriteSpec],
         Optional[SceneSpec],
@@ -539,7 +540,7 @@ class ProjectCompiler:
         actors: List[ActorInstanceSpec] = []
         rules: List[RuleSpec] = []
         tile_map: Optional[TileMapSpec] = None
-        camera: Optional[CameraSpec] = None
+        cameras: List[CameraSpec] = []
         resources_by_name: Dict[str, ResourceSpec] = {}
         sprites: List[SpriteSpec] = []
         scene: Optional[SceneSpec] = None
@@ -553,7 +554,7 @@ class ProjectCompiler:
         active_scene_vars: set[str] = set()
         declared_actor_vars: Dict[str, ast.Call] = {}
         declared_tile_map_vars: Dict[str, ast.Call] = {}
-        declared_camera_vars: Dict[str, ast.Call] = {}
+        declared_camera_vars: Dict[str, CameraSpec] = {}
         declared_sprite_vars: Dict[str, ast.Call] = {}
         declared_color_vars: Dict[str, ast.Call] = {}
         declared_tile_vars: Dict[str, ast.Call] = {}
@@ -821,11 +822,13 @@ class ProjectCompiler:
                                 declared_scene_vars.pop(target.id, None)
                                 active_scene_vars.discard(target.id)
                             elif (
-                                isinstance(resolved_call.func, ast.Attribute)
-                                and isinstance(resolved_call.func.value, ast.Name)
-                                and resolved_call.func.value.id == "Camera"
+                                isinstance(resolved_call.func, ast.Name)
+                                and resolved_call.func.id == "Camera"
                             ):
-                                declared_camera_vars[target.id] = resolved_call
+                                declared_camera_vars[target.id] = self._parse_camera_constructor(
+                                    resolved_call,
+                                    compiler=compiler,
+                                )
                                 declared_actor_vars.pop(target.id, None)
                                 declared_tile_map_vars.pop(target.id, None)
                                 declared_sprite_vars.pop(target.id, None)
@@ -957,16 +960,14 @@ class ProjectCompiler:
                         continue
 
                     if method_name == "set_camera":
-                        if kwargs:
-                            raise DSLValidationError(
-                                "set_camera(...) does not accept keyword args."
-                            )
-                        if len(args) != 1:
-                            raise DSLValidationError("set_camera(...) expects one argument.")
-                        camera = self._parse_camera(
-                            self._resolve_camera_arg(args[0], declared_camera_vars)
+                        raise DSLValidationError(
+                            "game.set_camera(...) was removed. Use Camera(...) + scene.add_camera(...)."
                         )
-                        continue
+
+                    if method_name == "add_camera":
+                        raise DSLValidationError(
+                            "game.add_camera(...) is not supported. Use scene.add_camera(...)."
+                        )
 
                     if method_name == "set_scene":
                         if kwargs:
@@ -1044,6 +1045,18 @@ class ProjectCompiler:
                     )
                     continue
 
+                camera_method = _as_owner_method_call(resolved_call, owner)
+                if camera_method is not None and owner in declared_camera_vars:
+                    camera_method_name, camera_args, camera_kwargs = camera_method
+                    self._apply_declared_camera_method_call(
+                        owner=owner,
+                        method_name=camera_method_name,
+                        args=camera_args,
+                        kwargs=camera_kwargs,
+                        declared_camera_vars=declared_camera_vars,
+                    )
+                    continue
+
                 scene_method = _as_owner_method_call(resolved_call, owner)
                 if scene_method is None:
                     continue
@@ -1094,15 +1107,27 @@ class ProjectCompiler:
                     continue
 
                 if scene_method_name == "set_camera":
+                    raise DSLValidationError(
+                        "scene.set_camera(...) was removed. Use scene.add_camera(camera)."
+                    )
+
+                if scene_method_name == "add_camera":
                     if scene_kwargs:
                         raise DSLValidationError(
-                            "scene.set_camera(...) does not accept keyword args."
+                            "scene.add_camera(...) does not accept keyword args."
                         )
                     if len(scene_args) != 1:
-                        raise DSLValidationError("scene.set_camera(...) expects one argument.")
-                    camera = self._parse_camera(
-                        self._resolve_camera_arg(scene_args[0], declared_camera_vars)
+                        raise DSLValidationError("scene.add_camera(...) expects one argument.")
+                    camera_spec = self._resolve_camera_binding_arg(
+                        scene_args[0],
+                        declared_camera_vars=declared_camera_vars,
+                        compiler=compiler,
                     )
+                    if any(existing.name == camera_spec.name for existing in cameras):
+                        raise DSLValidationError(
+                            f"Camera '{camera_spec.name}' is already added to the scene."
+                        )
+                    cameras.append(copy.deepcopy(camera_spec))
                     continue
 
                 if scene_method_name == "set_interface":
@@ -1130,7 +1155,7 @@ class ProjectCompiler:
             actors,
             rules,
             tile_map,
-            camera,
+            cameras,
             list(resources_by_name.values()),
             sprites,
             scene,
@@ -1246,6 +1271,71 @@ class ProjectCompiler:
             ctor,
         )
 
+    def _apply_declared_camera_method_call(
+        self,
+        owner: str,
+        method_name: str,
+        args: List[ast.AST],
+        kwargs: Dict[str, ast.AST],
+        declared_camera_vars: Dict[str, CameraSpec],
+    ) -> None:
+        camera = declared_camera_vars.get(owner)
+        if camera is None:
+            raise DSLValidationError(
+                f"Unknown camera variable '{owner}'."
+            )
+
+        if method_name == "follow":
+            if kwargs:
+                raise DSLValidationError(f"{owner}.follow(...) does not accept keyword args.")
+            if len(args) != 1:
+                raise DSLValidationError(f"{owner}.follow(...) expects one target uid.")
+            target_uid = _expect_string(args[0], "camera follow target uid")
+            declared_camera_vars[owner] = replace(
+                camera,
+                target_uid=target_uid,
+                offset_x=0.0,
+                offset_y=0.0,
+            )
+            return
+
+        if method_name == "detach":
+            if kwargs or args:
+                raise DSLValidationError(f"{owner}.detach(...) does not accept arguments.")
+            declared_camera_vars[owner] = replace(
+                camera,
+                target_uid=None,
+                offset_x=0.0,
+                offset_y=0.0,
+            )
+            return
+
+        if method_name == "translate":
+            if kwargs:
+                raise DSLValidationError(f"{owner}.translate(...) does not accept keyword args.")
+            if len(args) != 2:
+                raise DSLValidationError(f"{owner}.translate(...) expects dx and dy.")
+            dx = _expect_number(args[0], "camera translate dx")
+            dy = _expect_number(args[1], "camera translate dy")
+            if camera.target_uid:
+                declared_camera_vars[owner] = replace(
+                    camera,
+                    offset_x=camera.offset_x + dx,
+                    offset_y=camera.offset_y + dy,
+                )
+            else:
+                declared_camera_vars[owner] = replace(
+                    camera,
+                    x=camera.x + dx,
+                    y=camera.y + dy,
+                )
+            return
+
+        raise DSLValidationError(
+            f"Unsupported camera method '{method_name}'. "
+            "Only follow/detach/translate are allowed in setup."
+        )
+
     def _resolve_scene_binding_arg(
         self,
         node: ast.AST,
@@ -1272,16 +1362,23 @@ class ProjectCompiler:
             return declared_tile_map_vars[node.id]
         return node
 
-    def _resolve_camera_arg(
-        self, node: ast.AST, declared_camera_vars: Dict[str, ast.Call]
-    ) -> ast.AST:
+    def _resolve_camera_binding_arg(
+        self,
+        node: ast.AST,
+        declared_camera_vars: Dict[str, CameraSpec],
+        compiler: DSLCompiler,
+    ) -> CameraSpec:
         if isinstance(node, ast.Name):
             if node.id not in declared_camera_vars:
                 raise DSLValidationError(
-                    f"Unknown camera variable '{node.id}' in set_camera(...)."
+                    f"Unknown camera variable '{node.id}' in scene.add_camera(...)."
                 )
             return declared_camera_vars[node.id]
-        return node
+        if isinstance(node, ast.Call):
+            return self._parse_camera_constructor(node, compiler=compiler)
+        raise DSLValidationError(
+            "scene.add_camera(...) expects Camera(...) or a camera variable."
+        )
 
     def _resolve_interface_html_arg(
         self,
@@ -1552,6 +1649,88 @@ class ProjectCompiler:
         for predicate in predicates.values():
             for param in predicate.params:
                 validate_param(f"Predicate '{predicate.name}'", param)
+
+    def _validate_camera_bindings(
+        self,
+        actions: Dict[str, ActionIR],
+        predicates: Dict[str, PredicateIR],
+        cameras: List[CameraSpec],
+    ) -> None:
+        declared_names = {camera.name for camera in cameras}
+        declared_sorted = sorted(declared_names)
+
+        def validate_param(owner: str, param: ParamBinding) -> None:
+            if param.kind != BindingKind.CAMERA:
+                return
+            selector = param.camera_selector
+            camera_name = selector.name if selector is not None else ""
+            if not camera_name:
+                raise DSLValidationError(
+                    f"{owner} camera binding '{param.name}' is missing a camera name."
+                )
+            if camera_name in declared_names:
+                return
+            if not declared_names:
+                raise DSLValidationError(
+                    f"{owner} camera binding '{param.name}' references camera '{camera_name}', "
+                    "but no camera was added via scene.add_camera(...)."
+                )
+            raise DSLValidationError(
+                f"{owner} camera binding '{param.name}' references unknown camera '{camera_name}'. "
+                f"Declared cameras: {', '.join(declared_sorted)}."
+            )
+
+        for action in actions.values():
+            for param in action.params:
+                validate_param(f"Action '{action.name}'", param)
+        for predicate in predicates.values():
+            for param in predicate.params:
+                validate_param(f"Predicate '{predicate.name}'", param)
+
+    def _validate_role_cameras(
+        self,
+        roles: List[RoleSpec],
+        cameras: List[CameraSpec],
+    ) -> None:
+        role_by_id = {role.id: role for role in roles}
+        camera_by_name: Dict[str, CameraSpec] = {}
+        for camera in cameras:
+            if camera.name in camera_by_name:
+                raise DSLValidationError(
+                    f"Duplicate camera name '{camera.name}' is not allowed."
+                )
+            camera_by_name[camera.name] = camera
+            if camera.role_id not in role_by_id:
+                if not role_by_id:
+                    raise DSLValidationError(
+                        f"Camera '{camera.name}' references role '{camera.role_id}', "
+                        "but no roles were declared via game.add_role(...)."
+                    )
+                declared_roles = ", ".join(sorted(role_by_id.keys()))
+                raise DSLValidationError(
+                    f"Camera '{camera.name}' references unknown role '{camera.role_id}'. "
+                    f"Declared roles: {declared_roles}."
+                )
+
+        cameras_by_role: Dict[str, List[CameraSpec]] = {}
+        for camera in cameras:
+            cameras_by_role.setdefault(camera.role_id, []).append(camera)
+
+        for role in roles:
+            if role.kind != RoleKind.HUMAN:
+                continue
+            if role.id in cameras_by_role:
+                continue
+            warnings.warn(
+                format_dsl_diagnostic(
+                    "Human role '{role_id}' has no camera. Add one via "
+                    "scene.add_camera(Camera(..., Role['{role_id}'])).".format(
+                        role_id=role.id
+                    ),
+                    node=None,
+                ),
+                stacklevel=2,
+            )
 
     def _parse_global_value(
         self, node: ast.AST, compiler: DSLCompiler
@@ -2538,35 +2717,86 @@ class ProjectCompiler:
             description=description,
         )
 
-    def _parse_camera(self, node: ast.AST) -> CameraSpec:
+    def _parse_camera_constructor(
+        self,
+        node: ast.AST,
+        *,
+        compiler: DSLCompiler,
+    ) -> CameraSpec:
         if not isinstance(node, ast.Call):
-            raise DSLValidationError("set_camera(...) expects Camera.fixed/follow call.")
-        if not (
-            isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "Camera"
-        ):
-            raise DSLValidationError("set_camera(...) expects Camera.fixed/follow call.")
-
-        method = node.func.attr
-        if method == "fixed":
-            if len(node.args) != 2 or node.keywords:
-                raise DSLValidationError("Camera.fixed(...) expects x and y.")
-            return CameraSpec(
-                mode=CameraMode.FIXED,
-                x=_expect_int(node.args[0], "camera x"),
-                y=_expect_int(node.args[1], "camera y"),
+            raise DSLValidationError("Camera declaration expects Camera(...).")
+        if not isinstance(node.func, ast.Name) or node.func.id != "Camera":
+            raise DSLValidationError("Camera declaration expects Camera(...).")
+        if len(node.args) != 2:
+            raise DSLValidationError(
+                "Camera(...) expects exactly two positional args: name and role selector."
             )
 
-        if method == "follow":
-            if len(node.args) != 1 or node.keywords:
-                raise DSLValidationError("Camera.follow(...) expects target uid.")
-            return CameraSpec(
-                mode=CameraMode.FOLLOW,
-                target_uid=_expect_string(node.args[0], "camera target uid"),
+        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+        allowed = {"x", "y", "width", "height"}
+        unexpected = sorted(set(kwargs.keys()) - allowed)
+        if unexpected:
+            raise DSLValidationError(
+                f"Camera(...) received unsupported arguments: {unexpected}"
             )
 
-        raise DSLValidationError("Unsupported camera configuration.")
+        name = _expect_string(node.args[0], "camera name")
+        if not name:
+            raise DSLValidationError("Camera name must be a non-empty string.")
+        role_id = self._parse_camera_role_selector(node.args[1], compiler)
+        x = _expect_number_or_default(kwargs.get("x"), "camera x", 0.0)
+        y = _expect_number_or_default(kwargs.get("y"), "camera y", 0.0)
+
+        width: int | None = None
+        if "width" in kwargs:
+            width = _expect_int(kwargs["width"], "camera width")
+            if width <= 0:
+                raise DSLValidationError("Camera width must be > 0.")
+
+        height: int | None = None
+        if "height" in kwargs:
+            height = _expect_int(kwargs["height"], "camera height")
+            if height <= 0:
+                raise DSLValidationError("Camera height must be > 0.")
+
+        return CameraSpec(
+            name=name,
+            role_id=role_id,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            target_uid=None,
+            offset_x=0.0,
+            offset_y=0.0,
+        )
+
+    def _parse_camera_role_selector(
+        self,
+        node: ast.AST,
+        compiler: DSLCompiler,
+    ) -> str:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if not node.value:
+                raise DSLValidationError("Camera role id must be non-empty.")
+            return node.value
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner != "Role" and owner not in compiler.schemas.role_fields:
+                raise DSLValidationError(
+                    "Camera role selector must use Role[\"id\"] or RoleType[\"id\"]."
+                )
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int):
+                raise DSLValidationError(
+                    "Camera role selector does not support index selectors; use Role[\"id\"]."
+                )
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if not node.slice.value:
+                    raise DSLValidationError("Camera role id must be non-empty.")
+                return node.slice.value
+        raise DSLValidationError(
+            "Camera role selector must be a role id string, Role[\"id\"], or RoleType[\"id\"]."
+        )
 
     def _parse_scene(self, node: ast.AST) -> SceneSpec:
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
@@ -3264,7 +3494,7 @@ def _is_supported_action_binding_annotation(
     compiler: DSLCompiler,
 ) -> bool:
     if isinstance(annotation, ast.Name):
-        if annotation.id in {"Scene", "Tick", "Actor", "Role"}:
+        if annotation.id in {"Scene", "Tick", "Actor", "Role", "Camera"}:
             return True
         return (
             annotation.id in compiler.schemas.actor_fields
@@ -3273,7 +3503,7 @@ def _is_supported_action_binding_annotation(
 
     if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name):
         head = annotation.value.id
-        if head in {"Scene", "Tick", "Actor", "Role", "Global", "List", "list"}:
+        if head in {"Scene", "Tick", "Actor", "Role", "Camera", "Global", "List", "list"}:
             return True
         return head in compiler.schemas.actor_fields or head in compiler.schemas.role_fields
 
@@ -3761,6 +3991,21 @@ def _expect_int_or_default(node: Optional[ast.AST], label: str, default: int) ->
     if node is None:
         return default
     return _expect_int(node, label)
+
+
+def _expect_number(node: ast.AST, label: str) -> float:
+    value = _eval_static_expr(node)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    raise DSLValidationError(f"Expected {label} number.")
+
+
+def _expect_number_or_default(
+    node: Optional[ast.AST], label: str, default: float
+) -> float:
+    if node is None:
+        return default
+    return _expect_number(node, label)
 
 
 def _expect_float_or_default(
