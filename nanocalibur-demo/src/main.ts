@@ -24,6 +24,8 @@ interface SessionSnapshot {
   session_id: string;
   frame: SymbolicFrame;
   state: Record<string, any>;
+  server_tick?: number;
+  ack_seq?: number | null;
 }
 
 interface SessionBrowserConfig {
@@ -848,6 +850,13 @@ async function startSessionBrowserClient(
   };
 
   const renderSnapshot = (snapshot: SessionSnapshot): void => {
+    const snapshotServerTick =
+      typeof snapshot.server_tick === 'number' && Number.isFinite(snapshot.server_tick)
+        ? Math.max(0, Math.floor(snapshot.server_tick))
+        : null;
+    if (snapshotServerTick !== null) {
+      lastAckedServerTick = Math.max(lastAckedServerTick, snapshotServerTick);
+    }
     latestSnapshot = snapshot;
     renderPanel();
   };
@@ -916,6 +925,39 @@ async function startSessionBrowserClient(
       snapshotPollInFlight = false;
     });
   }, snapshotPollMs);
+
+  let activeWebSocket: WebSocket | null = null;
+  let wsInputSeq = 0;
+  let lastAckedServerTick = 0;
+  const isWebSocketInputActive = (): boolean => {
+    const ws = activeWebSocket as unknown as {
+      readyState?: number;
+      send?: (value: string) => void;
+    } | null;
+    return Boolean(ws && ws.readyState === 1 && typeof ws.send === 'function');
+  };
+  const sendWebSocketInputFrame = (keysDown: string[], buttons: string[] = []): void => {
+    const ws = activeWebSocket as unknown as {
+      readyState?: number;
+      send?: (value: string) => void;
+    } | null;
+    if (!ws || ws.readyState !== 1 || typeof ws.send !== 'function') {
+      return;
+    }
+    wsInputSeq += 1;
+    const payload = {
+      type: 'input',
+      seq: wsInputSeq,
+      last_acked_server_tick: lastAckedServerTick,
+      keys_down: keysDown,
+      buttons,
+    };
+    try {
+      ws.send(JSON.stringify(payload));
+    } catch (error) {
+      console.warn('Failed to send websocket input frame.', error);
+    }
+  };
 
   const sendCommand = async (command: Record<string, any>): Promise<void> => {
     try {
@@ -1007,6 +1049,10 @@ async function startSessionBrowserClient(
     }
     activePhysicalTokensByKey.clear();
     const endTokens = keyboardTokensWithLogicalBindings(roleLocal.localState, physicalTokens);
+    if (isWebSocketInputActive()) {
+      sendWebSocketInputFrame(activeInputTokens());
+      return;
+    }
     if (endTokens.length === 0) {
       return;
     }
@@ -1044,6 +1090,10 @@ async function startSessionBrowserClient(
     if (event.key.startsWith('Arrow') || event.key === ' ') {
       event.preventDefault();
     }
+    if (isWebSocketInputActive()) {
+      sendWebSocketInputFrame(activeInputTokens());
+      return;
+    }
     enqueueCommand({
       kind: 'input',
       keyboard: keyboardPayload,
@@ -1073,6 +1123,10 @@ async function startSessionBrowserClient(
     if (event.key.startsWith('Arrow') || event.key === ' ') {
       event.preventDefault();
     }
+    if (isWebSocketInputActive()) {
+      sendWebSocketInputFrame(activeInputTokens());
+      return;
+    }
     enqueueCommand({
       kind: 'input',
       keyboard: keyboardPayload,
@@ -1096,6 +1150,11 @@ async function startSessionBrowserClient(
   );
   const inputPulseHandle = window.setInterval(() => {
     const onTokens = activeInputTokens();
+    if (isWebSocketInputActive()) {
+      // Fixed-rate protocol: always send current down-set to generate begin/on/end server-side.
+      sendWebSocketInputFrame(onTokens);
+      return;
+    }
     if (onTokens.length === 0) {
       return;
     }
@@ -1108,7 +1167,6 @@ async function startSessionBrowserClient(
     );
   }, inputPulseMs);
 
-  let activeWebSocket: WebSocket | null = null;
   try {
     const consumeWebSocketStream = async (): Promise<void> => {
       if (typeof WebSocket !== 'function') {
@@ -1134,6 +1192,7 @@ async function startSessionBrowserClient(
         ws.onopen = () => {
           opened = true;
           liveTransportActive = true;
+          sendWebSocketInputFrame(activeInputTokens());
         };
 
         ws.onmessage = (event) => {

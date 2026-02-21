@@ -28,6 +28,15 @@ interface SessionWebSocketSubscriber {
   recvBuffer: any;
 }
 
+interface RoleWebSocketInputState {
+  lastReceivedSeq: number | null;
+  lastAckedServerTick: number | null;
+  pendingKeysDown: Set<string>;
+  lastAppliedKeysDown: Set<string>;
+  pendingButtons: string[];
+  pendingCommands: SessionCommand[];
+}
+
 export class HeadlessHttpServer {
   private readonly host: HeadlessHost;
   private readonly sessionManager: SessionManager | null;
@@ -37,6 +46,8 @@ export class HeadlessHttpServer {
   private port: number | null = null;
   private readonly streamSubscribersBySession = new Map<string, Set<SessionStreamSubscriber>>();
   private readonly webSocketSubscribersBySession = new Map<string, Set<SessionWebSocketSubscriber>>();
+  private readonly webSocketInputBySession = new Map<string, Map<string, RoleWebSocketInputState>>();
+  private readonly serverTickBySession = new Map<string, number>();
   private readonly runtimeTickersBySession = new Map<string, any>();
 
   constructor(
@@ -88,6 +99,8 @@ export class HeadlessHttpServer {
     this.stopAllSessionRuntimeTickers();
     this.closeAllSessionStreamSubscribers();
     this.closeAllSessionWebSocketSubscribers();
+    this.webSocketInputBySession.clear();
+    this.serverTickBySession.clear();
 
     if (!this.server) {
       return;
@@ -434,14 +447,123 @@ export class HeadlessHttpServer {
   }
 
   private handleWebSocketClientText(
-    _sessionId: string,
-    _subscriber: SessionWebSocketSubscriber,
+    sessionId: string,
+    subscriber: SessionWebSocketSubscriber,
     text: string,
   ): void {
-    // Reserved for future bidirectional session commands.
-    // Current phase uses WebSocket as a low-latency snapshot channel.
     if (!text || typeof text !== "string") {
       return;
+    }
+    if (!this.sessionManager) {
+      return;
+    }
+
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(text);
+    } catch (_ignored) {
+      return;
+    }
+    if (!decoded || typeof decoded !== "object") {
+      return;
+    }
+
+    const payload = decoded as Record<string, any>;
+    const messageType =
+      typeof payload.type === "string" ? payload.type.trim().toLowerCase() : "";
+
+    if (messageType === "ping") {
+      this.writeWebSocketJson(subscriber.socket, {
+        event: "pong",
+        data: {
+          session_id: sessionId,
+          server_tick: this.getSessionServerTick(sessionId),
+        },
+      });
+      return;
+    }
+
+    const roleId = subscriber.viewer.roleId;
+    if (!roleId) {
+      return;
+    }
+
+    const state = this.getRoleWebSocketInputState(sessionId, roleId, true);
+    if (!state) {
+      return;
+    }
+
+    const seq = this.normalizeSequence(payload.seq);
+    if (
+      seq !== null &&
+      state.lastReceivedSeq !== null &&
+      seq <= state.lastReceivedSeq
+    ) {
+      return;
+    }
+    if (seq !== null) {
+      state.lastReceivedSeq = seq;
+    }
+
+    const clientAckTick = this.normalizeSequence(
+      payload.last_acked_server_tick ?? payload.lastAckedServerTick,
+    );
+    if (clientAckTick !== null) {
+      state.lastAckedServerTick = clientAckTick;
+    }
+
+    if (messageType === "input") {
+      const keysDown = this.normalizeStringArray(payload.keys_down ?? payload.keysDown);
+      state.pendingKeysDown = new Set<string>(keysDown);
+      const buttons = this.normalizeStringArray(
+        payload.buttons ?? payload.ui_buttons ?? payload.uiButtons,
+      );
+      if (buttons.length > 0) {
+        state.pendingButtons = buttons;
+      }
+
+      const inlineCommands = this.normalizeSessionCommands(payload.commands);
+      if (inlineCommands.length > 0) {
+        state.pendingCommands.push(...inlineCommands);
+      }
+      return;
+    }
+
+    if (messageType === "commands") {
+      const commands = this.normalizeSessionCommands(payload.commands);
+      if (commands.length > 0) {
+        state.pendingCommands.push(...commands);
+      }
+      return;
+    }
+
+    if (messageType === "tool") {
+      const toolName = typeof payload.name === "string" ? payload.name : "";
+      if (!toolName) {
+        return;
+      }
+      state.pendingCommands.push({
+        kind: "tool",
+        name: toolName,
+        payload:
+          payload.payload && typeof payload.payload === "object"
+            ? (payload.payload as Record<string, any>)
+            : payload.arguments && typeof payload.arguments === "object"
+              ? (payload.arguments as Record<string, any>)
+              : {},
+      });
+      return;
+    }
+
+    if (messageType === "button") {
+      const buttonName = typeof payload.name === "string" ? payload.name : "";
+      if (!buttonName) {
+        return;
+      }
+      state.pendingCommands.push({
+        kind: "button",
+        name: buttonName,
+      });
     }
   }
 
@@ -596,6 +718,155 @@ export class HeadlessHttpServer {
     return BufferCtor.byteLength(value, "utf8");
   }
 
+  private getSessionServerTick(sessionId: string): number {
+    const tick = this.serverTickBySession.get(sessionId);
+    if (typeof tick === "number" && Number.isFinite(tick) && tick >= 0) {
+      return Math.floor(tick);
+    }
+    return 0;
+  }
+
+  private bumpSessionServerTick(sessionId: string): number {
+    const next = this.getSessionServerTick(sessionId) + 1;
+    this.serverTickBySession.set(sessionId, next);
+    return next;
+  }
+
+  private getRoleWebSocketInputState(
+    sessionId: string,
+    roleId: string,
+    createIfMissing = false,
+  ): RoleWebSocketInputState | null {
+    let byRole = this.webSocketInputBySession.get(sessionId);
+    if (!byRole) {
+      if (!createIfMissing) {
+        return null;
+      }
+      byRole = new Map<string, RoleWebSocketInputState>();
+      this.webSocketInputBySession.set(sessionId, byRole);
+    }
+    let state = byRole.get(roleId);
+    if (!state && createIfMissing) {
+      state = {
+        lastReceivedSeq: null,
+        lastAckedServerTick: null,
+        pendingKeysDown: new Set<string>(),
+        lastAppliedKeysDown: new Set<string>(),
+        pendingButtons: [],
+        pendingCommands: [],
+      };
+      byRole.set(roleId, state);
+    }
+    return state || null;
+  }
+
+  private getRoleAckSeq(sessionId: string, roleId: string | null): number | null {
+    if (!roleId) {
+      return null;
+    }
+    const state = this.getRoleWebSocketInputState(sessionId, roleId, false);
+    if (!state || typeof state.lastReceivedSeq !== "number") {
+      return null;
+    }
+    return Math.floor(state.lastReceivedSeq);
+  }
+
+  private clearRolePendingInputs(sessionId: string, roleId: string | null): void {
+    if (!roleId) {
+      return;
+    }
+    const state = this.getRoleWebSocketInputState(sessionId, roleId, false);
+    if (!state) {
+      return;
+    }
+    state.pendingKeysDown = new Set<string>();
+    state.pendingButtons = [];
+    state.pendingCommands = [];
+  }
+
+  private normalizeStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of value) {
+      if (typeof entry !== "string" || !entry) {
+        continue;
+      }
+      if (seen.has(entry)) {
+        continue;
+      }
+      seen.add(entry);
+      out.push(entry);
+    }
+    return out;
+  }
+
+  private normalizeSequence(value: unknown): number | null {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return null;
+    }
+    const seq = Math.floor(value);
+    if (seq < 0) {
+      return null;
+    }
+    return seq;
+  }
+
+  private applyPendingWebSocketInputs(sessionId: string): void {
+    if (!this.sessionManager) {
+      return;
+    }
+    const byRole = this.webSocketInputBySession.get(sessionId);
+    if (!byRole || byRole.size === 0) {
+      return;
+    }
+
+    for (const [roleId, state] of byRole.entries()) {
+      while (state.pendingCommands.length > 0) {
+        const command = state.pendingCommands.shift();
+        if (!command) {
+          continue;
+        }
+        try {
+          this.sessionManager.enqueueCommand(sessionId, roleId, command);
+        } catch (_ignored) {
+          break;
+        }
+      }
+
+      const on = Array.from(state.pendingKeysDown.values());
+      const begin = on.filter((key) => !state.lastAppliedKeysDown.has(key));
+      const end = Array.from(state.lastAppliedKeysDown.values()).filter(
+        (key) => !state.pendingKeysDown.has(key),
+      );
+      const buttons = [...state.pendingButtons];
+      const shouldEmitInput =
+        begin.length > 0 || on.length > 0 || end.length > 0 || buttons.length > 0;
+      if (shouldEmitInput) {
+        const keyboardPayload: HeadlessStepInput["keyboard"] = {
+          begin,
+          on,
+          end,
+        };
+        const command: SessionCommand = {
+          kind: "input",
+          keyboard: keyboardPayload,
+          uiButtons: buttons.length > 0 ? buttons : undefined,
+        };
+        try {
+          this.sessionManager.enqueueCommand(sessionId, roleId, command);
+        } catch (_ignored) {
+          // ignore stale role/session command injection.
+        }
+      }
+
+      state.lastAppliedKeysDown = new Set<string>(state.pendingKeysDown);
+      state.pendingButtons = [];
+    }
+  }
+
   private async handleSessionRequest(
     req: any,
     res: any,
@@ -653,6 +924,7 @@ export class HeadlessHttpServer {
         created.id,
         created.adminToken,
       );
+      this.serverTickBySession.set(created.id, 0);
       this.respondJson(res, 201, {
         session_id: created.id,
         seed: created.seed,
@@ -786,12 +1058,17 @@ export class HeadlessHttpServer {
             ),
             state: this.sessionManager.getSessionState(sessionId),
           };
+      if (shouldTick) {
+        this.bumpSessionServerTick(sessionId);
+      }
       this.respondJson(res, 200, {
         frame: this.sessionManager.getSessionFrameForRole(sessionId, roleBinding.roleId),
         state: this.scopeStateForViewer(result.state, {
           isAdmin: false,
           roleId: roleBinding.roleId,
         }),
+        server_tick: this.getSessionServerTick(sessionId),
+        ack_seq: this.getRoleAckSeq(sessionId, roleBinding.roleId),
       });
       return true;
     }
@@ -1148,15 +1425,23 @@ export class HeadlessHttpServer {
     sessionId: string,
     viewer: SessionViewer,
     stateOverride?: Record<string, any>,
+    serverTickOverride?: number,
   ): Record<string, any> {
     if (!this.sessionManager) {
       throw new Error("Session manager is not available.");
     }
     const state = stateOverride || this.sessionManager.getSessionState(sessionId);
+    const serverTick =
+      typeof serverTickOverride === "number" && Number.isFinite(serverTickOverride)
+        ? Math.max(0, Math.floor(serverTickOverride))
+        : this.getSessionServerTick(sessionId);
+    const ackSeq = this.getRoleAckSeq(sessionId, viewer.roleId);
     return {
       session_id: sessionId,
       frame: this.sessionManager.getSessionFrameForRole(sessionId, viewer.roleId),
       state: this.scopeStateForViewer(state, viewer),
+      server_tick: serverTick,
+      ack_seq: ackSeq,
     };
   }
 
@@ -1164,11 +1449,17 @@ export class HeadlessHttpServer {
     sessionId: string,
     subscriber: SessionStreamSubscriber,
     stateOverride?: Record<string, any>,
+    serverTickOverride?: number,
   ): void {
     this.writeSseEvent(
       subscriber.res,
       "snapshot",
-      this.buildSessionSnapshotPayload(sessionId, subscriber.viewer, stateOverride),
+      this.buildSessionSnapshotPayload(
+        sessionId,
+        subscriber.viewer,
+        stateOverride,
+        serverTickOverride,
+      ),
     );
   }
 
@@ -1176,10 +1467,16 @@ export class HeadlessHttpServer {
     sessionId: string,
     subscriber: SessionWebSocketSubscriber,
     stateOverride?: Record<string, any>,
+    serverTickOverride?: number,
   ): void {
     this.sendWebSocketSnapshot(
       subscriber,
-      this.buildSessionSnapshotPayload(sessionId, subscriber.viewer, stateOverride),
+      this.buildSessionSnapshotPayload(
+        sessionId,
+        subscriber.viewer,
+        stateOverride,
+        serverTickOverride,
+      ),
     );
   }
 
@@ -1230,6 +1527,7 @@ export class HeadlessHttpServer {
       return;
     }
     subscribers.delete(subscriber);
+    this.clearRolePendingInputs(sessionId, subscriber.viewer.roleId);
     if (subscribers.size === 0) {
       this.webSocketSubscribersBySession.delete(sessionId);
     }
@@ -1309,9 +1607,12 @@ export class HeadlessHttpServer {
     }
 
     let state: Record<string, any>;
+    let serverTick = this.getSessionServerTick(sessionId);
     try {
+      this.applyPendingWebSocketInputs(sessionId);
       const result = this.sessionManager.tickSession(sessionId, stepSeconds);
       state = result.state as Record<string, any>;
+      serverTick = this.bumpSessionServerTick(sessionId);
     } catch (_error) {
       this.stopSessionRuntimeTicker(sessionId);
       const streamSubscribers = this.streamSubscribersBySession.get(sessionId);
@@ -1352,7 +1653,7 @@ export class HeadlessHttpServer {
     if (streamSubscribers) {
       for (const subscriber of Array.from(streamSubscribers)) {
         try {
-          this.sendSnapshotToSubscriber(sessionId, subscriber, state);
+          this.sendSnapshotToSubscriber(sessionId, subscriber, state, serverTick);
         } catch (_error) {
           this.unregisterSessionStreamSubscriber(sessionId, subscriber);
           try {
@@ -1367,7 +1668,7 @@ export class HeadlessHttpServer {
     if (webSocketSubscribers) {
       for (const subscriber of Array.from(webSocketSubscribers)) {
         try {
-          this.sendSnapshotToWebSocketSubscriber(sessionId, subscriber, state);
+          this.sendSnapshotToWebSocketSubscriber(sessionId, subscriber, state, serverTick);
         } catch (_error) {
           this.unregisterSessionWebSocketSubscriber(sessionId, subscriber);
           try {
