@@ -127,6 +127,7 @@ export class NanoCaliburInterpreter {
     string,
     { actor_type: string | null; params: Array<Record<string, any>> | null }
   >;
+  private readonly actorSchemaBasesByType: Record<string, string | null>;
   private readonly maskedTiles: Set<string>;
   private readonly actorRefGlobals = new Map<string, string>();
   private readonly runningActions: ActionGenerator[] = [];
@@ -162,6 +163,7 @@ export class NanoCaliburInterpreter {
     this.camerasByName = cameraInit.byName;
     this.cameraOrder = cameraInit.order;
     this.predicateMeta = this.buildPredicateMeta(this.spec.predicates || []);
+    this.actorSchemaBasesByType = this.initActorSchemaBases(this.spec);
     this.maskedTiles = this.buildMaskedTileSet(this.map);
     this.sceneState = this.initSceneState(this.spec.scene || null);
     this.rolesById = this.initRoles(this.spec.roles || []);
@@ -182,21 +184,45 @@ export class NanoCaliburInterpreter {
     this.sceneState.turnChangedThisStep = false;
     this.advanceRunningActions();
     for (const rule of this.rules) {
+      const fn = this.actionFns[rule.action];
+      if (typeof fn !== "function") {
+        throw new Error(`Missing action function '${rule.action}'.`);
+      }
+
+      if (rule.condition?.kind === "logical") {
+        const logicalMatches = this.resolveLogicalMatches(rule.condition);
+        if (logicalMatches.length === 0) {
+          continue;
+        }
+        for (const logicalTarget of logicalMatches) {
+          const context = this.buildContext(
+            null,
+            null,
+            null,
+            null,
+            null,
+            logicalTarget,
+          );
+          const result = fn(context);
+          if (this.isActionGenerator(result)) {
+            this.runningActions.push(result);
+          }
+        }
+        continue;
+      }
+
       const match = this.conditionMatches(rule.condition, frame, currentTick);
       if (!match.matched) {
         continue;
       }
 
-      const fn = this.actionFns[rule.action];
-      if (typeof fn !== "function") {
-        throw new Error(`Missing action function '${rule.action}'.`);
-      }
       const context = this.buildContext(
         match.collisionPair || null,
         match.toolCall || null,
         match.keyboardInfo || null,
         match.mouseInfo || null,
         match.buttonInfo || null,
+        null,
       );
       const result = fn(context);
       if (this.isActionGenerator(result)) {
@@ -330,16 +356,24 @@ export class NanoCaliburInterpreter {
     keyboardInfo: KeyboardInfoPayload | null,
     mouseInfo: MouseInfoPayload | null,
     buttonInfo: ButtonInfoPayload | null,
+    logicalTarget: Record<string, any> | null = null,
   ): Record<string, any> {
     const tickRate = this.resolveTickRate();
+    const actorsInScope = logicalTarget
+      ? [
+          logicalTarget,
+          ...this.actors.filter((actor) => actor !== logicalTarget),
+        ]
+      : this.actors;
     return {
       globals: this.globals,
-      actors: this.actors,
+      actors: actorsInScope,
       cameras: this.camerasByName,
       roles: this.rolesById,
       tick: 1,
       tickRate,
       elapsed: this.sceneState.elapsed,
+      logicalTarget,
       keyboardInfo,
       mouseInfo,
       buttonInfo,
@@ -352,10 +386,15 @@ export class NanoCaliburInterpreter {
             return collisionPair[1];
           }
         }
+        if (logicalTarget && uid === LOGICAL_TARGET_BINDING_UID) {
+          return logicalTarget;
+        }
         return this.getActorByUid(uid);
       },
       getCameraByName: (name: string) => this.getCameraByName(name),
       getRoleById: (id: string) => this.getRoleById(id),
+      isActorType: (actor: Record<string, any>, expectedType: string) =>
+        this.matchesActorType(actor, expectedType),
       playAnimation: this.runtimeHooks.playAnimation,
       destroyActor: (actor: Record<string, any>) => this.destroyActor(actor),
       scene: {
@@ -363,6 +402,7 @@ export class NanoCaliburInterpreter {
         elapsed: this.sceneState.elapsed,
         tickRate,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        isSolidAt: (x: number, y: number) => this.isSolidAtWorld(x, y),
         nextTurn: () => this.nextTurn(),
         setInterfaceHtml: (html: string, role?: unknown) => this.setInterfaceHtml(html, role),
         followCamera: (camera: Record<string, any>, targetUid: string) =>
@@ -400,11 +440,14 @@ export class NanoCaliburInterpreter {
       },
       getCameraByName: (name: string) => this.getCameraByName(name),
       getRoleById: (id: string) => this.getRoleById(id),
+      isActorType: (actor: Record<string, any>, expectedType: string) =>
+        this.matchesActorType(actor, expectedType),
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
         tickRate,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
+        isSolidAt: (x: number, y: number) => this.isSolidAtWorld(x, y),
         followCamera: (camera: Record<string, any>, targetUid: string) =>
           this.followCamera(camera, targetUid),
         detachCamera: (camera: Record<string, any>) => this.detachCamera(camera),
@@ -873,29 +916,7 @@ export class NanoCaliburInterpreter {
     }
 
     if (condition.kind === "logical") {
-      const fn = this.predicateFns[condition.predicate];
-      if (typeof fn !== "function") {
-        throw new Error(`Missing predicate function '${condition.predicate}'.`);
-      }
-      const predicateMeta = this.predicateMeta[condition.predicate] || {
-        actor_type: null,
-        params: null,
-      };
-      const predicateType = predicateMeta.actor_type;
-      const selected = this.selectActors(condition.target).filter((actor) => {
-        if (!predicateType) {
-          return true;
-        }
-        return actor.type === predicateType;
-      });
-      if (predicateMeta.params && predicateMeta.params.length > 0) {
-        return {
-          matched: selected.some((actor) =>
-            Boolean(fn(this.buildPredicateContext(actor))),
-          ),
-        };
-      }
-      return { matched: selected.some((actor) => Boolean(fn(actor))) };
+      return { matched: this.resolveLogicalMatches(condition).length > 0 };
     }
 
     if (condition.kind === "tool") {
@@ -935,6 +956,30 @@ export class NanoCaliburInterpreter {
     }
 
     return { matched: false };
+  }
+
+  private resolveLogicalMatches(condition: Record<string, any>): Record<string, any>[] {
+    const fn = this.predicateFns[condition.predicate];
+    if (typeof fn !== "function") {
+      throw new Error(`Missing predicate function '${condition.predicate}'.`);
+    }
+    const predicateMeta = this.predicateMeta[condition.predicate] || {
+      actor_type: null,
+      params: null,
+    };
+    const predicateType = predicateMeta.actor_type;
+    const selected = this.selectActors(condition.target).filter((actor) => {
+      if (!predicateType) {
+        return true;
+      }
+      return this.matchesActorType(actor, predicateType);
+    });
+    if (predicateMeta.params && predicateMeta.params.length > 0) {
+      return selected.filter((actor) =>
+        Boolean(fn(this.buildPredicateContext(actor))),
+      );
+    }
+    return selected.filter((actor) => Boolean(fn(actor)));
   }
 
   private resolveCollisionPair(
@@ -1505,7 +1550,7 @@ export class NanoCaliburInterpreter {
       if (!actor) {
         return [];
       }
-      if (selector.actor_type && actor.type !== selector.actor_type) {
+      if (selector.actor_type && !this.matchesActorType(actor, selector.actor_type)) {
         return [];
       }
       return [actor];
@@ -1515,7 +1560,9 @@ export class NanoCaliburInterpreter {
       if (!selector.actor_type) {
         return [...this.actors];
       }
-      return this.actors.filter((actor) => actor.type === selector.actor_type);
+      return this.actors.filter((actor) =>
+        this.matchesActorType(actor, selector.actor_type),
+      );
     }
 
     return [];
@@ -1529,7 +1576,7 @@ export class NanoCaliburInterpreter {
       if (selector.uid !== actor.uid) {
         return false;
       }
-      if (selector.actor_type && selector.actor_type !== actor.type) {
+      if (selector.actor_type && !this.matchesActorType(actor, selector.actor_type)) {
         return false;
       }
       return true;
@@ -1538,9 +1585,75 @@ export class NanoCaliburInterpreter {
       if (!selector.actor_type) {
         return true;
       }
-      return selector.actor_type === actor.type;
+      return this.matchesActorType(actor, selector.actor_type);
     }
     return false;
+  }
+
+  private initActorSchemaBases(spec: Record<string, any>): Record<string, string | null> {
+    const out: Record<string, string | null> = {};
+    if (!spec || typeof spec !== "object") {
+      return out;
+    }
+    const schemaBasesRoot =
+      spec.schema_bases && typeof spec.schema_bases === "object"
+        ? (spec.schema_bases as Record<string, unknown>)
+        : null;
+    const actorBasesRaw =
+      schemaBasesRoot &&
+      schemaBasesRoot.actors &&
+      typeof schemaBasesRoot.actors === "object"
+        ? (schemaBasesRoot.actors as Record<string, unknown>)
+        : null;
+    if (!actorBasesRaw) {
+      return out;
+    }
+    for (const [actorType, baseValue] of Object.entries(actorBasesRaw)) {
+      if (typeof actorType !== "string" || !actorType) {
+        continue;
+      }
+      if (typeof baseValue === "string" && baseValue) {
+        out[actorType] = baseValue;
+      } else {
+        out[actorType] = null;
+      }
+    }
+    return out;
+  }
+
+  private isActorTypeAssignable(actualType: string, expectedType: string): boolean {
+    if (actualType === expectedType) {
+      return true;
+    }
+    const visited = new Set<string>();
+    let cursor = actualType;
+    while (cursor && !visited.has(cursor)) {
+      visited.add(cursor);
+      const base = this.actorSchemaBasesByType[cursor];
+      if (!base) {
+        break;
+      }
+      if (base === expectedType) {
+        return true;
+      }
+      cursor = base;
+    }
+    return false;
+  }
+
+  private matchesActorType(actor: Record<string, any>, expectedType: string): boolean {
+    if (!actor || typeof actor !== "object") {
+      return false;
+    }
+    if (typeof expectedType !== "string" || !expectedType) {
+      return true;
+    }
+    const actualType =
+      typeof actor.type === "string" && actor.type ? actor.type : "";
+    if (!actualType) {
+      return false;
+    }
+    return this.isActorTypeAssignable(actualType, expectedType);
   }
 
   private setGravityEnabled(enabled: boolean): void {

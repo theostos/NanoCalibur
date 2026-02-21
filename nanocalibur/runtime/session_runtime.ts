@@ -229,8 +229,8 @@ export class SessionRuntime {
       if (!queue || queue.length === 0) {
         continue;
       }
-      const command = queue.pop();
-      queue.length = 0;
+      const drained = queue.splice(0, queue.length);
+      const command = this.collapseRealTimeCommands(drained, queue);
       if (!command) {
         continue;
       }
@@ -241,6 +241,103 @@ export class SessionRuntime {
     if (!consumedAny) {
       this.host.step({ dtSeconds });
     }
+  }
+
+  private collapseRealTimeCommands(
+    commands: SessionCommand[],
+    queue: SessionCommand[],
+  ): SessionCommand | null {
+    let latestTool: SessionCommand | null = null;
+    let latestNoop: SessionCommand | null = null;
+    const mergedInput: Extract<SessionCommand, { kind: "input" }> = { kind: "input" };
+
+    for (const command of commands) {
+      if (command.kind === "tool") {
+        latestTool = command;
+        continue;
+      }
+      if (command.kind === "noop") {
+        latestNoop = command;
+        continue;
+      }
+      this.mergeInputCommand(mergedInput, command);
+    }
+
+    if (this.hasInputPayload(mergedInput)) {
+      // Keep newest tool command for the next simulation step instead of dropping it.
+      if (latestTool) {
+        queue.unshift(latestTool);
+      }
+      return mergedInput;
+    }
+    if (latestTool) {
+      return latestTool;
+    }
+    return latestNoop;
+  }
+
+  private hasInputPayload(
+    command: Extract<SessionCommand, { kind: "input" }>,
+  ): boolean {
+    return Boolean(command.keyboard || command.mouse || command.uiButtons || command.mousePosition);
+  }
+
+  private mergeInputCommand(
+    target: Extract<SessionCommand, { kind: "input" }>,
+    source: Extract<SessionCommand, { kind: "input" }>,
+  ): void {
+    if (source.keyboard) {
+      const next = target.keyboard || {};
+      next.begin = this.mergeUnique(next.begin, source.keyboard.begin);
+      next.on = this.mergeUnique(next.on, source.keyboard.on);
+      next.end = this.mergeUnique(next.end, source.keyboard.end);
+      target.keyboard = next;
+    }
+    if (source.mouse) {
+      const next = target.mouse || {};
+      next.begin = this.mergeUnique(next.begin, source.mouse.begin);
+      next.on = this.mergeUnique(next.on, source.mouse.on);
+      next.end = this.mergeUnique(next.end, source.mouse.end);
+      target.mouse = next;
+    }
+    if (source.uiButtons) {
+      const next = target.uiButtons || {};
+      next.begin = this.mergeUnique(next.begin, source.uiButtons.begin);
+      next.on = this.mergeUnique(next.on, source.uiButtons.on);
+      next.end = this.mergeUnique(next.end, source.uiButtons.end);
+      target.uiButtons = next;
+    }
+    if (source.mousePosition) {
+      target.mousePosition = source.mousePosition;
+    }
+  }
+
+  private mergeUnique(
+    base: string[] | undefined,
+    incoming: string[] | undefined,
+  ): string[] | undefined {
+    const first = Array.isArray(base) ? base : [];
+    const second = Array.isArray(incoming) ? incoming : [];
+    if (first.length === 0 && second.length === 0) {
+      return undefined;
+    }
+    const merged: string[] = [];
+    const seen = new Set<string>();
+    for (const value of first) {
+      if (typeof value !== "string" || value.length === 0 || seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      merged.push(value);
+    }
+    for (const value of second) {
+      if (typeof value !== "string" || value.length === 0 || seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      merged.push(value);
+    }
+    return merged;
   }
 
   private readCurrentTurn(): number {

@@ -285,6 +285,115 @@ def test_logical_predicate_with_multi_bindings_and_elapsed(tmp_path):
     assert result["elapsed"] == 3
 
 
+def test_logical_condition_binds_action_across_all_matching_targets(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Unit(Actor):
+            x: int
+
+        def step_unit(unit: Unit):
+            unit.x = unit.x + 1
+
+        def always(unit: Unit) -> bool:
+            return unit.x >= 0
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Unit(uid="u1", x=0))
+        scene.add_actor(Unit(uid="u2", x=5))
+        scene.add_rule(OnLogicalCondition(always, Unit), step_unit)
+        """
+    )
+
+    export_project(source, str(tmp_path))
+
+    runtime_ts_path = (
+        Path(__file__).resolve().parent.parent
+        / "nanocalibur"
+        / "runtime"
+        / "interpreter.ts"
+    )
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(tmp_path / "game_logic.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    logic_js_path = compiled_dir / "game_logic.js"
+    runtime_path = compiled_dir / "interpreter.js"
+    runner_path = tmp_path / "run_runtime_logical_multi_target.js"
+    runner_path.write_text(
+        textwrap.dedent(
+            f"""
+            const spec = require({json.dumps(str(tmp_path / "game_spec.json"))});
+            const logic = require({json.dumps(str(logic_js_path))});
+            const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+            const actions = {{
+              step_unit: logic.step_unit
+            }};
+            const predicates = {{
+              always: logic.always
+            }};
+
+            const interpreter = new NanoCaliburInterpreter(spec, actions, predicates);
+            interpreter.tick({{}});
+            const actors = interpreter.getState().actors;
+            const u1 = actors.find((a) => a.uid === "u1");
+            const u2 = actors.find((a) => a.uid === "u2");
+            console.log(JSON.stringify({{
+              u1: u1 ? u1.x : null,
+              u2: u2 ? u2.x : null
+            }}));
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        ["node", str(runner_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(proc.stdout.strip())
+    assert result["u1"] == 1
+    assert result["u2"] == 6
+
+
 def test_generator_actor_binding_rebinds_after_yield(tmp_path):
     source = textwrap.dedent(
         """
