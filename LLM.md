@@ -334,6 +334,37 @@ game.add_sprite(
 
 Assign actor sprite by selector/name in actor instance fields.
 
+Fallback constructors:
+
+```python
+game.add_sprite(
+    BlockInSprite(
+        name="hero",
+        resource=Resource["hero_sheet"],
+        frame_width=16,
+        frame_height=16,
+        color=Color(24, 140, 255, description="hero fallback box"),
+        default_clip="idle",
+        clips={"idle": [0]},
+    )
+)
+
+game.add_sprite(
+    ColorSprite(
+        name="coin",
+        frame_width=16,
+        frame_height=16,
+        color=Color(255, 210, 0, description="coin as color box"),
+        symbol="$",
+        description="coin",
+    )
+)
+```
+
+- `BlockInSprite`: if `resource` is not declared in `game.add_resource(...)`, compiler warns and falls back to colored box rendering.
+- `ColorSprite`: pure colored box sprite (no resource/clips).
+- For fallback sprites, provide `description` for better symbolic/LLM output.
+
 ### 12.2 Map and tiles
 
 ```python

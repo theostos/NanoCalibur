@@ -47,12 +47,26 @@ function toSpriteConfig(specSprite: SpecSpriteDef): SpriteAnimationConfig | null
     };
   }
 
-  if (Object.keys(clips).length === 0) {
+  const image =
+    typeof specSprite.resource === "string" && specSprite.resource.length > 0
+      ? specSprite.resource
+      : undefined;
+  const color =
+    specSprite.color && typeof specSprite.color === "object"
+      ? {
+          r: asNumber(specSprite.color.r, 255),
+          g: asNumber(specSprite.color.g, 255),
+          b: asNumber(specSprite.color.b, 255),
+        }
+      : undefined;
+
+  if (Object.keys(clips).length === 0 && !image && !color) {
     return null;
   }
 
   return {
-    image: specSprite.resource,
+    image,
+    color,
     frameWidth: specSprite.frame_width,
     frameHeight: specSprite.frame_height,
     symbol: specSprite.symbol,

@@ -407,6 +407,17 @@ def _sprite_to_dict(sprite: SpriteSpec) -> Dict[str, Any]:
         "resource": sprite.resource,
         "frame_width": sprite.frame_width,
         "frame_height": sprite.frame_height,
+        "color": (
+            {
+                "r": sprite.color.r,
+                "g": sprite.color.g,
+                "b": sprite.color.b,
+                "symbol": sprite.color.symbol,
+                "description": sprite.color.description,
+            }
+            if sprite.color is not None
+            else None
+        ),
         "row": sprite.row,
         "scale": sprite.scale,
         "flip_x": sprite.flip_x,

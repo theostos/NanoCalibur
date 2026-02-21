@@ -228,10 +228,12 @@ class AnimationClipSpec:
 
 @dataclass(frozen=True)
 class SpriteSpec:
-    resource: str
+    resource: Optional[str]
     frame_width: int
     frame_height: int
     clips: List[AnimationClipSpec]
+    color: Optional[ColorSpec] = None
+    allow_missing_resource: bool = False
     name: Optional[str] = None
     uid: Optional[str] = None
     actor_type: Optional[str] = None

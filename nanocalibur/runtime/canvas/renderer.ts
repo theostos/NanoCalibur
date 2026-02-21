@@ -10,6 +10,7 @@ import {
   DEFAULT_TYPE_COLORS,
   DEFAULT_WIDTH,
   MapSpec,
+  SpriteAnimationConfig,
   SpriteFrameInfo,
   WorldCamera,
 } from "./types";
@@ -197,9 +198,24 @@ export class CanvasRenderer {
     if (!sprite) {
       return false;
     }
+    if (!sprite.image) {
+      const fallbackColor = this.resolveSpriteColor(sprite);
+      if (!fallbackColor) {
+        return false;
+      }
+      this.ctx.fillStyle = fallbackColor;
+      this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+      return true;
+    }
     const image = this.assets.getImage(sprite.image);
     if (!image) {
-      return false;
+      const fallbackColor = this.resolveSpriteColor(sprite);
+      if (!fallbackColor) {
+        return false;
+      }
+      this.ctx.fillStyle = fallbackColor;
+      this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+      return true;
     }
 
     const clipName =
@@ -208,7 +224,13 @@ export class CanvasRenderer {
         : Object.keys(sprite.clips)[0];
     const clip = clipName ? sprite.clips[clipName] : null;
     if (!clip || !Array.isArray(clip.frames) || clip.frames.length === 0) {
-      return false;
+      const fallbackColor = this.resolveSpriteColor(sprite);
+      if (!fallbackColor) {
+        return false;
+      }
+      this.ctx.fillStyle = fallbackColor;
+      this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+      return true;
     }
 
     const ticksPerFrame = Math.max(
@@ -258,6 +280,7 @@ export class CanvasRenderer {
       return;
     }
 
+    const spriteConfig = this.resolveSpriteConfig(actor);
     const frameInfo = this.animation.getFrameInfo(actor);
     if (frameInfo && this.drawSprite(actor, frameInfo, camera)) {
       return;
@@ -267,7 +290,8 @@ export class CanvasRenderer {
     const h = actorHeight(actor);
     const x = this.worldToScreenX(actorCenterX(actor), camera) - w / 2;
     const y = this.worldToScreenY(actorCenterY(actor), camera) - h / 2;
-    this.ctx.fillStyle = this.resolveActorColor(actor);
+    this.ctx.fillStyle =
+      this.resolveSpriteColor(spriteConfig) || this.resolveActorColor(actor);
     this.ctx.fillRect(x, y, w, h);
   }
 
@@ -281,6 +305,9 @@ export class CanvasRenderer {
     }
 
     const { sprite, frameIndex, facing } = frameInfo;
+    if (!sprite.image) {
+      return false;
+    }
     const image = this.assets.getImage(sprite.image);
     if (!image) {
       return false;
@@ -384,6 +411,49 @@ export class CanvasRenderer {
     }
 
     return DEFAULT_TYPE_COLORS[actor.type] || this.options.defaultActorColor || "#ffffff";
+  }
+
+  private resolveSpriteConfig(actor: ActorState): SpriteAnimationConfig | null {
+    const byNameKey = typeof actor.sprite === "string" ? actor.sprite : null;
+    if (byNameKey) {
+      const byName = this.options.spritesByName?.[byNameKey];
+      if (byName) {
+        return byName;
+      }
+    }
+
+    const byUid = this.options.spritesByUid?.[actor.uid];
+    if (byUid) {
+      return byUid;
+    }
+
+    const byType = this.options.spritesByType?.[actor.type];
+    if (byType) {
+      return byType;
+    }
+
+    return null;
+  }
+
+  private resolveSpriteColor(
+    sprite:
+      | {
+          color?: {
+            r: number;
+            g: number;
+            b: number;
+          };
+        }
+      | null
+      | undefined,
+  ): string | null {
+    if (!sprite?.color) {
+      return null;
+    }
+    const r = clamp(Math.floor(asNumber(sprite.color.r, 0)), 0, 255);
+    const g = clamp(Math.floor(asNumber(sprite.color.g, 0)), 0, 255);
+    const b = clamp(Math.floor(asNumber(sprite.color.b, 0)), 0, 255);
+    return `rgb(${r}, ${g}, ${b})`;
   }
 
   private worldToScreenX(worldX: number, camera: WorldCamera): number {

@@ -70,7 +70,12 @@ export interface AnimationClipConfig {
 }
 
 export interface SpriteAnimationConfig {
-  image: string;
+  image?: string;
+  color?: {
+    r: number;
+    g: number;
+    b: number;
+  };
   frameWidth: number;
   frameHeight: number;
   symbol?: string;
@@ -130,7 +135,14 @@ export interface SpecResourceDef {
 }
 
 export interface SpecSpriteDef {
-  resource: string;
+  resource?: string | null;
+  color?: {
+    r?: number;
+    g?: number;
+    b?: number;
+    symbol?: string;
+    description?: string;
+  } | null;
   frame_width: number;
   frame_height: number;
   symbol?: string;

@@ -142,6 +142,8 @@ IMMUTABLE_DSL_CLASS_NAMES = {
     "Scene",
     "Game",
     "Sprite",
+    "BlockInSprite",
+    "ColorSprite",
     "Resource",
     "Interface",
     "Camera",
@@ -156,6 +158,8 @@ IMMUTABLE_DSL_CLASS_NAMES = {
     "CodeBlock",
     "AbstractCodeBlock",
 }
+
+SPRITE_CONSTRUCTOR_NAMES = {"Sprite", "BlockInSprite", "ColorSprite"}
 
 
 class ProjectCompiler:
@@ -1279,7 +1283,7 @@ class ProjectCompiler:
                                 active_scene_vars.discard(target.id)
                             elif (
                                 isinstance(resolved_call.func, ast.Name)
-                                and resolved_call.func.id == "Sprite"
+                                and resolved_call.func.id in SPRITE_CONSTRUCTOR_NAMES
                             ):
                                 declared_sprite_vars[target.id] = resolved_call
                                 declared_actor_vars.pop(target.id, None)
@@ -1431,6 +1435,7 @@ class ProjectCompiler:
                                 compiler,
                                 declared_sprite_vars=declared_sprite_vars,
                                 declared_resource_vars=declared_resource_vars,
+                                declared_color_vars=declared_color_vars,
                             )
                         )
                         continue
@@ -1680,7 +1685,7 @@ class ProjectCompiler:
                 )
 
         self._validate_sprite_targets(actors, sprites, compiler)
-        self._validate_sprite_resources(resources_by_name, sprites)
+        sprites = self._validate_sprite_resources(resources_by_name, sprites)
         return (
             condition_vars,
             actors,
@@ -3345,18 +3350,47 @@ class ProjectCompiler:
         *,
         declared_color_vars: Dict[str, ast.Call],
     ) -> ColorSpec:
+        return self._parse_color_node(
+            node,
+            declared_color_vars=declared_color_vars,
+            source_name="Tile(...)",
+            error_label="Tile color",
+        )
+
+    def _parse_sprite_color(
+        self,
+        node: ast.AST,
+        *,
+        declared_color_vars: Dict[str, ast.Call],
+        source_name: str,
+    ) -> ColorSpec:
+        return self._parse_color_node(
+            node,
+            declared_color_vars=declared_color_vars,
+            source_name=source_name,
+            error_label=f"{source_name} color",
+        )
+
+    def _parse_color_node(
+        self,
+        node: ast.AST,
+        *,
+        declared_color_vars: Dict[str, ast.Call],
+        source_name: str,
+        error_label: str,
+    ) -> ColorSpec:
         color_expr = node
         if isinstance(color_expr, ast.Name):
             if color_expr.id not in declared_color_vars:
                 raise DSLValidationError(
-                    f"Unknown Color variable '{color_expr.id}' in Tile(...)."
+                    f"Unknown Color variable '{color_expr.id}' in {source_name}."
                 )
             color_expr = declared_color_vars[color_expr.id]
 
         if not isinstance(color_expr, ast.Call) or not isinstance(color_expr.func, ast.Name):
-            raise DSLValidationError("Tile color must be Color(...).")
+            raise DSLValidationError(f"{error_label} must be Color(...).")
         if color_expr.func.id != "Color":
-            raise DSLValidationError("Tile color must be Color(...).")
+            raise DSLValidationError(f"{error_label} must be Color(...).")
 
         kwargs = {kw.arg: kw.value for kw in color_expr.keywords if kw.arg is not None}
         allowed = {"r", "g", "b", "symbol", "description"}
@@ -3555,7 +3589,7 @@ class ProjectCompiler:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return node.value
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-            if node.value.id == "Sprite":
+            if node.value.id in SPRITE_CONSTRUCTOR_NAMES:
                 return _expect_string(node.slice, f"{source_name} sprite name")
         raise DSLValidationError(
             f"{source_name} must be sprite name string or Sprite[\"name\"]."
@@ -3632,9 +3666,11 @@ class ProjectCompiler:
         compiler: DSLCompiler,
         declared_sprite_vars: Dict[str, ast.Call] | None = None,
         declared_resource_vars: Dict[str, ast.Call] | None = None,
+        declared_color_vars: Dict[str, ast.Call] | None = None,
     ) -> SpriteSpec:
         sprite_kwargs = kwargs
         source_name = "add_sprite(...)"
+        sprite_constructor = "Sprite"
         if args:
             if len(args) != 1 or kwargs:
                 raise DSLValidationError(
@@ -3646,66 +3682,87 @@ class ProjectCompiler:
                 and declared_sprite_vars is not None
                 and sprite_arg.id in declared_sprite_vars
             ):
-                sprite_kwargs = self._extract_sprite_kwargs(
+                sprite_constructor, sprite_kwargs = self._extract_sprite_kwargs(
                     declared_sprite_vars[sprite_arg.id]
                 )
                 source_name = f"add_sprite({sprite_arg.id})"
             else:
-                sprite_kwargs = self._extract_sprite_kwargs(sprite_arg)
-                source_name = "Sprite(...)"
+                sprite_constructor, sprite_kwargs = self._extract_sprite_kwargs(sprite_arg)
+                source_name = f"{sprite_constructor}(...)"
 
         return self._parse_sprite_from_kwargs(
             sprite_kwargs=sprite_kwargs,
             compiler=compiler,
             source_name=source_name,
+            sprite_constructor=sprite_constructor,
             declared_resource_vars=declared_resource_vars,
+            declared_color_vars=declared_color_vars,
         )
 
-    def _extract_sprite_kwargs(self, node: ast.AST) -> Dict[str, ast.AST]:
+    def _extract_sprite_kwargs(self, node: ast.AST) -> Tuple[str, Dict[str, ast.AST]]:
         if not isinstance(node, ast.Call):
             raise DSLValidationError(
-                "add_sprite(...) positional argument must be Sprite(...)."
+                "add_sprite(...) positional argument must be Sprite(...), BlockInSprite(...), or ColorSprite(...)."
             )
-        if not isinstance(node.func, ast.Name) or node.func.id != "Sprite":
+        if not isinstance(node.func, ast.Name) or node.func.id not in SPRITE_CONSTRUCTOR_NAMES:
             raise DSLValidationError(
-                "add_sprite(...) positional argument must be Sprite(...)."
+                "add_sprite(...) positional argument must be Sprite(...), BlockInSprite(...), or ColorSprite(...)."
             )
         if node.args:
-            raise DSLValidationError("Sprite(...) only supports keyword arguments.")
-        return {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+            raise DSLValidationError(f"{node.func.id}(...) only supports keyword arguments.")
+        return node.func.id, {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
 
     def _parse_sprite_from_kwargs(
         self,
         sprite_kwargs: Dict[str, ast.AST],
         compiler: DSLCompiler,
         source_name: str,
+        sprite_constructor: str,
         declared_resource_vars: Dict[str, ast.Call] | None = None,
+        declared_color_vars: Dict[str, ast.Call] | None = None,
     ) -> SpriteSpec:
+        if sprite_constructor not in SPRITE_CONSTRUCTOR_NAMES:
+            raise DSLValidationError(
+                f"Unsupported sprite constructor '{sprite_constructor}'."
+            )
+
         allowed = {
             "name",
             "uid",
             "actor_type",
             "bind",
-            "resource",
             "frame_width",
             "frame_height",
-            "clips",
-            "default_clip",
-            "row",
-            "scale",
-            "flip_x",
-            "offset_x",
-            "offset_y",
             "symbol",
             "description",
         }
+        if sprite_constructor in {"Sprite", "BlockInSprite"}:
+            allowed.update(
+                {
+                    "resource",
+                    "clips",
+                    "default_clip",
+                    "row",
+                    "scale",
+                    "flip_x",
+                    "offset_x",
+                    "offset_y",
+                }
+            )
+        if sprite_constructor in {"BlockInSprite", "ColorSprite"}:
+            allowed.add("color")
+
         unexpected = sorted(set(sprite_kwargs.keys()) - allowed)
         if unexpected:
             raise DSLValidationError(
                 f"{source_name} received unsupported arguments: {unexpected}"
             )
 
-        required = {"resource", "frame_width", "frame_height", "clips"}
+        required = {"frame_width", "frame_height"}
+        if sprite_constructor in {"Sprite", "BlockInSprite"}:
+            required.update({"resource", "clips"})
+        if sprite_constructor in {"BlockInSprite", "ColorSprite"}:
+            required.add("color")
         missing = required - set(sprite_kwargs.keys())
         if missing:
             raise DSLValidationError(
@@ -3720,33 +3777,61 @@ class ProjectCompiler:
             sprite_kwargs, compiler, source_name, sprite_name=name
         )
 
-        clips = self._parse_sprite_clips(sprite_kwargs["clips"])
+        clips: List[AnimationClipSpec] = []
         default_clip = None
-        if "default_clip" in sprite_kwargs:
-            default_clip = _expect_string(
-                sprite_kwargs["default_clip"],
-                "default clip name",
-            )
-            if default_clip not in {clip.name for clip in clips}:
-                raise DSLValidationError(
-                    f"Unknown default clip '{default_clip}' in {source_name}."
+        if "clips" in sprite_kwargs:
+            clips = self._parse_sprite_clips(sprite_kwargs["clips"])
+            if "default_clip" in sprite_kwargs:
+                default_clip = _expect_string(
+                    sprite_kwargs["default_clip"],
+                    "default clip name",
                 )
+                if default_clip not in {clip.name for clip in clips}:
+                    raise DSLValidationError(
+                        f"Unknown default clip '{default_clip}' in {source_name}."
+                    )
+        elif "default_clip" in sprite_kwargs:
+            raise DSLValidationError(
+                f"{source_name} cannot define default_clip without clips."
+            )
+
+        resource_name: Optional[str]
+        if "resource" in sprite_kwargs:
+            resource_name = self._parse_resource_name_selector(
+                sprite_kwargs["resource"],
+                source_name=f"{source_name} resource",
+                declared_resource_vars=declared_resource_vars,
+            )
+        else:
+            resource_name = None
+
+        color_spec = None
+        if "color" in sprite_kwargs:
+            color_spec = self._parse_sprite_color(
+                sprite_kwargs["color"],
+                declared_color_vars=declared_color_vars or {},
+                source_name=source_name,
+            )
+
+        allow_missing_resource = sprite_constructor in {"BlockInSprite", "ColorSprite"}
+        if allow_missing_resource and color_spec is None:
+            raise DSLValidationError(
+                f"{source_name} requires color=Color(...)."
+            )
 
         return SpriteSpec(
             name=name,
             uid=uid,
             actor_type=actor_type,
-            resource=self._parse_resource_name_selector(
-                sprite_kwargs["resource"],
-                source_name=f"{source_name} resource",
-                declared_resource_vars=declared_resource_vars,
-            ),
+            resource=resource_name,
             frame_width=_expect_int(sprite_kwargs["frame_width"], "sprite frame_width"),
             frame_height=_expect_int(
                 sprite_kwargs["frame_height"],
                 "sprite frame_height",
             ),
             clips=clips,
+            color=color_spec,
+            allow_missing_resource=allow_missing_resource,
             default_clip=default_clip,
             row=_expect_int_or_default(sprite_kwargs.get("row"), "sprite row", 0),
             scale=_expect_float_or_default(sprite_kwargs.get("scale"), "sprite scale", 1.0),
@@ -4124,9 +4209,39 @@ class ProjectCompiler:
         self,
         resources: Dict[str, ResourceSpec],
         sprites: List[SpriteSpec],
-    ) -> None:
+    ) -> List[SpriteSpec]:
+        validated: List[SpriteSpec] = []
         for sprite in sprites:
+            if sprite.resource is None:
+                validated.append(sprite)
+                continue
             if sprite.resource not in resources:
+                if sprite.allow_missing_resource:
+                    if sprite.color is None:
+                        raise DSLValidationError(
+                            f"add_sprite(...) resource '{sprite.resource}' is missing and no fallback color is provided."
+                        )
+                    warnings.warn(
+                        format_dsl_diagnostic(
+                            f"Sprite resource '{sprite.resource}' is missing. "
+                            "Falling back to color box rendering. "
+                            "Add game.add_resource(...), or keep this fallback sprite. "
+                            "Provide a clear description for symbolic/LLM rendering.",
+                        ),
+                        stacklevel=2,
+                    )
+                    if not sprite.description:
+                        warnings.warn(
+                            format_dsl_diagnostic(
+                                "Fallback color sprite has no description. "
+                                "Add description='...'.",
+                            ),
+                            stacklevel=2,
+                        )
+                    validated.append(replace(sprite, resource=None))
+                    continue
                 raise DSLValidationError(
                     f"add_sprite(...) references unknown resource '{sprite.resource}'."
                 )
+            validated.append(sprite)
+        return validated

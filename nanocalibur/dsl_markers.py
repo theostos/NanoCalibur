@@ -225,6 +225,17 @@ class Tick:
         ``    yield tick``
     """
 
+    elapsed: int
+
+    def wait_tick(self, _count: int) -> None:
+        """Pause current action for ``_count`` ticks.
+
+        Equivalent semantics:
+            ``for _ in range(_count):``
+            ``    yield tick``
+        """
+        return None
+
 
 class Sprite:
     """Sprite declaration object consumed by :meth:`Game.add_sprite`.
@@ -262,6 +273,56 @@ class Sprite:
         offset_y: float = 0.0,
     ) -> None:
         """Build a sprite declaration payload for the compiler."""
+        return None
+
+
+class BlockInSprite(Sprite):
+    """Sprite with color-box fallback when image resource is missing.
+
+    Use this when you want to keep sprite clip metadata but tolerate missing
+    resource declarations during compilation.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        uid: str | None = None,
+        actor_type: "type[Actor] | None" = None,
+        bind: "str | type[Actor] | None" = None,
+        resource: "str | Resource | type[Resource]",
+        frame_width: int,
+        frame_height: int,
+        color: "Color",
+        clips: dict[str, Any],
+        default_clip: str | None = None,
+        symbol: str | None = None,
+        description: str | None = None,
+        row: int = 0,
+        scale: float = 1.0,
+        flip_x: bool = True,
+        offset_x: float = 0.0,
+        offset_y: float = 0.0,
+    ) -> None:
+        return None
+
+
+class ColorSprite(Sprite):
+    """Color-box-only sprite (no image resource)."""
+
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        uid: str | None = None,
+        actor_type: "type[Actor] | None" = None,
+        bind: "str | type[Actor] | None" = None,
+        frame_width: int,
+        frame_height: int,
+        color: "Color",
+        symbol: str | None = None,
+        description: str | None = None,
+    ) -> None:
         return None
 
 
@@ -750,9 +811,20 @@ def local(_value: Any = None) -> Any:
     return _value
 
 
+def tick_to_second(_ticks: int) -> float:
+    """Convert engine ticks to engine seconds using authoritative tick-rate."""
+    return 0.0
+
+
+def second_to_tick(_seconds: float) -> int:
+    """Convert engine seconds to engine ticks using authoritative tick-rate."""
+    return 0
+
+
 __all__ = [
     "AbstractCodeBlock",
     "Actor",
+    "BlockInSprite",
     "Camera",
     "CodeBlock",
     "Color",
@@ -775,6 +847,7 @@ __all__ = [
     "Role",
     "RoleKind",
     "Scene",
+    "ColorSprite",
     "Sprite",
     "Tick",
     "Tile",
@@ -782,5 +855,7 @@ __all__ = [
     "callable",
     "local",
     "safe_condition",
+    "second_to_tick",
+    "tick_to_second",
     "unsafe_condition",
 ]

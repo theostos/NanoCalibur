@@ -1419,6 +1419,77 @@ def test_add_sprite_rejects_unknown_resource():
         )
 
 
+def test_block_in_sprite_allows_missing_resource_with_color_fallback_warning():
+    with pytest.warns(UserWarning, match="Falling back to color box rendering"):
+        project = compile_project(
+            """
+            class Player(Actor):
+                speed: int
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=10, y=20, speed=2, sprite="hero"))
+
+            game.add_sprite(
+                BlockInSprite(
+                    name="hero",
+                    resource="missing_sheet",
+                    frame_width=16,
+                    frame_height=16,
+                    color=Color(20, 120, 200),
+                    default_clip="idle",
+                    clips={"idle": [0]},
+                )
+            )
+            """
+        )
+
+    sprite = project.sprites[0]
+    assert sprite.name == "hero"
+    assert sprite.resource is None
+    assert sprite.allow_missing_resource is True
+    assert sprite.color is not None
+    assert sprite.color.r == 20
+    assert sprite.color.g == 120
+    assert sprite.color.b == 200
+
+
+def test_color_sprite_supports_color_only_sprite_declaration():
+    project = compile_project(
+        """
+        class Player(Actor):
+            speed: int
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=10, y=20, speed=2, sprite="hero"))
+
+        game.add_sprite(
+            ColorSprite(
+                name="hero",
+                frame_width=16,
+                frame_height=16,
+                color=Color(250, 160, 30, symbol="@", description="hero fallback"),
+                symbol="@",
+                description="hero fallback sprite",
+            )
+        )
+        """
+    )
+
+    sprite = project.sprites[0]
+    assert sprite.name == "hero"
+    assert sprite.resource is None
+    assert sprite.allow_missing_resource is True
+    assert sprite.color is not None
+    assert sprite.color.r == 250
+    assert sprite.color.g == 160
+    assert sprite.color.b == 30
+    assert sprite.clips == []
+
+
 def test_add_sprite_accepts_bind_selector_and_scene_gravity():
     project = compile_project(
         """

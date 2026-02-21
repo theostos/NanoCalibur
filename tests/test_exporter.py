@@ -1,6 +1,8 @@
 import json
 import textwrap
 
+import pytest
+
 from nanocalibur.exporter import export_project
 
 
@@ -300,6 +302,59 @@ def test_export_project_serializes_sprite_bindings_resources_and_callables(tmp_p
     assert spec["sprites"]["by_name"]["hero"]["description"] == "hero sprite"
     assert spec["sprites"]["by_name"]["hero"]["clips"]["run"]["frames"] == [2, 3]
     assert spec["callables"] == ["next_speed"]
+
+
+def test_export_project_serializes_color_sprite_and_block_in_sprite_fallback(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            speed: int
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0, speed=1, sprite="hero"))
+        scene.add_actor(Player(uid="bot", x=10, y=0, speed=1, sprite="bot"))
+        game.add_resource("hero_sheet", "res/hero.png")
+        game.add_sprite(
+            ColorSprite(
+                name="hero",
+                frame_width=16,
+                frame_height=16,
+                color=Color(255, 0, 0),
+                symbol="@",
+                description="hero color fallback",
+            )
+        )
+        game.add_sprite(
+            BlockInSprite(
+                name="bot",
+                resource="missing_sheet",
+                frame_width=16,
+                frame_height=16,
+                color=Color(0, 0, 255),
+                default_clip="idle",
+                clips={"idle": [0]},
+                symbol="b",
+                description="bot fallback",
+            )
+        )
+        """
+    )
+
+    with pytest.warns(UserWarning, match="Falling back to color box rendering"):
+        export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    hero = spec["sprites"]["by_name"]["hero"]
+    assert hero["resource"] is None
+    assert hero["color"]["r"] == 255
+    assert hero["clips"] == {}
+
+    bot = spec["sprites"]["by_name"]["bot"]
+    assert bot["resource"] is None
+    assert bot["color"]["b"] == 255
+    assert bot["clips"]["idle"]["frames"] == [0]
 
 
 def test_export_project_serializes_multiplayer_and_next_turn_metadata(tmp_path):

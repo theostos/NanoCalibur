@@ -44,14 +44,25 @@ export class AssetStore {
 
   private getAllSpriteConfigs() {
     const out: Array<{ image: string }> = [];
+    if (this.options.spritesByName) {
+      for (const value of Object.values(this.options.spritesByName)) {
+        if (typeof value.image === "string" && value.image.length > 0) {
+          out.push({ image: value.image });
+        }
+      }
+    }
     if (this.options.spritesByType) {
       for (const value of Object.values(this.options.spritesByType)) {
-        out.push(value);
+        if (typeof value.image === "string" && value.image.length > 0) {
+          out.push({ image: value.image });
+        }
       }
     }
     if (this.options.spritesByUid) {
       for (const value of Object.values(this.options.spritesByUid)) {
-        out.push(value);
+        if (typeof value.image === "string" && value.image.length > 0) {
+          out.push({ image: value.image });
+        }
       }
     }
     return out;
