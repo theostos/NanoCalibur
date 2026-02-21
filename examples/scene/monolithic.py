@@ -125,6 +125,22 @@ camera_h1 = Camera("camera_human_1", Role["human_1"], width=30, height=18)
 camera_h1.follow("hero_1")
 scene.add_camera(camera_h1)
 
+camera_h2 = Camera("camera_human_2", Role["human_2"], width=30, height=18)
+camera_h2.follow("hero_2")
+scene.add_camera(camera_h2)
+
+camera_h3 = Camera("camera_human_3", Role["human_3"], width=30, height=18)
+camera_h3.follow("hero_3")
+scene.add_camera(camera_h3)
+
+camera_h4 = Camera("camera_human_4", Role["human_4"], width=30, height=18)
+camera_h4.follow("hero_4")
+scene.add_camera(camera_h4)
+
+camera_dummy = Camera("camera_dummy_1", Role["dummy_1"], width=30, height=18)
+camera_dummy.follow("llm_dummy")
+scene.add_camera(camera_dummy)
+
 scene.set_map(
     TileMap(
         tile_size=32,

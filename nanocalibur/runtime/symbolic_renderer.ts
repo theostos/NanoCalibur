@@ -263,15 +263,41 @@ export class SymbolicRenderer {
         ? (state.cameras as Record<string, any>)
         : null;
 
-    if (roleId && byName) {
-      for (const camera of Object.values(byName)) {
-        if (!camera || typeof camera !== "object") {
-          continue;
-        }
-        if (camera.role_id === roleId) {
-          return camera;
+    if (roleId) {
+      if (byName) {
+        for (const camera of Object.values(byName)) {
+          if (!camera || typeof camera !== "object") {
+            continue;
+          }
+          if (camera.role_id === roleId) {
+            return camera;
+          }
         }
       }
+
+      // Role-scoped viewers must not silently fall back to another role camera.
+      if (state && state.camera && typeof state.camera === "object") {
+        const defaultCamera = state.camera as Record<string, any>;
+        if (
+          typeof defaultCamera.role_id !== "string" ||
+          !defaultCamera.role_id ||
+          defaultCamera.role_id === roleId
+        ) {
+          return defaultCamera;
+        }
+      }
+
+      if (byName) {
+        for (const camera of Object.values(byName)) {
+          if (!camera || typeof camera !== "object") {
+            continue;
+          }
+          if (typeof camera.role_id !== "string" || !camera.role_id) {
+            return camera;
+          }
+        }
+      }
+      return null;
     }
 
     if (state && state.camera && typeof state.camera === "object") {
