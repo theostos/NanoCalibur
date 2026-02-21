@@ -4237,6 +4237,7 @@ class ProjectCompiler:
                 actor_selector.index is not None
                 or (
                     actor_selector.uid is not None
+                    and actor_selector.uid != LOGICAL_TARGET_BINDING_UID
                     and (
                         actor_param.actor_type is None
                         or actor_selector.uid != actor_param.actor_type
