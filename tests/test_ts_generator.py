@@ -432,3 +432,31 @@ def test_ts_emits_callable_helpers_and_invocations():
     assert "export function next_x(x: any, offset: any): any {" in ts
     assert "let x: any;" in ts
     assert "x = next_x(last_coin.x, 32);" in ts
+
+
+def test_ts_emits_void_callable_helpers_and_statement_invocations():
+    ts = compile_project_to_ts(
+        """
+        class Worker(Actor):
+            speed: int
+
+        @callable
+        def activate(worker: Worker):
+            worker.active = True
+            worker.vx = worker.speed
+
+        @unsafe_condition(KeyboardCondition.begin_press("e", id="human_1"))
+        def run(worker: Worker["w1"]):
+            activate(worker)
+
+        game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Worker(uid="w1", x=0, y=0, speed=1))
+        """
+    )
+
+    assert "export function activate(worker: any): void {" in ts
+    assert "activate(worker);" in ts
+    assert "return activate(worker);" not in ts

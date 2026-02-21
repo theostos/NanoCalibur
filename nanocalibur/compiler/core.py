@@ -82,12 +82,17 @@ class DSLCompiler:
         self._register_builtin_schemas()
         self.global_actor_types: Dict[str, Optional[str]] = dict(global_actor_types or {})
         self.callable_signatures: Dict[str, int] = {}
+        self.callable_returns_value: Dict[str, bool] = {}
         self._compile_time_constant_values: Dict[str, object] = {}
         self._compile_time_constant_exprs: Dict[str, Expr] = {}
 
     def set_callable_signatures(self, signatures: Dict[str, int]) -> None:
         """Register callable helper signatures available in expressions."""
         self.callable_signatures = dict(signatures)
+
+    def set_callable_return_kinds(self, returns_value: Dict[str, bool]) -> None:
+        """Register whether each callable helper returns a value."""
+        self.callable_returns_value = dict(returns_value)
 
     def set_compile_time_constants(self, constants: Dict[str, object]) -> None:
         """Register top-level compile-time constants available in function bodies."""
@@ -634,9 +639,22 @@ class DSLCompiler:
 
             if not fn.body:
                 raise DSLValidationError("Callable body cannot be empty.")
-            if not isinstance(fn.body[-1], ast.Return):
+
+            def _annotation_is_none(annotation: ast.AST) -> bool:
+                if isinstance(annotation, ast.Name) and annotation.id == "None":
+                    return True
+                if isinstance(annotation, ast.Constant) and annotation.value is None:
+                    return True
+                return False
+
+            returns_value = isinstance(fn.body[-1], ast.Return) and fn.body[-1].value is not None
+            if returns_value and fn.returns is not None and _annotation_is_none(fn.returns):
                 raise DSLValidationError(
-                    "Callable must end with an explicit return statement."
+                    "Callable annotated with None cannot return a value."
+                )
+            if not returns_value and fn.returns is not None and not _annotation_is_none(fn.returns):
+                raise DSLValidationError(
+                    "Callable annotated with a return type must end with 'return <value>'."
                 )
 
             scope = ActionScope(
@@ -650,9 +668,10 @@ class DSLCompiler:
                 spawn_actor_templates={},
             )
             body = []
-            for stmt in fn.body[:-1]:
+            compile_stmts = fn.body[:-1] if returns_value else fn.body
+            for stmt in compile_stmts:
                 with dsl_node_context(stmt):
-                    if isinstance(stmt, ast.Return):
+                    if returns_value and isinstance(stmt, ast.Return):
                         raise DSLValidationError(
                             "Return statements are only allowed as the last callable statement."
                         )
@@ -662,18 +681,19 @@ class DSLCompiler:
                 if compiled is not None:
                     body.append(compiled)
 
+            if not returns_value:
+                return CallableIR(
+                    name=fn.name,
+                    params=params,
+                    body=body,
+                    return_expr=None,
+                )
+
             return_stmt = fn.body[-1]
-            if return_stmt.value is None:
-                raise DSLValidationError("Callable return statement must return a value.")
-            return_expr = self._compile_expr(
-                return_stmt.value, scope, allow_range_call=False
-            )
-            return CallableIR(
-                name=fn.name,
-                params=params,
-                body=body,
-                return_expr=return_expr,
-            )
+            assert isinstance(return_stmt, ast.Return)
+            assert return_stmt.value is not None
+            return_expr = self._compile_expr(return_stmt.value, scope, allow_range_call=False)
+            return CallableIR(name=fn.name, params=params, body=body, return_expr=return_expr)
 
     def _parse_binding(self, arg: ast.arg) -> ParamBinding:
         with dsl_node_context(arg):
@@ -984,6 +1004,24 @@ class DSLCompiler:
         return Yield(value=value)
 
     def _compile_call_stmt(self, expr: ast.Call, scope: ActionScope):
+        if isinstance(expr.func, ast.Name) and expr.func.id in self.callable_signatures:
+            if expr.keywords:
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) does not accept keyword arguments."
+                )
+            expected_arity = self.callable_signatures[expr.func.id]
+            if len(expr.args) != expected_arity:
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) expects exactly {expected_arity} positional arguments."
+                )
+            return CallStmt(
+                name=f"{CALLABLE_EXPR_PREFIX}{expr.func.id}",
+                args=[
+                    self._compile_expr(arg, scope, allow_range_call=False)
+                    for arg in expr.args
+                ],
+            )
+
         if not (
             isinstance(expr.func, ast.Attribute)
             and isinstance(expr.func.value, ast.Name)
@@ -1834,6 +1872,10 @@ class DSLCompiler:
             if expr.keywords:
                 raise DSLValidationError(
                     f"{expr.func.id}(...) does not accept keyword arguments."
+                )
+            if not self.callable_returns_value.get(expr.func.id, True):
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) does not return a value and cannot be used in expressions."
                 )
             expected_arity = self.callable_signatures[expr.func.id]
             if len(expr.args) != expected_arity:

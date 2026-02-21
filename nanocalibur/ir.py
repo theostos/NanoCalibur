@@ -184,4 +184,4 @@ class CallableIR:
     name: str
     params: List[str]
     body: List[Stmt]
-    return_expr: Expr
+    return_expr: Optional[Expr] = None

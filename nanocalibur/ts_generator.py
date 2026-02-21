@@ -219,9 +219,11 @@ function __nc_dict_items(base: any): any[] {
 
     def _emit_callable(self, helper: CallableIR, typed: bool, exported: bool):
         prefix = "export " if exported else ""
+        returns_value = helper.return_expr is not None
         if typed:
             params = ", ".join(f"{name}: any" for name in helper.params)
-            lines = [f"{prefix}function {helper.name}({params}): any {{"]
+            return_type = "any" if returns_value else "void"
+            lines = [f"{prefix}function {helper.name}({params}): {return_type} {{"]
         else:
             params = ", ".join(helper.params)
             lines = [f"{prefix}function {helper.name}({params}) {{"]
@@ -239,7 +241,8 @@ function __nc_dict_items(base: any): any[] {
 
         for stmt in helper.body:
             lines.extend(self._emit_stmt(stmt, indent=1))
-        lines.append(f"  return {self._emit_expr(helper.return_expr)};")
+        if helper.return_expr is not None:
+            lines.append(f"  return {self._emit_expr(helper.return_expr)};")
         lines.append("}")
         return "\n".join(lines)
 
@@ -553,6 +556,10 @@ function __nc_dict_items(base: any): any[] {
             return [pad + f"{self._emit_expr(stmt.target)} = {self._emit_expr(stmt.value)};"]
 
         if isinstance(stmt, CallStmt):
+            if stmt.name.startswith(CALLABLE_EXPR_PREFIX):
+                helper_name = stmt.name[len(CALLABLE_EXPR_PREFIX) :]
+                args = ", ".join(self._emit_expr(arg) for arg in stmt.args)
+                return [pad + f"{helper_name}({args});"]
             if stmt.name == "play_animation":
                 if len(stmt.args) != 2:
                     raise DSLValidationError(

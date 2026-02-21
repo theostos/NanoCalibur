@@ -925,6 +925,7 @@ class ProjectCompiler:
         callables: Dict[str, CallableIR] = {}
 
         callable_signatures: Dict[str, int] = {}
+        callable_returns_value: Dict[str, bool] = {}
         normalized_callables: Dict[str, ast.FunctionDef] = {}
         for node in module.body:
             with dsl_node_context(node):
@@ -939,9 +940,15 @@ class ProjectCompiler:
                     normalized = self._normalize_callable_function(node, compiler)
                     normalized = self._strip_function_docstring(normalized)
                     callable_signatures[node.name] = len(normalized.args.args)
+                    callable_returns_value[node.name] = bool(
+                        normalized.body
+                        and isinstance(normalized.body[-1], ast.Return)
+                        and normalized.body[-1].value is not None
+                    )
                     normalized_callables[node.name] = normalized
 
         compiler.set_callable_signatures(callable_signatures)
+        compiler.set_callable_return_kinds(callable_returns_value)
 
         for node in module.body:
             with dsl_node_context(node):

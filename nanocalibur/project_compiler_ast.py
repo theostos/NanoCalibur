@@ -324,7 +324,8 @@ def _collect_used_callable_names(
         nested: set[str] = set()
         for stmt in helper.body:
             nested.update(_callable_names_in_stmt(stmt))
-        nested.update(_callable_names_in_expr(helper.return_expr))
+        if helper.return_expr is not None:
+            nested.update(_callable_names_in_expr(helper.return_expr))
         for nested_name in nested:
             if nested_name not in used:
                 pending.append(nested_name)
@@ -339,6 +340,8 @@ def _callable_names_in_stmt(stmt) -> set[str]:
         return names
     if isinstance(stmt, CallStmt):
         names: set[str] = set()
+        if stmt.name.startswith(CALLABLE_EXPR_PREFIX):
+            names.add(stmt.name[len(CALLABLE_EXPR_PREFIX) :])
         for arg in stmt.args:
             names.update(_callable_names_in_expr(arg))
         return names

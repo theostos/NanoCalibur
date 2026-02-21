@@ -2283,6 +2283,61 @@ def test_callable_helper_can_be_used_from_action_and_is_exported():
     assert project.actions[0].name == "spawn"
 
 
+def test_void_callable_helper_can_be_used_for_side_effects():
+    project = compile_project(
+        """
+        class Worker(Actor):
+            speed: int
+
+        @callable
+        def activate(worker: Worker):
+            worker.active = True
+            worker.vx = worker.speed
+
+        @unsafe_condition(KeyboardCondition.begin_press("e", id="human_1"))
+        def run(worker: Worker["w1"]):
+            activate(worker)
+
+        game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Worker(uid="w1", x=0, y=0, speed=2, active=False))
+        """
+    )
+
+    assert len(project.callables) == 1
+    assert project.callables[0].name == "activate"
+    assert project.callables[0].return_expr is None
+    assert len(project.actions) == 1
+    assert project.actions[0].name == "run"
+
+
+def test_void_callable_helper_cannot_be_used_in_expression():
+    with pytest.raises(DSLValidationError, match="does not return a value"):
+        compile_project(
+            """
+            class Worker(Actor):
+                speed: int
+
+            @callable
+            def activate(worker: Worker):
+                worker.active = True
+
+            @unsafe_condition(KeyboardCondition.begin_press("e", id="human_1"))
+            def run(worker: Worker["w1"]):
+                x = activate(worker)
+                worker.vx = x
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Worker(uid="w1", x=0, y=0, speed=2, active=False))
+            """
+        )
+
+
 def test_callable_selector_annotations_warn_and_are_ignored():
     with pytest.warns(UserWarning, match="Selector annotation on callable parameter"):
         project = compile_project(
