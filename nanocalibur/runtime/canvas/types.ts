@@ -53,9 +53,9 @@ export interface SceneState {
 }
 
 export interface PhasePayload {
-  begin: string[];
-  on: string[];
-  end: string[];
+  begin?: string[];
+  on?: string[];
+  end?: string[];
 }
 
 export interface CollisionPair {

@@ -21,7 +21,7 @@ export interface ToolFrameInput {
 export interface NanoCaliburFrameInput {
   keyboard?: FramePhaseInput;
   mouse?: FramePhaseInput;
-  uiButtons?: string[];
+  uiButtons?: FramePhaseInput | string[];
   collisions?: CollisionFrameInput[];
   contacts?: CollisionFrameInput[];
   toolCalls?: Array<string | ToolFrameInput>;
@@ -43,6 +43,8 @@ export interface NanoCaliburFrameInput {
   mouseButtons?: string[];
   mouseButtonsJustReleased?: string[];
   mouseClicked?: boolean | { button?: string };
+  mousePosition?: { x?: number; y?: number };
+  mouse_position?: { x?: number; y?: number };
 }
 
 export interface InterpreterSceneState {
@@ -79,6 +81,28 @@ interface ConditionMatchResult {
   matched: boolean;
   collisionPair?: [Record<string, any>, Record<string, any>];
   toolCall?: ToolFrameInput;
+  keyboardInfo?: KeyboardInfoPayload;
+  mouseInfo?: MouseInfoPayload;
+  buttonInfo?: ButtonInfoPayload;
+}
+
+interface KeyboardInfoPayload {
+  pressed_tick: number;
+  current_tick: number;
+}
+
+interface MouseInfoPayload {
+  pressed_tick: number;
+  current_tick: number;
+  pressed_x: number;
+  pressed_y: number;
+  x: number;
+  y: number;
+}
+
+interface ButtonInfoPayload {
+  pressed_tick: number;
+  current_tick: number;
 }
 
 type ActionGenerator = Iterator<unknown, void, unknown>;
@@ -109,6 +133,14 @@ export class NanoCaliburInterpreter {
   private readonly sceneState: InterpreterSceneState;
   private readonly rolesById: Record<string, any>;
   private readonly keyboardAliasLookup: Map<string, Set<string>>;
+  private readonly keyboardPressedTickByRole = new Map<string, Map<string, number>>();
+  private readonly mousePressedTickByRole = new Map<string, Map<string, number>>();
+  private readonly buttonPressedTickByRole = new Map<string, Map<string, number>>();
+  private readonly mousePressPositionByRole = new Map<
+    string,
+    Map<string, { x: number; y: number }>
+  >();
+  private readonly mousePositionByRole = new Map<string, { x: number; y: number }>();
   private runtimeHooks: RuntimeHooks;
 
   constructor(
@@ -144,10 +176,13 @@ export class NanoCaliburInterpreter {
       frame.parentPreviousPositions,
       fallbackPreviousPositions,
     );
+    const currentTick = this.sceneState.elapsed;
+    const frameRoleKey = this.resolveInputRoleKey(frame);
+    this.updateInputPressState(frame, frameRoleKey, currentTick);
     this.sceneState.turnChangedThisStep = false;
     this.advanceRunningActions();
     for (const rule of this.rules) {
-      const match = this.conditionMatches(rule.condition, frame);
+      const match = this.conditionMatches(rule.condition, frame, currentTick);
       if (!match.matched) {
         continue;
       }
@@ -156,12 +191,19 @@ export class NanoCaliburInterpreter {
       if (typeof fn !== "function") {
         throw new Error(`Missing action function '${rule.action}'.`);
       }
-      const context = this.buildContext(match.collisionPair || null, match.toolCall || null);
+      const context = this.buildContext(
+        match.collisionPair || null,
+        match.toolCall || null,
+        match.keyboardInfo || null,
+        match.mouseInfo || null,
+        match.buttonInfo || null,
+      );
       const result = fn(context);
       if (this.isActionGenerator(result)) {
         this.runningActions.push(result);
       }
     }
+    this.finalizeInputPressState(frame, frameRoleKey);
     this.applyParentBindings(previousPositions);
     this.syncCameraFollowTargets();
     this.sceneState.elapsed += 1;
@@ -285,14 +327,22 @@ export class NanoCaliburInterpreter {
   private buildContext(
     collisionPair: [Record<string, any>, Record<string, any>] | null,
     toolCall: ToolFrameInput | null,
+    keyboardInfo: KeyboardInfoPayload | null,
+    mouseInfo: MouseInfoPayload | null,
+    buttonInfo: ButtonInfoPayload | null,
   ): Record<string, any> {
+    const tickRate = this.resolveTickRate();
     return {
       globals: this.globals,
       actors: this.actors,
       cameras: this.camerasByName,
       roles: this.rolesById,
       tick: 1,
+      tickRate,
       elapsed: this.sceneState.elapsed,
+      keyboardInfo,
+      mouseInfo,
+      buttonInfo,
       getActorByUid: (uid: string) => {
         if (collisionPair) {
           if (uid === COLLISION_LEFT_BINDING_UID) {
@@ -311,6 +361,7 @@ export class NanoCaliburInterpreter {
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
+        tickRate,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
         nextTurn: () => this.nextTurn(),
         setInterfaceHtml: (html: string, role?: unknown) => this.setInterfaceHtml(html, role),
@@ -332,12 +383,14 @@ export class NanoCaliburInterpreter {
   private buildPredicateContext(
     logicalTarget: Record<string, any>,
   ): Record<string, any> {
+    const tickRate = this.resolveTickRate();
     return {
       globals: this.globals,
       actors: this.actors,
       cameras: this.camerasByName,
       roles: this.rolesById,
       tick: 1,
+      tickRate,
       elapsed: this.sceneState.elapsed,
       getActorByUid: (uid: string) => {
         if (uid === LOGICAL_TARGET_BINDING_UID) {
@@ -350,6 +403,7 @@ export class NanoCaliburInterpreter {
       scene: {
         gravityEnabled: this.sceneState.gravityEnabled,
         elapsed: this.sceneState.elapsed,
+        tickRate,
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
         followCamera: (camera: Record<string, any>, targetUid: string) =>
           this.followCamera(camera, targetUid),
@@ -640,6 +694,17 @@ export class NanoCaliburInterpreter {
     return "real_time";
   }
 
+  private resolveTickRate(): number {
+    const raw =
+      this.spec?.multiplayer && typeof this.spec.multiplayer === "object"
+        ? this.spec.multiplayer.tick_rate
+        : null;
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+      return 20;
+    }
+    return Math.max(1, Math.floor(raw));
+  }
+
   private nextTurn(): void {
     this.sceneState.turn += 1;
     this.sceneState.turnChangedThisStep = true;
@@ -729,6 +794,7 @@ export class NanoCaliburInterpreter {
   private conditionMatches(
     condition: Record<string, any>,
     frame: NanoCaliburFrameInput,
+    currentTick: number,
   ): ConditionMatchResult {
     if (!condition || typeof condition !== "object") {
       return { matched: false };
@@ -739,7 +805,15 @@ export class NanoCaliburInterpreter {
         return { matched: false };
       }
       const phase = condition.phase || "on";
-      return { matched: this.matchKeyboardPhase(frame, phase, condition.key) };
+      const roleKey = this.resolveInputRoleKey(frame);
+      const matchedKey = this.matchKeyboardPhase(frame, phase, condition.key);
+      if (!matchedKey) {
+        return { matched: false };
+      }
+      return {
+        matched: true,
+        keyboardInfo: this.buildKeyboardInfo(roleKey, matchedKey, currentTick),
+      };
     }
 
     if (condition.kind === "mouse" || condition.kind === "mouse_clicked") {
@@ -747,8 +821,14 @@ export class NanoCaliburInterpreter {
         return { matched: false };
       }
       const phase = condition.phase || "on";
+      const roleKey = this.resolveInputRoleKey(frame);
+      const button = typeof condition.button === "string" ? condition.button : "left";
+      if (!this.matchMousePhase(frame, phase, button)) {
+        return { matched: false };
+      }
       return {
-        matched: this.matchMousePhase(frame, phase, condition.button || "left"),
+        matched: true,
+        mouseInfo: this.buildMouseInfo(roleKey, button, frame, currentTick),
       };
     }
 
@@ -837,8 +917,21 @@ export class NanoCaliburInterpreter {
       if (!buttonName) {
         return { matched: false };
       }
-      const buttons = this.normalizeStringArray(frame.uiButtons || []);
-      return { matched: buttons.includes(buttonName) };
+      if (!this.matchesRoleScope(condition, frame)) {
+        return { matched: false };
+      }
+      const phase = condition.phase || "on";
+      if (!this.matchUIButtonPhase(frame, phase, buttonName)) {
+        return { matched: false };
+      }
+      return {
+        matched: true,
+        buttonInfo: this.buildButtonInfo(
+          this.resolveInputRoleKey(frame),
+          buttonName,
+          currentTick,
+        ),
+      };
     }
 
     return { matched: false };
@@ -869,26 +962,17 @@ export class NanoCaliburInterpreter {
     frame: NanoCaliburFrameInput,
     phase: string,
     key: string | string[],
-  ): boolean {
-    const keyboard = frame.keyboard || {};
-    const begin = this.expandKeyboardValues(this.normalizeStringArray(
-      keyboard.begin || frame.keysJustPressed || frame.keysBegin || [],
-    ));
-    const on = this.expandKeyboardValues(this.normalizeStringArray(
-      keyboard.on || frame.keysPressed || frame.keysDown || [],
-    ));
-    const end = this.expandKeyboardValues(this.normalizeStringArray(
-      keyboard.end || frame.keysJustReleased || frame.keysEnd || [],
-    ));
+  ): string | null {
+    const phases = this.resolveKeyboardPhases(frame);
     if (Array.isArray(key)) {
       for (const item of key) {
-        if (this.phaseSetContains(phase, begin, on, end, item)) {
-          return true;
+        if (this.phaseSetContains(phase, phases.begin, phases.on, phases.end, item)) {
+          return item;
         }
       }
-      return false;
+      return null;
     }
-    return this.phaseSetContains(phase, begin, on, end, key);
+    return this.phaseSetContains(phase, phases.begin, phases.on, phases.end, key) ? key : null;
   }
 
   private matchMousePhase(
@@ -896,16 +980,13 @@ export class NanoCaliburInterpreter {
     phase: string,
     button: string,
   ): boolean {
-    const mouse = frame.mouse || {};
-    const begin = this.normalizeStringArray(
-      mouse.begin || frame.mouseButtonsJustPressed || [],
-    );
-    const on = this.normalizeStringArray(mouse.on || frame.mouseButtons || []);
-    const end = this.normalizeStringArray(
-      mouse.end || frame.mouseButtonsJustReleased || [],
-    );
-
-    if (phase === "on" && begin.length === 0 && on.length === 0 && end.length === 0) {
+    const phases = this.resolveMousePhases(frame);
+    if (
+      phase === "on"
+      && phases.begin.length === 0
+      && phases.on.length === 0
+      && phases.end.length === 0
+    ) {
       const clicked = frame.mouseClicked;
       if (typeof clicked === "boolean") {
         return clicked;
@@ -915,7 +996,255 @@ export class NanoCaliburInterpreter {
       }
     }
 
-    return this.phaseArrayContains(phase, begin, on, end, button);
+    return this.phaseArrayContains(phase, phases.begin, phases.on, phases.end, button);
+  }
+
+  private matchUIButtonPhase(
+    frame: NanoCaliburFrameInput,
+    phase: string,
+    buttonName: string,
+  ): boolean {
+    const phases = this.resolveUIButtonPhases(frame);
+    return this.phaseArrayContains(phase, phases.begin, phases.on, phases.end, buttonName);
+  }
+
+  private resolveKeyboardPhases(frame: NanoCaliburFrameInput): {
+    begin: Set<string>;
+    on: Set<string>;
+    end: Set<string>;
+  } {
+    const keyboard = frame.keyboard || {};
+    return {
+      begin: this.expandKeyboardValues(
+        this.normalizeStringArray(keyboard.begin || frame.keysJustPressed || frame.keysBegin || []),
+      ),
+      on: this.expandKeyboardValues(
+        this.normalizeStringArray(keyboard.on || frame.keysPressed || frame.keysDown || []),
+      ),
+      end: this.expandKeyboardValues(
+        this.normalizeStringArray(keyboard.end || frame.keysJustReleased || frame.keysEnd || []),
+      ),
+    };
+  }
+
+  private resolveMousePhases(frame: NanoCaliburFrameInput): {
+    begin: string[];
+    on: string[];
+    end: string[];
+  } {
+    const mouse = frame.mouse || {};
+    return {
+      begin: this.normalizeStringArray(mouse.begin || frame.mouseButtonsJustPressed || []),
+      on: this.normalizeStringArray(mouse.on || frame.mouseButtons || []),
+      end: this.normalizeStringArray(mouse.end || frame.mouseButtonsJustReleased || []),
+    };
+  }
+
+  private resolveUIButtonPhases(frame: NanoCaliburFrameInput): {
+    begin: string[];
+    on: string[];
+    end: string[];
+  } {
+    const uiButtons = frame.uiButtons;
+    if (Array.isArray(uiButtons)) {
+      const begin = this.normalizeStringArray(uiButtons);
+      return { begin, on: [], end: [] };
+    }
+    if (!uiButtons || typeof uiButtons !== "object") {
+      return { begin: [], on: [], end: [] };
+    }
+    return {
+      begin: this.normalizeStringArray(uiButtons.begin || []),
+      on: this.normalizeStringArray(uiButtons.on || []),
+      end: this.normalizeStringArray(uiButtons.end || []),
+    };
+  }
+
+  private resolveInputRoleKey(frame: NanoCaliburFrameInput): string {
+    const roleId = this.readFrameRoleId(frame, null);
+    return roleId || "__default__";
+  }
+
+  private getRolePressedTickMap(
+    source: Map<string, Map<string, number>>,
+    roleKey: string,
+  ): Map<string, number> {
+    let entry = source.get(roleKey);
+    if (!entry) {
+      entry = new Map<string, number>();
+      source.set(roleKey, entry);
+    }
+    return entry;
+  }
+
+  private getRoleMousePressPositionMap(
+    roleKey: string,
+  ): Map<string, { x: number; y: number }> {
+    let entry = this.mousePressPositionByRole.get(roleKey);
+    if (!entry) {
+      entry = new Map<string, { x: number; y: number }>();
+      this.mousePressPositionByRole.set(roleKey, entry);
+    }
+    return entry;
+  }
+
+  private resolveMousePosition(frame: NanoCaliburFrameInput): { x: number; y: number } {
+    const raw =
+      frame.mousePosition && typeof frame.mousePosition === "object"
+        ? frame.mousePosition
+        : frame.mouse_position && typeof frame.mouse_position === "object"
+          ? frame.mouse_position
+          : {};
+    const x =
+      typeof raw.x === "number" && Number.isFinite(raw.x) ? raw.x : 0;
+    const y =
+      typeof raw.y === "number" && Number.isFinite(raw.y) ? raw.y : 0;
+    return { x, y };
+  }
+
+  private updateInputPressState(
+    frame: NanoCaliburFrameInput,
+    roleKey: string,
+    currentTick: number,
+  ): void {
+    const keyboardPhases = this.resolveKeyboardPhases(frame);
+    const keyboardMap = this.getRolePressedTickMap(this.keyboardPressedTickByRole, roleKey);
+    for (const key of keyboardPhases.begin) {
+      keyboardMap.set(key, currentTick);
+    }
+    for (const key of keyboardPhases.on) {
+      if (!keyboardMap.has(key)) {
+        keyboardMap.set(key, currentTick);
+      }
+    }
+
+    const mousePhases = this.resolveMousePhases(frame);
+    const mousePosition = this.resolveMousePosition(frame);
+    this.mousePositionByRole.set(roleKey, mousePosition);
+    const mouseTickMap = this.getRolePressedTickMap(this.mousePressedTickByRole, roleKey);
+    const mousePressPosMap = this.getRoleMousePressPositionMap(roleKey);
+    for (const button of mousePhases.begin) {
+      mouseTickMap.set(button, currentTick);
+      mousePressPosMap.set(button, { ...mousePosition });
+    }
+    for (const button of mousePhases.on) {
+      if (!mouseTickMap.has(button)) {
+        mouseTickMap.set(button, currentTick);
+      }
+      if (!mousePressPosMap.has(button)) {
+        mousePressPosMap.set(button, { ...mousePosition });
+      }
+    }
+
+    const buttonPhases = this.resolveUIButtonPhases(frame);
+    const buttonMap = this.getRolePressedTickMap(this.buttonPressedTickByRole, roleKey);
+    for (const button of buttonPhases.begin) {
+      buttonMap.set(button, currentTick);
+    }
+    for (const button of buttonPhases.on) {
+      if (!buttonMap.has(button)) {
+        buttonMap.set(button, currentTick);
+      }
+    }
+  }
+
+  private finalizeInputPressState(frame: NanoCaliburFrameInput, roleKey: string): void {
+    const keyboardEnd = this.resolveKeyboardPhases(frame).end;
+    const keyboardMap = this.keyboardPressedTickByRole.get(roleKey);
+    if (keyboardMap) {
+      for (const key of keyboardEnd) {
+        keyboardMap.delete(key);
+      }
+    }
+
+    const mousePhases = this.resolveMousePhases(frame);
+    const mouseMap = this.mousePressedTickByRole.get(roleKey);
+    const mousePressPosMap = this.mousePressPositionByRole.get(roleKey);
+    if (mouseMap) {
+      for (const button of mousePhases.end) {
+        mouseMap.delete(button);
+      }
+    }
+    if (mousePressPosMap) {
+      for (const button of mousePhases.end) {
+        mousePressPosMap.delete(button);
+      }
+    }
+
+    const buttonEnd = this.resolveUIButtonPhases(frame).end;
+    const buttonMap = this.buttonPressedTickByRole.get(roleKey);
+    if (buttonMap) {
+      for (const button of buttonEnd) {
+        buttonMap.delete(button);
+      }
+    }
+  }
+
+  private resolveKeyboardPressedTick(roleKey: string, key: string, currentTick: number): number {
+    const keyMap = this.keyboardPressedTickByRole.get(roleKey);
+    if (!keyMap || keyMap.size === 0) {
+      return currentTick;
+    }
+    const aliases = this.expandKeyboardToken(key);
+    for (const alias of aliases) {
+      const tick = keyMap.get(alias);
+      if (typeof tick === "number") {
+        return tick;
+      }
+    }
+    return currentTick;
+  }
+
+  private buildKeyboardInfo(
+    roleKey: string,
+    key: string,
+    currentTick: number,
+  ): KeyboardInfoPayload {
+    return {
+      pressed_tick: this.resolveKeyboardPressedTick(roleKey, key, currentTick),
+      current_tick: currentTick,
+    };
+  }
+
+  private buildMouseInfo(
+    roleKey: string,
+    button: string,
+    frame: NanoCaliburFrameInput,
+    currentTick: number,
+  ): MouseInfoPayload {
+    const tickMap = this.mousePressedTickByRole.get(roleKey);
+    const pressPosMap = this.mousePressPositionByRole.get(roleKey);
+    const currentPos =
+      this.mousePositionByRole.get(roleKey) || this.resolveMousePosition(frame);
+    const pressedTick =
+      tickMap && typeof tickMap.get(button) === "number"
+        ? (tickMap.get(button) as number)
+        : currentTick;
+    const pressedPos = pressPosMap?.get(button) || currentPos;
+    return {
+      pressed_tick: pressedTick,
+      current_tick: currentTick,
+      pressed_x: pressedPos.x,
+      pressed_y: pressedPos.y,
+      x: currentPos.x,
+      y: currentPos.y,
+    };
+  }
+
+  private buildButtonInfo(
+    roleKey: string,
+    buttonName: string,
+    currentTick: number,
+  ): ButtonInfoPayload {
+    const tickMap = this.buttonPressedTickByRole.get(roleKey);
+    const pressedTick =
+      tickMap && typeof tickMap.get(buttonName) === "number"
+        ? (tickMap.get(buttonName) as number)
+        : currentTick;
+    return {
+      pressed_tick: pressedTick,
+      current_tick: currentTick,
+    };
   }
 
   private phaseArrayContains(

@@ -14,11 +14,8 @@ export type SessionCommand =
       kind: "input";
       keyboard?: HeadlessStepInput["keyboard"];
       mouse?: HeadlessStepInput["mouse"];
-      uiButtons?: string[];
-    }
-  | {
-      kind: "button";
-      name: string;
+      uiButtons?: HeadlessStepInput["uiButtons"];
+      mousePosition?: HeadlessStepInput["mousePosition"];
     }
   | {
       kind: "noop";
@@ -273,15 +270,6 @@ export class SessionRuntime {
       return;
     }
 
-    if (command.kind === "button") {
-      this.host.step({
-        dtSeconds,
-        roleId,
-        uiButtons: [command.name],
-      });
-      return;
-    }
-
     if (command.kind === "input") {
       this.host.step({
         dtSeconds,
@@ -289,6 +277,7 @@ export class SessionRuntime {
         keyboard: command.keyboard,
         mouse: command.mouse,
         uiButtons: command.uiButtons,
+        mousePosition: command.mousePosition,
       });
       return;
     }

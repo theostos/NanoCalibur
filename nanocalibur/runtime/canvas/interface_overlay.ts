@@ -12,14 +12,53 @@ export class InterfaceOverlay {
   private readonly root: HTMLDivElement;
   private readonly panel: HTMLDivElement;
   private readonly textBindings: TextBinding[] = [];
-  private readonly buttonEvents: string[] = [];
+  private readonly buttonBeginEvents: string[] = [];
+  private readonly buttonEndEvents: string[] = [];
+  private readonly buttonsDown = new Set<string>();
+  private readonly pointerButtonById = new Map<number, string>();
+
+  private readonly handlePointerDown = (event: PointerEvent): void => {
+    const buttonName = this.resolveButtonName(event.target);
+    if (!buttonName) {
+      return;
+    }
+    this.pointerButtonById.set(event.pointerId, buttonName);
+    if (!this.buttonsDown.has(buttonName)) {
+      this.buttonsDown.add(buttonName);
+      this.buttonBeginEvents.push(buttonName);
+    }
+    event.preventDefault();
+  };
+
+  private readonly handlePointerUp = (event: PointerEvent): void => {
+    const trackedButton = this.pointerButtonById.get(event.pointerId);
+    if (trackedButton) {
+      this.pointerButtonById.delete(event.pointerId);
+    }
+    const buttonName = trackedButton || this.resolveButtonName(event.target);
+    if (!buttonName) {
+      return;
+    }
+    if (this.buttonsDown.has(buttonName)) {
+      this.buttonsDown.delete(buttonName);
+      this.buttonEndEvents.push(buttonName);
+    }
+    event.preventDefault();
+  };
+
+  private readonly handlePointerCancel = (event: PointerEvent): void => {
+    this.handlePointerUp(event);
+  };
 
   private readonly handleClick = (event: MouseEvent): void => {
     const buttonName = this.resolveButtonName(event.target);
     if (!buttonName) {
       return;
     }
-    this.buttonEvents.push(buttonName);
+    if (!this.buttonsDown.has(buttonName)) {
+      this.buttonBeginEvents.push(buttonName);
+      this.buttonEndEvents.push(buttonName);
+    }
     event.preventDefault();
   };
 
@@ -47,12 +86,19 @@ export class InterfaceOverlay {
     parent.appendChild(this.root);
 
     this.setHtml(html);
+    this.panel.addEventListener("pointerdown", this.handlePointerDown);
+    window.addEventListener("pointerup", this.handlePointerUp);
+    window.addEventListener("pointercancel", this.handlePointerCancel);
     this.panel.addEventListener("click", this.handleClick);
   }
 
   setHtml(html: string): void {
     this.panel.innerHTML = html;
     this.textBindings.length = 0;
+    this.buttonBeginEvents.length = 0;
+    this.buttonEndEvents.length = 0;
+    this.buttonsDown.clear();
+    this.pointerButtonById.clear();
     this.indexTextBindings();
     const clickTargets = this.panel.querySelectorAll("[data-button], button");
     for (const target of clickTargets) {
@@ -71,17 +117,22 @@ export class InterfaceOverlay {
     }
   }
 
-  consumeButtonEvents(): string[] {
-    if (this.buttonEvents.length === 0) {
-      return [];
-    }
-    const out = [...this.buttonEvents];
-    this.buttonEvents.length = 0;
-    return out;
+  consumeButtonPhases(): { begin: string[]; on: string[]; end: string[] } {
+    const begin = Array.from(new Set(this.buttonBeginEvents));
+    const on = Array.from(this.buttonsDown.values());
+    const end = Array.from(new Set(this.buttonEndEvents));
+    this.buttonBeginEvents.length = 0;
+    this.buttonEndEvents.length = 0;
+    return { begin, on, end };
   }
 
   destroy(): void {
+    this.panel.removeEventListener("pointerdown", this.handlePointerDown);
+    window.removeEventListener("pointerup", this.handlePointerUp);
+    window.removeEventListener("pointercancel", this.handlePointerCancel);
     this.panel.removeEventListener("click", this.handleClick);
+    this.buttonsDown.clear();
+    this.pointerButtonById.clear();
     this.root.remove();
   }
 

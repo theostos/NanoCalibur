@@ -33,7 +33,9 @@ interface RoleWebSocketInputState {
   lastAckedServerTick: number | null;
   pendingKeysDown: Set<string>;
   lastAppliedKeysDown: Set<string>;
-  pendingButtons: string[];
+  pendingButtonsDown: Set<string>;
+  lastAppliedButtonsDown: Set<string>;
+  pendingMousePosition: { x: number; y: number } | null;
   pendingCommands: SessionCommand[];
 }
 
@@ -515,11 +517,22 @@ export class HeadlessHttpServer {
     if (messageType === "input") {
       const keysDown = this.normalizeStringArray(payload.keys_down ?? payload.keysDown);
       state.pendingKeysDown = new Set<string>(keysDown);
-      const buttons = this.normalizeStringArray(
-        payload.buttons ?? payload.ui_buttons ?? payload.uiButtons,
+      const rawButtons = payload.buttons ?? payload.ui_buttons ?? payload.uiButtons;
+      const buttons = Array.isArray(rawButtons)
+        ? this.normalizeStringArray(rawButtons)
+        : rawButtons && typeof rawButtons === "object"
+          ? this.normalizeStringArray(
+              (rawButtons as { on?: unknown }).on
+                ?? (rawButtons as { begin?: unknown }).begin
+                ?? [],
+            )
+          : [];
+      state.pendingButtonsDown = new Set<string>(buttons);
+      const mousePosition = this.normalizeMousePosition(
+        payload.mouse_position ?? payload.mousePosition,
       );
-      if (buttons.length > 0) {
-        state.pendingButtons = buttons;
+      if (mousePosition) {
+        state.pendingMousePosition = mousePosition;
       }
 
       const inlineCommands = this.normalizeSessionCommands(payload.commands);
@@ -561,8 +574,11 @@ export class HeadlessHttpServer {
         return;
       }
       state.pendingCommands.push({
-        kind: "button",
-        name: buttonName,
+        kind: "input",
+        uiButtons: {
+          begin: [buttonName],
+          end: [buttonName],
+        },
       });
     }
   }
@@ -752,7 +768,9 @@ export class HeadlessHttpServer {
         lastAckedServerTick: null,
         pendingKeysDown: new Set<string>(),
         lastAppliedKeysDown: new Set<string>(),
-        pendingButtons: [],
+        pendingButtonsDown: new Set<string>(),
+        lastAppliedButtonsDown: new Set<string>(),
+        pendingMousePosition: null,
         pendingCommands: [],
       };
       byRole.set(roleId, state);
@@ -780,7 +798,9 @@ export class HeadlessHttpServer {
       return;
     }
     state.pendingKeysDown = new Set<string>();
-    state.pendingButtons = [];
+    state.pendingButtonsDown = new Set<string>();
+    state.lastAppliedButtonsDown = new Set<string>();
+    state.pendingMousePosition = null;
     state.pendingCommands = [];
   }
 
@@ -801,6 +821,20 @@ export class HeadlessHttpServer {
       out.push(entry);
     }
     return out;
+  }
+
+  private normalizeMousePosition(value: unknown): { x: number; y: number } | null {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    const payload = value as { x?: unknown; y?: unknown };
+    if (typeof payload.x !== "number" || !Number.isFinite(payload.x)) {
+      return null;
+    }
+    if (typeof payload.y !== "number" || !Number.isFinite(payload.y)) {
+      return null;
+    }
+    return { x: payload.x, y: payload.y };
   }
 
   private normalizeSequence(value: unknown): number | null {
@@ -841,19 +875,36 @@ export class HeadlessHttpServer {
       const end = Array.from(state.lastAppliedKeysDown.values()).filter(
         (key) => !state.pendingKeysDown.has(key),
       );
-      const buttons = [...state.pendingButtons];
+      const buttonsOn = Array.from(state.pendingButtonsDown.values());
+      const buttonsBegin = buttonsOn.filter(
+        (name) => !state.lastAppliedButtonsDown.has(name),
+      );
+      const buttonsEnd = Array.from(state.lastAppliedButtonsDown.values()).filter(
+        (name) => !state.pendingButtonsDown.has(name),
+      );
       const shouldEmitInput =
-        begin.length > 0 || on.length > 0 || end.length > 0 || buttons.length > 0;
+        begin.length > 0
+        || on.length > 0
+        || end.length > 0
+        || buttonsBegin.length > 0
+        || buttonsOn.length > 0
+        || buttonsEnd.length > 0;
       if (shouldEmitInput) {
         const keyboardPayload: HeadlessStepInput["keyboard"] = {
           begin,
           on,
           end,
         };
+        const uiButtonsPayload: HeadlessStepInput["uiButtons"] = {
+          begin: buttonsBegin,
+          on: buttonsOn,
+          end: buttonsEnd,
+        };
         const command: SessionCommand = {
           kind: "input",
           keyboard: keyboardPayload,
-          uiButtons: buttons.length > 0 ? buttons : undefined,
+          uiButtons: uiButtonsPayload,
+          mousePosition: state.pendingMousePosition || undefined,
         };
         try {
           this.sessionManager.enqueueCommand(sessionId, roleId, command);
@@ -863,7 +914,7 @@ export class HeadlessHttpServer {
       }
 
       state.lastAppliedKeysDown = new Set<string>(state.pendingKeysDown);
-      state.pendingButtons = [];
+      state.lastAppliedButtonsDown = new Set<string>(state.pendingButtonsDown);
     }
   }
 
@@ -1188,14 +1239,24 @@ export class HeadlessHttpServer {
         }
         continue;
       }
-      if (kind === "button") {
-        const name = (item as { name?: unknown }).name;
-        if (typeof name === "string" && name) {
-          out.push({ kind: "button", name });
-        }
-        continue;
-      }
       if (kind === "input") {
+        const rawUiButtons = (item as { uiButtons?: unknown }).uiButtons;
+        const normalizedUiButtons: HeadlessStepInput["uiButtons"] =
+          rawUiButtons && typeof rawUiButtons === "object" && !Array.isArray(rawUiButtons)
+            ? {
+                begin: this.normalizeStringArray(
+                  (rawUiButtons as { begin?: unknown }).begin || [],
+                ),
+                on: this.normalizeStringArray(
+                  (rawUiButtons as { on?: unknown }).on || [],
+                ),
+                end: this.normalizeStringArray(
+                  (rawUiButtons as { end?: unknown }).end || [],
+                ),
+              }
+            : Array.isArray(rawUiButtons)
+              ? { begin: this.normalizeStringArray(rawUiButtons) }
+              : undefined;
         out.push({
           kind: "input",
           keyboard:
@@ -1208,10 +1269,11 @@ export class HeadlessHttpServer {
             typeof (item as { mouse?: unknown }).mouse === "object"
               ? ((item as { mouse?: HeadlessStepInput["mouse"] }).mouse as HeadlessStepInput["mouse"])
               : undefined,
-          uiButtons: Array.isArray((item as { uiButtons?: unknown }).uiButtons)
-            ? ((item as { uiButtons?: unknown[] }).uiButtons as unknown[])
-                .filter((entry): entry is string => typeof entry === "string")
-            : undefined,
+          uiButtons: normalizedUiButtons,
+          mousePosition: this.normalizeMousePosition(
+            (item as { mousePosition?: unknown }).mousePosition
+              ?? (item as { mouse_position?: unknown }).mouse_position,
+          ) || undefined,
         });
         continue;
       }

@@ -22,7 +22,9 @@ import { actorCenterX, actorCenterY, asNumber } from "./canvas/utils";
 export interface RuntimeStepInput {
   keyboard?: PhasePayload;
   mouse?: PhasePayload;
-  uiButtons?: string[];
+  uiButtons?: PhasePayload;
+  mousePosition?: { x?: number; y?: number };
+  mouse_position?: { x?: number; y?: number };
   toolCalls?: Array<string | ToolFrameInput>;
   roleId?: string;
   role_id?: string;
@@ -258,6 +260,10 @@ export class RuntimeCore {
       keyboard: input.keyboard,
       mouse: input.mouse,
       uiButtons: input.uiButtons,
+      mousePosition:
+        input.mousePosition && typeof input.mousePosition === "object"
+          ? input.mousePosition
+          : input.mouse_position,
       toolCalls: input.toolCalls,
       parentPreviousPositions,
       roleId:

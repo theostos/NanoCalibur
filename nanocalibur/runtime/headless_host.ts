@@ -47,6 +47,10 @@ export class HeadlessHost {
       keyboard: input.keyboard,
       mouse: input.mouse,
       uiButtons: input.uiButtons,
+      mousePosition:
+        input.mousePosition && typeof input.mousePosition === "object"
+          ? input.mousePosition
+          : input.mouse_position,
       toolCalls: input.toolCalls,
       roleId:
         typeof input.roleId === "string"

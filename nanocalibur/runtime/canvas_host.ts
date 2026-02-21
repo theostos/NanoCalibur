@@ -37,6 +37,7 @@ export class CanvasHost {
   private previousKeysDown = new Set<string>();
   private readonly mouseDown = new Set<string>();
   private previousMouseDown = new Set<string>();
+  private mousePosition = { x: 0, y: 0 };
 
   private readonly fixedStepMs: number;
   private readonly maxSubSteps: number;
@@ -67,11 +68,17 @@ export class CanvasHost {
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
+    this.updateMousePosition(event);
     this.mouseDown.add(mapMouseButton(event.button));
   };
 
   private readonly handleMouseUp = (event: MouseEvent): void => {
+    this.updateMousePosition(event);
     this.mouseDown.delete(mapMouseButton(event.button));
+  };
+
+  private readonly handleMouseMove = (event: MouseEvent): void => {
+    this.updateMousePosition(event);
   };
 
   private readonly handleContextMenu = (event: MouseEvent): void => {
@@ -188,13 +195,18 @@ export class CanvasHost {
     const keyboard = diffSets(this.keysDown, this.previousKeysDown);
     const mouse = diffSets(this.mouseDown, this.previousMouseDown);
     const uiButtons = this.interfaceOverlay
-      ? this.interfaceOverlay.consumeButtonEvents()
-      : [];
+      ? this.interfaceOverlay.consumeButtonPhases()
+      : { begin: [], on: [], end: [] };
 
     this.previousKeysDown = new Set(this.keysDown);
     this.previousMouseDown = new Set(this.mouseDown);
 
-    this.core.step(dtSeconds, { keyboard, mouse, uiButtons });
+    this.core.step(dtSeconds, {
+      keyboard,
+      mouse,
+      uiButtons,
+      mousePosition: this.mousePosition,
+    });
     this.syncInterfaceOverlay();
     if (this.interfaceOverlay) {
       this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals());
@@ -228,6 +240,7 @@ export class CanvasHost {
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("mousedown", this.handleMouseDown);
     window.addEventListener("mouseup", this.handleMouseUp);
+    window.addEventListener("mousemove", this.handleMouseMove);
     window.addEventListener("contextmenu", this.handleContextMenu);
     window.addEventListener("blur", this.handleWindowBlur);
     document.addEventListener("visibilitychange", this.handleVisibilityChange);
@@ -243,6 +256,7 @@ export class CanvasHost {
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("mousedown", this.handleMouseDown);
     window.removeEventListener("mouseup", this.handleMouseUp);
+    window.removeEventListener("mousemove", this.handleMouseMove);
     window.removeEventListener("contextmenu", this.handleContextMenu);
     window.removeEventListener("blur", this.handleWindowBlur);
     document.removeEventListener("visibilitychange", this.handleVisibilityChange);
@@ -254,6 +268,14 @@ export class CanvasHost {
     this.previousKeysDown.clear();
     this.mouseDown.clear();
     this.previousMouseDown.clear();
+  }
+
+  private updateMousePosition(event: MouseEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    this.mousePosition = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
   }
 
   private syncInterfaceOverlay(): void {

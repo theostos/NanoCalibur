@@ -768,7 +768,7 @@ def test_runtime_button_condition_matches_ui_buttons(tmp_path):
           globals: [{{ name: "count", kind: "int", value: 0 }}],
           predicates: [],
           rules: [
-            {{ condition: {{ kind: "button", name: "spawn_bonus" }}, action: "inc" }}
+            {{ condition: {{ kind: "button", phase: "begin", name: "spawn_bonus" }}, action: "inc" }}
           ]
         }};
 
@@ -779,8 +779,8 @@ def test_runtime_button_condition_matches_ui_buttons(tmp_path):
         }};
 
         const i = new NanoCaliburInterpreter(spec, actions, {{}});
-        i.tick({{ uiButtons: ["other"] }});
-        i.tick({{ uiButtons: ["spawn_bonus"] }});
+        i.tick({{ uiButtons: { begin: ["other"] } }});
+        i.tick({{ uiButtons: { begin: ["spawn_bonus"] } }});
         console.log(JSON.stringify(i.getState().globals.count));
         """
     )
@@ -793,6 +793,99 @@ def test_runtime_button_condition_matches_ui_buttons(tmp_path):
     )
     count = json.loads(proc.stdout.strip())
     assert count == 1
+
+
+def test_runtime_input_infos_expose_pressed_tick_and_mouse_positions(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "kb_delta", kind: "int", value: 0 }},
+            {{ name: "mouse_press_x", kind: "int", value: 0 }},
+            {{ name: "mouse_current_x", kind: "int", value: 0 }},
+            {{ name: "button_delta", kind: "int", value: 0 }}
+          ],
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "keyboard", phase: "on", key: "d", role_id: "human_1" }}, action: "kb" }},
+            {{ condition: {{ kind: "mouse", phase: "on", button: "left", role_id: "human_1" }}, action: "ms" }},
+            {{ condition: {{ kind: "button", phase: "on", name: "spawn_bonus", role_id: "human_1" }}, action: "btn" }}
+          ]
+        }};
+
+        const actions = {{
+          kb: (ctx) => {{
+            const info = ctx.keyboardInfo || {{}};
+            ctx.globals.kb_delta = Number(info.current_tick || 0) - Number(info.pressed_tick || 0);
+          }},
+          ms: (ctx) => {{
+            const info = ctx.mouseInfo || {{}};
+            ctx.globals.mouse_press_x = Math.round(Number(info.pressed_x || 0));
+            ctx.globals.mouse_current_x = Math.round(Number(info.x || 0));
+          }},
+          btn: (ctx) => {{
+            const info = ctx.buttonInfo || {{}};
+            ctx.globals.button_delta = Number(info.current_tick || 0) - Number(info.pressed_tick || 0);
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{
+          role_id: "human_1",
+          keyboard: {{ begin: ["d"], on: ["d"] }},
+          mouse: {{ begin: ["left"], on: ["left"] }},
+          mousePosition: {{ x: 11, y: 9 }},
+          uiButtons: {{ begin: ["spawn_bonus"], on: ["spawn_bonus"] }}
+        }});
+        i.tick({{
+          role_id: "human_1",
+          keyboard: {{ on: ["d"] }},
+          mouse: {{ on: ["left"] }},
+          mousePosition: {{ x: 21, y: 9 }},
+          uiButtons: {{ on: ["spawn_bonus"] }}
+        }});
+        console.log(JSON.stringify(i.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["kb_delta"] == 1
+    assert values["mouse_press_x"] == 11
+    assert values["mouse_current_x"] == 21
+    assert values["button_delta"] == 1
 
 
 def test_runtime_scene_set_interface_updates_state(tmp_path):
@@ -830,7 +923,7 @@ def test_runtime_scene_set_interface_updates_state(tmp_path):
           interface_html: "<div>default</div>",
           predicates: [],
           rules: [
-            {{ condition: {{ kind: "button", name: "swap_ui" }}, action: "swap_ui" }}
+            {{ condition: {{ kind: "button", phase: "begin", name: "swap_ui" }}, action: "swap_ui" }}
           ]
         }};
 
@@ -842,7 +935,7 @@ def test_runtime_scene_set_interface_updates_state(tmp_path):
 
         const i = new NanoCaliburInterpreter(spec, actions, {{}});
         const before = i.getState().scene.interfaceHtml;
-        i.tick({{ uiButtons: ["swap_ui"] }});
+        i.tick({{ uiButtons: { begin: ["swap_ui"] } }});
         const after = i.getState().scene.interfaceHtml;
         console.log(JSON.stringify({{ before, after }}));
         """
@@ -895,7 +988,7 @@ def test_runtime_scene_set_interface_updates_role_scoped_state(tmp_path):
           interfaces_by_role: {{ human_1: "<div>h1</div>" }},
           predicates: [],
           rules: [
-            {{ condition: {{ kind: "button", name: "swap_ui" }}, action: "swap_ui" }}
+            {{ condition: {{ kind: "button", phase: "begin", name: "swap_ui" }}, action: "swap_ui" }}
           ]
         }};
 
@@ -907,7 +1000,7 @@ def test_runtime_scene_set_interface_updates_role_scoped_state(tmp_path):
 
         const i = new NanoCaliburInterpreter(spec, actions, {{}});
         const before = i.getState().scene.interfaceByRole.human_1;
-        i.tick({{ uiButtons: ["swap_ui"] }});
+        i.tick({{ uiButtons: { begin: ["swap_ui"] } }});
         const state = i.getState().scene;
         console.log(JSON.stringify({{ before, after: state.interfaceByRole.human_1, global: state.interfaceHtml }}));
         """
