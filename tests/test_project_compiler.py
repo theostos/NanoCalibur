@@ -17,7 +17,7 @@ from nanocalibur.game_model import (
     ToolConditionSpec,
     VisibilityMode,
 )
-from nanocalibur.ir import Attr, BindingKind
+from nanocalibur.ir import Assign, Attr, Binary, BindingKind, Const
 from nanocalibur.project_compiler import ProjectCompiler
 
 
@@ -347,6 +347,102 @@ def test_project_expands_top_level_role_loop_with_string_builders():
         False,
         False,
     ]
+
+
+def test_project_allows_compile_time_constants_in_actions_predicates_and_callables():
+    project = compile_project(
+        """
+        BASE_SPEED = 3
+
+        class Player(Actor):
+            speed: int
+
+        @callable
+        def add_base_speed(speed: int):
+            return speed + BASE_SPEED
+
+        def is_fast(player: Player["hero"]) -> bool:
+            return player.speed >= BASE_SPEED
+
+        def speed_up(player: Player["hero"]):
+            player.speed = add_base_speed(player.speed)
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0, speed=1))
+        scene.add_rule(OnButton("speed_up"), speed_up)
+        scene.add_rule(OnLogicalCondition(is_fast, Player), speed_up)
+        """
+    )
+
+    assert len(project.callables) == 1
+    return_expr = project.callables[0].return_expr
+    assert isinstance(return_expr, Binary)
+    assert isinstance(return_expr.right, Const)
+    assert return_expr.right.value == 3
+
+    assert len(project.predicates) == 1
+    predicate_expr = project.predicates[0].body
+    assert isinstance(predicate_expr, Binary)
+    assert isinstance(predicate_expr.right, Const)
+    assert predicate_expr.right.value == 3
+
+
+def test_project_allows_compile_time_constants_built_from_static_control_flow():
+    project = compile_project(
+        """
+        k = 1
+        while k < 5:
+            k = k + 1
+
+        if k == 5:
+            COST = 42
+        else:
+            COST = 99
+
+        class Player(Actor):
+            speed: int
+
+        def spend(player: Player["hero"]):
+            player.speed = player.speed - COST
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0, speed=100))
+        scene.add_rule(OnButton("spend"), spend)
+        """
+    )
+
+    assign_stmt = project.actions[0].body[0]
+    assert isinstance(assign_stmt, Assign)
+    assert isinstance(assign_stmt.value, Binary)
+    right = assign_stmt.value.right
+    assert isinstance(right, Const)
+    assert right.value == 42
+
+
+def test_project_rejects_runtime_assignment_to_compile_time_constant():
+    with pytest.raises(DSLValidationError, match="Cannot assign to compile-time constant"):
+        compile_project(
+            """
+            DAMAGE = 5
+
+            class Player(Actor):
+                life: int
+
+            def bad(player: Player["hero"]):
+                DAMAGE = DAMAGE + 1
+                player.life = player.life - DAMAGE
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=0, y=0, life=10))
+            scene.add_rule(OnButton("bad"), bad)
+            """
+        )
 
 
 def test_project_parses_role_schema_and_role_bindings():

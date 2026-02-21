@@ -82,10 +82,59 @@ class DSLCompiler:
         self._register_builtin_schemas()
         self.global_actor_types: Dict[str, Optional[str]] = dict(global_actor_types or {})
         self.callable_signatures: Dict[str, int] = {}
+        self._compile_time_constant_values: Dict[str, object] = {}
+        self._compile_time_constant_exprs: Dict[str, Expr] = {}
 
     def set_callable_signatures(self, signatures: Dict[str, int]) -> None:
         """Register callable helper signatures available in expressions."""
         self.callable_signatures = dict(signatures)
+
+    def set_compile_time_constants(self, constants: Dict[str, object]) -> None:
+        """Register top-level compile-time constants available in function bodies."""
+        self._compile_time_constant_values = dict(constants)
+        self._compile_time_constant_exprs = {}
+
+    def _compile_time_constant_expr(self, name: str) -> Expr:
+        cached = self._compile_time_constant_exprs.get(name)
+        if cached is not None:
+            return cached
+        value = self._compile_time_constant_values[name]
+        compiled = self._compile_time_value_to_expr(value, name=name)
+        self._compile_time_constant_exprs[name] = compiled
+        return compiled
+
+    def _compile_time_value_to_expr(self, value: object, *, name: str) -> Expr:
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return Const(value)
+        if isinstance(value, tuple):
+            return ListExpr(
+                items=[self._compile_time_value_to_expr(item, name=name) for item in value]
+            )
+        if isinstance(value, list):
+            return ListExpr(
+                items=[self._compile_time_value_to_expr(item, name=name) for item in value]
+            )
+        if isinstance(value, dict):
+            fields: Dict[str, Expr] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise DSLValidationError(
+                        f"Compile-time constant '{name}' uses a non-string dict key. "
+                        "Only Dict[str, ...] constants are supported inside functions."
+                    )
+                fields[key] = self._compile_time_value_to_expr(item, name=name)
+            return ObjectExpr(fields=fields)
+        raise DSLValidationError(
+            f"Compile-time constant '{name}' has unsupported type '{type(value).__name__}' "
+            "for use inside functions."
+        )
+
+    def _reject_compile_time_constant_shadowing(self, name: str) -> None:
+        if name in self._compile_time_constant_values:
+            raise DSLValidationError(
+                f"Parameter '{name}' shadows a compile-time constant. "
+                "Rename the parameter or the top-level constant."
+            )
 
     def compile(
         self,
@@ -402,6 +451,7 @@ class DSLCompiler:
                 with dsl_node_context(arg):
                     if arg.annotation is None:
                         raise DSLValidationError("All action parameters must have bindings.")
+                    self._reject_compile_time_constant_shadowing(arg.arg)
                     params.append(self._parse_binding(arg))
 
             actor_var_types: Dict[str, str] = {}
@@ -462,6 +512,7 @@ class DSLCompiler:
                         raise DSLValidationError(
                             "All predicate parameters must have bindings."
                         )
+                    self._reject_compile_time_constant_shadowing(arg.arg)
                     params.append(self._parse_binding(arg))
 
             actor_var_types: Dict[str, str] = {}
@@ -542,6 +593,7 @@ class DSLCompiler:
                         raise DSLValidationError(
                             "All callable parameters must have type annotations."
                         )
+                    self._reject_compile_time_constant_shadowing(arg.arg)
                     params.append(arg.arg)
                     ann = arg.annotation
                     if isinstance(ann, ast.Name):
@@ -873,6 +925,10 @@ class DSLCompiler:
                     raise DSLValidationError("for-else is not supported.")
                 if not isinstance(stmt.target, ast.Name):
                     raise DSLValidationError("for loop target must be a simple name.")
+                if stmt.target.id in self._compile_time_constant_values:
+                    raise DSLValidationError(
+                        f"Cannot assign loop variable '{stmt.target.id}' because it is a compile-time constant."
+                    )
 
                 iterable = self._compile_expr(stmt.iter, scope, allow_range_call=True)
                 scope.defined_names.add(stmt.target.id)
@@ -955,6 +1011,12 @@ class DSLCompiler:
 
         if owner == "Scene":
             return self._compile_static_scene_call(expr, scope)
+
+        if owner in self._compile_time_constant_values:
+            raise DSLValidationError(
+                f"Cannot mutate compile-time constant '{owner}'. "
+                "Top-level constants are read-only at runtime."
+            )
 
         if owner in scope.defined_names:
             return self._compile_collection_call_stmt(expr, scope, owner)
@@ -1537,6 +1599,11 @@ class DSLCompiler:
 
     def _compile_assign_target(self, target: ast.AST, scope: ActionScope):
         if isinstance(target, ast.Name):
+            if target.id in self._compile_time_constant_values:
+                raise DSLValidationError(
+                    f"Cannot assign to compile-time constant '{target.id}'. "
+                    "Top-level constants are read-only at runtime."
+                )
             return Var(target.id)
         if isinstance(target, ast.Attribute):
             compiled = self._compile_attr(target, scope)
@@ -1556,6 +1623,11 @@ class DSLCompiler:
         if isinstance(target, ast.Subscript):
             if isinstance(target.slice, ast.Slice):
                 raise DSLValidationError("Slice assignment is not supported.")
+            if isinstance(target.value, ast.Name) and target.value.id in self._compile_time_constant_values:
+                raise DSLValidationError(
+                    f"Cannot mutate compile-time constant '{target.value.id}'. "
+                    "Top-level constants are read-only at runtime."
+                )
             return SubscriptExpr(
                 value=self._compile_expr(target.value, scope, allow_range_call=False),
                 index=self._compile_expr(target.slice, scope, allow_range_call=False),
@@ -1601,9 +1673,11 @@ class DSLCompiler:
                 return ObjectExpr(fields=fields)
 
             if isinstance(expr, ast.Name):
-                if expr.id not in scope.defined_names:
-                    raise DSLValidationError(f"Unknown variable '{expr.id}'.")
-                return Var(expr.id)
+                if expr.id in scope.defined_names:
+                    return Var(expr.id)
+                if expr.id in self._compile_time_constant_values:
+                    return self._compile_time_constant_expr(expr.id)
+                raise DSLValidationError(f"Unknown variable '{expr.id}'.")
 
             if isinstance(expr, ast.Attribute):
                 return self._compile_attr(expr, scope)

@@ -215,10 +215,11 @@ class ProjectCompiler:
                 )
             except SyntaxError as exc:
                 raise DSLValidationError(_format_syntax_error(exc, source)) from exc
-            module = self._expand_top_level_static_control_flow(module)
+            module, static_setup_env = self._expand_top_level_static_control_flow(module)
             self._warn_immutable_dsl_edits(module)
 
             compiler = DSLCompiler()
+            compiler.set_compile_time_constants(static_setup_env)
 
             game_var = self._discover_game_variable(module)
             self._register_actor_schemas(module, compiler)
@@ -408,7 +409,10 @@ class ProjectCompiler:
                 contains_next_turn_call=contains_next_turn_call,
             )
 
-    def _expand_top_level_static_control_flow(self, module: ast.Module) -> ast.Module:
+    def _expand_top_level_static_control_flow(
+        self,
+        module: ast.Module,
+    ) -> Tuple[ast.Module, Dict[str, object]]:
         env: Dict[str, object] = {}
         max_setup_steps = 20_000
         max_loop_iterations = 10_000
@@ -517,7 +521,7 @@ class ProjectCompiler:
 
         expanded = ast.Module(body=expand_block(module.body), type_ignores=module.type_ignores)
         ast.fix_missing_locations(expanded)
-        return expanded
+        return expanded, dict(env)
 
     def _discover_game_variable(self, module: ast.Module) -> str:
         name_aliases: Dict[str, str] = {}
