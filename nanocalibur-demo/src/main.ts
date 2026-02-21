@@ -316,6 +316,13 @@ class SessionSnapshotRenderer {
     this.localState = deepCloneLocalState(nextLocalState);
   }
 
+  consumeInterfaceButtonPhases(): { begin: string[]; on: string[]; end: string[] } {
+    if (!this.interfaceOverlay) {
+      return { begin: [], on: [], end: [] };
+    }
+    return this.interfaceOverlay.consumeButtonPhases();
+  }
+
   private renderLoop = (): void => {
     if (!this.ready) {
       return;
@@ -730,6 +737,13 @@ function uniqueStrings(values: string[]): string[] {
   return out;
 }
 
+function mapMouseButton(buttonCode: number): string {
+  if (buttonCode === 0) return 'left';
+  if (buttonCode === 1) return 'middle';
+  if (buttonCode === 2) return 'right';
+  return `button_${buttonCode}`;
+}
+
 function browserKeyboardTokens(event: KeyboardEvent): string[] {
   const key = typeof event.key === 'string' ? event.key : '';
   const code = typeof event.code === 'string' ? event.code : '';
@@ -936,7 +950,14 @@ async function startSessionBrowserClient(
     } | null;
     return Boolean(ws && ws.readyState === 1 && typeof ws.send === 'function');
   };
-  const sendWebSocketInputFrame = (keysDown: string[], buttons: string[] = []): void => {
+  const sendWebSocketInputFrame = (
+    keysDown: string[],
+    options: {
+      buttons?: string[];
+      mouseButtons?: string[];
+      mousePosition?: { x: number; y: number };
+    } = {},
+  ): void => {
     const ws = activeWebSocket as unknown as {
       readyState?: number;
       send?: (value: string) => void;
@@ -950,7 +971,9 @@ async function startSessionBrowserClient(
       seq: wsInputSeq,
       last_acked_server_tick: lastAckedServerTick,
       keys_down: keysDown,
-      buttons,
+      buttons: options.buttons || [],
+      mouse_buttons: options.mouseButtons || [],
+      mouse_position: options.mousePosition,
     };
     try {
       ws.send(JSON.stringify(payload));
@@ -1040,26 +1063,66 @@ async function startSessionBrowserClient(
     return '';
   };
 
-  const sendReleaseForAllPressedKeys = (): void => {
+  const mouseDown = new Set<string>();
+  const mouseBeginEvents: string[] = [];
+  const mouseEndEvents: string[] = [];
+  let mousePosition = { x: 0, y: 0 };
+
+  const updateMousePosition = (event: MouseEvent): void => {
+    const rect = canvas.getBoundingClientRect();
+    mousePosition = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  };
+
+  const consumeMousePhases = (): { begin: string[]; on: string[]; end: string[] } => {
+    const begin = uniqueStrings(mouseBeginEvents);
+    const end = uniqueStrings(mouseEndEvents);
+    mouseBeginEvents.length = 0;
+    mouseEndEvents.length = 0;
+    const on = uniqueStrings(Array.from(mouseDown.values()));
+    return { begin, on, end };
+  };
+
+  const sendReleaseForAllPressedInputs = (): void => {
     const physicalTokens = uniqueStrings(
       Array.from(activePhysicalTokensByKey.values()).flat(),
     );
-    if (physicalTokens.length === 0) {
-      return;
+    if (physicalTokens.length > 0) {
+      activePhysicalTokensByKey.clear();
     }
-    activePhysicalTokensByKey.clear();
-    const endTokens = keyboardTokensWithLogicalBindings(roleLocal.localState, physicalTokens);
+    const mouseButtonsDown = Array.from(mouseDown.values());
+    for (const button of mouseButtonsDown) {
+      mouseEndEvents.push(button);
+    }
+    mouseDown.clear();
+
+    const endTokens = physicalTokens.length > 0
+      ? keyboardTokensWithLogicalBindings(roleLocal.localState, physicalTokens)
+      : [];
     if (isWebSocketInputActive()) {
-      sendWebSocketInputFrame(activeInputTokens());
+      sendWebSocketInputFrame([], {
+        buttons: [],
+        mouseButtons: [],
+        mousePosition,
+      });
       return;
     }
-    if (endTokens.length === 0) {
+    if (endTokens.length === 0 && mouseButtonsDown.length === 0) {
       return;
     }
-    enqueueCommand({
+    const command: Record<string, any> = {
       kind: 'input',
-      keyboard: { end: endTokens },
-    });
+    };
+    if (endTokens.length > 0) {
+      command.keyboard = { end: endTokens };
+    }
+    if (mouseButtonsDown.length > 0) {
+      command.mouse = { end: uniqueStrings(mouseButtonsDown) };
+      command.mousePosition = mousePosition;
+    }
+    enqueueCommand(command);
   };
 
   const handleKeyDown = (event: KeyboardEvent): void => {
@@ -1091,7 +1154,6 @@ async function startSessionBrowserClient(
       event.preventDefault();
     }
     if (isWebSocketInputActive()) {
-      sendWebSocketInputFrame(activeInputTokens());
       return;
     }
     enqueueCommand({
@@ -1124,7 +1186,6 @@ async function startSessionBrowserClient(
       event.preventDefault();
     }
     if (isWebSocketInputActive()) {
-      sendWebSocketInputFrame(activeInputTokens());
       return;
     }
     enqueueCommand({
@@ -1133,15 +1194,89 @@ async function startSessionBrowserClient(
     });
   };
 
+  const handleMouseDown = (event: MouseEvent): void => {
+    updateMousePosition(event);
+    const button = mapMouseButton(event.button);
+    if (!mouseDown.has(button)) {
+      mouseDown.add(button);
+      mouseBeginEvents.push(button);
+    }
+    if (event.button === 2) {
+      event.preventDefault();
+    }
+    if (isWebSocketInputActive()) {
+      return;
+    }
+    enqueueCommand({
+      kind: 'input',
+      mouse: {
+        begin: [button],
+        on: uniqueStrings(Array.from(mouseDown.values())),
+      },
+      mousePosition,
+    });
+  };
+
+  const handleMouseUp = (event: MouseEvent): void => {
+    updateMousePosition(event);
+    const button = mapMouseButton(event.button);
+    if (mouseDown.has(button)) {
+      mouseDown.delete(button);
+      mouseEndEvents.push(button);
+    }
+    if (event.button === 2) {
+      event.preventDefault();
+    }
+    if (isWebSocketInputActive()) {
+      return;
+    }
+    enqueueCommand({
+      kind: 'input',
+      mouse: {
+        on: uniqueStrings(Array.from(mouseDown.values())),
+        end: [button],
+      },
+      mousePosition,
+    });
+  };
+
+  const handleMouseMove = (event: MouseEvent): void => {
+    updateMousePosition(event);
+    if (isWebSocketInputActive()) {
+      return;
+    }
+    if (mouseDown.size <= 0) {
+      return;
+    }
+    enqueueCommand(
+      {
+        kind: 'input',
+        mouse: {
+          on: uniqueStrings(Array.from(mouseDown.values())),
+        },
+        mousePosition,
+      },
+      { dropIfBusy: true },
+    );
+  };
+
+  const handleContextMenu = (event: MouseEvent): void => {
+    event.preventDefault();
+  };
+
   const handleVisibilityChange = (): void => {
     if (document.visibilityState !== 'visible') {
-      sendReleaseForAllPressedKeys();
+      sendReleaseForAllPressedInputs();
     }
   };
 
   window.addEventListener('keydown', handleKeyDown);
   window.addEventListener('keyup', handleKeyUp);
-  window.addEventListener('blur', sendReleaseForAllPressedKeys);
+  window.addEventListener('mousedown', handleMouseDown, { passive: false });
+  window.addEventListener('mouseup', handleMouseUp, { passive: false });
+  window.addEventListener('mousemove', handleMouseMove);
+  window.addEventListener('contextmenu', handleContextMenu);
+  window.addEventListener('blur', sendReleaseForAllPressedInputs);
   document.addEventListener('visibilitychange', handleVisibilityChange);
 
   const inputPulseMs = Math.max(
@@ -1150,20 +1285,47 @@ async function startSessionBrowserClient(
   );
   const inputPulseHandle = window.setInterval(() => {
     const onTokens = activeInputTokens();
+    const mousePhases = consumeMousePhases();
+    const uiButtonPhases = sessionRenderer.consumeInterfaceButtonPhases();
     if (isWebSocketInputActive()) {
-      // Fixed-rate protocol: always send current down-set to generate begin/on/end server-side.
-      sendWebSocketInputFrame(onTokens);
+      // Fixed-rate protocol: send down-sets; include begin-edges so short taps/clicks are not lost.
+      sendWebSocketInputFrame(onTokens, {
+        buttons: uniqueStrings([...uiButtonPhases.on, ...uiButtonPhases.begin]),
+        mouseButtons: uniqueStrings([...mousePhases.on, ...mousePhases.begin]),
+        mousePosition,
+      });
       return;
     }
-    if (onTokens.length === 0) {
+    const hasMousePhases =
+      mousePhases.begin.length > 0
+      || mousePhases.on.length > 0
+      || mousePhases.end.length > 0;
+    const hasUiButtonPhases =
+      uiButtonPhases.begin.length > 0
+      || uiButtonPhases.on.length > 0
+      || uiButtonPhases.end.length > 0;
+    if (!hasMousePhases && !hasUiButtonPhases && onTokens.length === 0) {
       return;
     }
+    const command: Record<string, any> = { kind: 'input' };
+    if (onTokens.length > 0) {
+      command.keyboard = { on: onTokens };
+    }
+    if (hasMousePhases) {
+      command.mouse = mousePhases;
+      command.mousePosition = mousePosition;
+    }
+    if (hasUiButtonPhases) {
+      command.uiButtons = uiButtonPhases;
+    }
+    const hasEdge =
+      mousePhases.begin.length > 0
+      || mousePhases.end.length > 0
+      || uiButtonPhases.begin.length > 0
+      || uiButtonPhases.end.length > 0;
     enqueueCommand(
-      {
-        kind: 'input',
-        keyboard: { on: onTokens },
-      },
-      { dropIfBusy: true },
+      command,
+      { dropIfBusy: !hasEdge },
     );
   }, inputPulseMs);
 
@@ -1192,7 +1354,11 @@ async function startSessionBrowserClient(
         ws.onopen = () => {
           opened = true;
           liveTransportActive = true;
-          sendWebSocketInputFrame(activeInputTokens());
+          sendWebSocketInputFrame(activeInputTokens(), {
+            buttons: [],
+            mouseButtons: uniqueStrings(Array.from(mouseDown.values())),
+            mousePosition,
+          });
         };
 
         ws.onmessage = (event) => {
@@ -1322,10 +1488,14 @@ async function startSessionBrowserClient(
     window.clearInterval(statusPollHandle);
     window.clearInterval(snapshotPollHandle);
     window.clearInterval(inputPulseHandle);
-    sendReleaseForAllPressedKeys();
+    sendReleaseForAllPressedInputs();
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('keyup', handleKeyUp);
-    window.removeEventListener('blur', sendReleaseForAllPressedKeys);
+    window.removeEventListener('mousedown', handleMouseDown);
+    window.removeEventListener('mouseup', handleMouseUp);
+    window.removeEventListener('mousemove', handleMouseMove);
+    window.removeEventListener('contextmenu', handleContextMenu);
+    window.removeEventListener('blur', sendReleaseForAllPressedInputs);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
   }
 }

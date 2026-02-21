@@ -35,6 +35,8 @@ interface RoleWebSocketInputState {
   lastAppliedKeysDown: Set<string>;
   pendingButtonsDown: Set<string>;
   lastAppliedButtonsDown: Set<string>;
+  pendingMouseButtonsDown: Set<string>;
+  lastAppliedMouseButtonsDown: Set<string>;
   pendingMousePosition: { x: number; y: number } | null;
   pendingCommands: SessionCommand[];
 }
@@ -528,6 +530,17 @@ export class HeadlessHttpServer {
             )
           : [];
       state.pendingButtonsDown = new Set<string>(buttons);
+      const rawMouseButtons = payload.mouse_buttons ?? payload.mouseButtons;
+      const mouseButtons = Array.isArray(rawMouseButtons)
+        ? this.normalizeStringArray(rawMouseButtons)
+        : rawMouseButtons && typeof rawMouseButtons === "object"
+          ? this.normalizeStringArray(
+              (rawMouseButtons as { on?: unknown }).on
+                ?? (rawMouseButtons as { begin?: unknown }).begin
+                ?? [],
+            )
+          : [];
+      state.pendingMouseButtonsDown = new Set<string>(mouseButtons);
       const mousePosition = this.normalizeMousePosition(
         payload.mouse_position ?? payload.mousePosition,
       );
@@ -770,6 +783,8 @@ export class HeadlessHttpServer {
         lastAppliedKeysDown: new Set<string>(),
         pendingButtonsDown: new Set<string>(),
         lastAppliedButtonsDown: new Set<string>(),
+        pendingMouseButtonsDown: new Set<string>(),
+        lastAppliedMouseButtonsDown: new Set<string>(),
         pendingMousePosition: null,
         pendingCommands: [],
       };
@@ -800,6 +815,8 @@ export class HeadlessHttpServer {
     state.pendingKeysDown = new Set<string>();
     state.pendingButtonsDown = new Set<string>();
     state.lastAppliedButtonsDown = new Set<string>();
+    state.pendingMouseButtonsDown = new Set<string>();
+    state.lastAppliedMouseButtonsDown = new Set<string>();
     state.pendingMousePosition = null;
     state.pendingCommands = [];
   }
@@ -882,13 +899,23 @@ export class HeadlessHttpServer {
       const buttonsEnd = Array.from(state.lastAppliedButtonsDown.values()).filter(
         (name) => !state.pendingButtonsDown.has(name),
       );
+      const mouseOn = Array.from(state.pendingMouseButtonsDown.values());
+      const mouseBegin = mouseOn.filter(
+        (name) => !state.lastAppliedMouseButtonsDown.has(name),
+      );
+      const mouseEnd = Array.from(state.lastAppliedMouseButtonsDown.values()).filter(
+        (name) => !state.pendingMouseButtonsDown.has(name),
+      );
       const shouldEmitInput =
         begin.length > 0
         || on.length > 0
         || end.length > 0
         || buttonsBegin.length > 0
         || buttonsOn.length > 0
-        || buttonsEnd.length > 0;
+        || buttonsEnd.length > 0
+        || mouseBegin.length > 0
+        || mouseOn.length > 0
+        || mouseEnd.length > 0;
       if (shouldEmitInput) {
         const keyboardPayload: HeadlessStepInput["keyboard"] = {
           begin,
@@ -900,9 +927,15 @@ export class HeadlessHttpServer {
           on: buttonsOn,
           end: buttonsEnd,
         };
+        const mousePayload: HeadlessStepInput["mouse"] = {
+          begin: mouseBegin,
+          on: mouseOn,
+          end: mouseEnd,
+        };
         const command: SessionCommand = {
           kind: "input",
           keyboard: keyboardPayload,
+          mouse: mousePayload,
           uiButtons: uiButtonsPayload,
           mousePosition: state.pendingMousePosition || undefined,
         };
@@ -915,6 +948,7 @@ export class HeadlessHttpServer {
 
       state.lastAppliedKeysDown = new Set<string>(state.pendingKeysDown);
       state.lastAppliedButtonsDown = new Set<string>(state.pendingButtonsDown);
+      state.lastAppliedMouseButtonsDown = new Set<string>(state.pendingMouseButtonsDown);
     }
   }
 
