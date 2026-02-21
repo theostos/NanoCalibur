@@ -320,15 +320,25 @@ function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
                     continue
 
                 if param.kind == BindingKind.KEYBOARD_INFO:
-                    lines.append(f"  let {param.name} = ctx.keyboardInfo;")
+                    lines.append(
+                        f"  let {param.name}: any = ctx.keyboardInfo || "
+                        "{ pressed_tick: ctx.tick, current_tick: ctx.tick };"
+                    )
                     continue
 
                 if param.kind == BindingKind.MOUSE_INFO:
-                    lines.append(f"  let {param.name} = ctx.mouseInfo;")
+                    lines.append(
+                        f"  let {param.name}: any = ctx.mouseInfo || "
+                        "{ pressed_tick: ctx.tick, current_tick: ctx.tick, "
+                        "pressed_x: 0, pressed_y: 0, x: 0, y: 0 };"
+                    )
                     continue
 
                 if param.kind == BindingKind.BUTTON_INFO:
-                    lines.append(f"  let {param.name} = ctx.buttonInfo;")
+                    lines.append(
+                        f"  let {param.name}: any = ctx.buttonInfo || "
+                        "{ pressed_tick: ctx.tick, current_tick: ctx.tick };"
+                    )
                     continue
 
                 if param.kind == BindingKind.GLOBAL:
@@ -553,15 +563,25 @@ function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
                     continue
 
                 if param.kind == BindingKind.KEYBOARD_INFO:
-                    lines.append(f"  let {param.name} = ctx.keyboardInfo;")
+                    lines.append(
+                        f"  let {param.name}: any = ctx.keyboardInfo || "
+                        "{ pressed_tick: ctx.tick, current_tick: ctx.tick };"
+                    )
                     continue
 
                 if param.kind == BindingKind.MOUSE_INFO:
-                    lines.append(f"  let {param.name} = ctx.mouseInfo;")
+                    lines.append(
+                        f"  let {param.name}: any = ctx.mouseInfo || "
+                        "{ pressed_tick: ctx.tick, current_tick: ctx.tick, "
+                        "pressed_x: 0, pressed_y: 0, x: 0, y: 0 };"
+                    )
                     continue
 
                 if param.kind == BindingKind.BUTTON_INFO:
-                    lines.append(f"  let {param.name} = ctx.buttonInfo;")
+                    lines.append(
+                        f"  let {param.name}: any = ctx.buttonInfo || "
+                        "{ pressed_tick: ctx.tick, current_tick: ctx.tick };"
+                    )
                     continue
 
                 if param.kind == BindingKind.GLOBAL:

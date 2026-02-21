@@ -256,17 +256,6 @@ def _is_spawn_open(
     if left < 0 or right >= world_w or top < 0 or bottom >= world_h:
         return False
 
-    if scene.is_solid_at(left, top) or scene.is_solid_at(right, top):
-        return False
-    if scene.is_solid_at(left, bottom) or scene.is_solid_at(right, bottom):
-        return False
-    if scene.is_solid_at(x, y):
-        return False
-    if scene.is_solid_at(x, top) or scene.is_solid_at(x, bottom):
-        return False
-    if scene.is_solid_at(left, y) or scene.is_solid_at(right, y):
-        return False
-
     for unit in units:
         if not unit.active:
             continue
@@ -298,6 +287,9 @@ def _is_spawn_open(
         return False
 
     return True
+
+
+CodeBlock.end("starcraft_clone_production")
 
 
 player_rules = AbstractCodeBlock.begin(
@@ -1235,6 +1227,3 @@ player_rules.instantiate(
     btn_upgrade_attack="h2_upg_attack",
     btn_upgrade_armor="h2_upg_armor",
 )
-
-
-CodeBlock.end("starcraft_clone_production")

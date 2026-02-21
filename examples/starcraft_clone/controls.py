@@ -87,17 +87,6 @@ def _placement_reason(
     if left < 0 or right >= world_w or top < 0 or bottom >= world_h:
         return "Out of map bounds."
 
-    if scene.is_solid_at(left, top) or scene.is_solid_at(right, top):
-        return "Blocked by terrain."
-    if scene.is_solid_at(left, bottom) or scene.is_solid_at(right, bottom):
-        return "Blocked by terrain."
-    if scene.is_solid_at(x, y):
-        return "Blocked by terrain."
-    if scene.is_solid_at(x, top) or scene.is_solid_at(x, bottom):
-        return "Blocked by terrain."
-    if scene.is_solid_at(left, y) or scene.is_solid_at(right, y):
-        return "Blocked by terrain."
-
     for unit in units:
         if not unit.active:
             continue
@@ -197,6 +186,9 @@ def _start_build_job(
     player_state.visible_job_progress_pct = 0
     player_state.visible_job_remaining_ticks = total_ticks
     player_state.visible_job_total_ticks = total_ticks
+
+
+CodeBlock.end("starcraft_clone_controls")
 
 
 player_controls = AbstractCodeBlock.begin(
@@ -777,6 +769,3 @@ camera_controls.instantiate(
     key_right="ArrowRight",
     key_reset="f",
 )
-
-
-CodeBlock.end("starcraft_clone_controls")
