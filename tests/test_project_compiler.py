@@ -2414,6 +2414,35 @@ def test_callable_dependency_chain_is_retained_when_referenced():
     assert callable_names == ["add_one", "add_two"]
 
 
+def test_callable_supports_conditional_return_before_final_return():
+    project = compile_project(
+        """
+        class Unit(Actor):
+            attack: int
+
+        @callable
+        def min_damage(x: int) -> int:
+            if x < 1:
+                return 1
+            return x
+
+        @unsafe_condition(OnButton("strike"))
+        def strike(unit: Unit["u1"]):
+            unit.attack = min_damage(unit.attack)
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Unit(uid="u1", x=0, y=0, attack=0))
+        """
+    )
+
+    assert len(project.callables) == 1
+    assert project.callables[0].name == "min_damage"
+    assert len(project.actions) == 1
+    assert project.actions[0].name == "strike"
+
+
 def test_require_code_blocks_ignores_unboxed_statements_and_hints_flag():
     with pytest.warns(UserWarning, match="--allow-unboxed"):
         with pytest.raises(DSLValidationError, match="must declare a game object"):

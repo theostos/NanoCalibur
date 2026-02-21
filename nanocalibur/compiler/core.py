@@ -677,7 +677,12 @@ class DSLCompiler:
                         )
                     if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
                         raise DSLValidationError("yield is not allowed inside callable functions.")
-                compiled = self._compile_stmt(stmt, scope, loop_depth=0)
+                compiled = self._compile_stmt(
+                    stmt,
+                    scope,
+                    loop_depth=0,
+                    allow_value_return=True,
+                )
                 if compiled is not None:
                     body.append(compiled)
 
@@ -866,7 +871,14 @@ class DSLCompiler:
 
     # ---------------- Statements ----------------
 
-    def _compile_stmt(self, stmt: ast.stmt, scope: ActionScope, loop_depth: int):
+    def _compile_stmt(
+        self,
+        stmt: ast.stmt,
+        scope: ActionScope,
+        loop_depth: int,
+        *,
+        allow_value_return: bool = False,
+    ):
         with dsl_node_context(stmt):
             if isinstance(stmt, ast.Assign):
                 if len(stmt.targets) != 1:
@@ -915,12 +927,22 @@ class DSLCompiler:
             if isinstance(stmt, ast.If):
                 body = []
                 for child in stmt.body:
-                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth)
+                    compiled = self._compile_stmt(
+                        child,
+                        scope,
+                        loop_depth=loop_depth,
+                        allow_value_return=allow_value_return,
+                    )
                     if compiled is not None:
                         body.append(compiled)
                 orelse = []
                 for child in stmt.orelse:
-                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth)
+                    compiled = self._compile_stmt(
+                        child,
+                        scope,
+                        loop_depth=loop_depth,
+                        allow_value_return=allow_value_return,
+                    )
                     if compiled is not None:
                         orelse.append(compiled)
                 return If(
@@ -932,7 +954,12 @@ class DSLCompiler:
             if isinstance(stmt, ast.While):
                 body = []
                 for child in stmt.body:
-                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth + 1)
+                    compiled = self._compile_stmt(
+                        child,
+                        scope,
+                        loop_depth=loop_depth + 1,
+                        allow_value_return=allow_value_return,
+                    )
                     if compiled is not None:
                         body.append(compiled)
                 return While(
@@ -960,7 +987,12 @@ class DSLCompiler:
                 scope.actor_list_var_types.pop(stmt.target.id, None)
                 body = []
                 for child in stmt.body:
-                    compiled = self._compile_stmt(child, scope, loop_depth=loop_depth + 1)
+                    compiled = self._compile_stmt(
+                        child,
+                        scope,
+                        loop_depth=loop_depth + 1,
+                        allow_value_return=allow_value_return,
+                    )
                     if compiled is not None:
                         body.append(compiled)
                 return For(
@@ -971,9 +1003,13 @@ class DSLCompiler:
 
             if isinstance(stmt, ast.Return):
                 if stmt.value is not None:
-                    raise DSLValidationError(
-                        "Only bare 'return' is supported in action bodies. "
-                        "Return values are only allowed as the final callable statement."
+                    if not allow_value_return:
+                        raise DSLValidationError(
+                            "Only bare 'return' is supported in action bodies. "
+                            "Return values are only allowed as the final callable statement."
+                        )
+                    return Return(
+                        value=self._compile_expr(stmt.value, scope, allow_range_call=False)
                     )
                 return Return()
 
