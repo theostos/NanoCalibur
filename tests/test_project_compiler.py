@@ -513,6 +513,41 @@ def test_project_supports_dict_field_types_for_roles_actors_and_globals():
     assert project.actors[0].fields["inventory"] == {"coins": [1, 2, 3]}
 
 
+def test_project_builds_tile_map_grid_from_top_level_append_loops():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+
+        MAP_W = 4
+        MAP_H = 3
+        grid = []
+        for y in range(0, MAP_H):
+            row = []
+            for x in range(0, MAP_W):
+                row.append(1 if (x == 0 or y == 0) else 0)
+            grid.append(row)
+
+        scene.set_map(
+            TileMap(
+                tile_size=16,
+                grid=grid,
+                tiles={1: Tile(block_mask=1, color=Color(50, 50, 50))},
+            )
+        )
+        """
+    )
+
+    assert project.tile_map is not None
+    assert project.tile_map.width == 4
+    assert project.tile_map.height == 3
+    assert project.tile_map.tile_grid[0] == [1, 1, 1, 1]
+
+
 def test_project_exposes_builtin_humanrole_local_keybind_schema():
     project = compile_project(
         """

@@ -515,8 +515,12 @@ class ProjectCompiler:
                         output.extend(expand_block(statement.orelse))
                     return output
 
+                # Update the static env from the original statement first.
+                # If we substitute names before this step, mutating calls like
+                # `row.append(...)` become `[...].append(...)` and the receiver
+                # variable is no longer trackable in `env`.
+                _update_static_setup_env_from_stmt(statement, env)
                 transformed = _substitute_static_names_in_node(statement, env)
-                _update_static_setup_env_from_stmt(transformed, env)
                 return [transformed]
 
         expanded = ast.Module(body=expand_block(module.body), type_ignores=module.type_ignores)
