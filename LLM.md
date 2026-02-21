@@ -70,7 +70,7 @@ DSL authoring symbols (`nanocalibur.dsl_markers`):
 - Assets/map: `Resource`, `Sprite`, `TileMap`, `Tile`, `Color`
 - View/UI: `Camera`, `Interface`
 - Multiplayer: `Multiplayer`
-- Conditions: `KeyboardCondition`, `MouseCondition`, `OnOverlap`, `OnContact`, `OnLogicalCondition`, `OnToolCall`, `OnButton`
+- Conditions: `KeyboardCondition`, `MouseCondition`, `ButtonCondition`, `OnOverlap`, `OnContact`, `OnLogicalCondition`, `OnToolCall`
 - Rule decorators: `safe_condition`, `unsafe_condition`
 - Helpers: `callable`, `Random`, `Tick`, `CodeBlock`, `AbstractCodeBlock`
 
@@ -239,7 +239,7 @@ Rules are `condition -> action`.
 - `MouseCondition.on_click(...)`
 - `MouseCondition.end_click(...)`
 - `OnToolCall(...)`
-- `OnButton(...)`
+- `ButtonCondition.begin(...)` / `ButtonCondition.on(...)` / `ButtonCondition.end(...)`
 
 Use `@unsafe_condition(...)`.
 
@@ -438,7 +438,7 @@ You can call `scene.set_interface(...)` inside an action to swap UI state during
 
 ### 14.3 UI button events
 
-`OnButton("name")` fires when UI emits matching button event (`data-button="name"`).
+`ButtonCondition.begin("name")` fires when UI emits matching button event (`data-button="name"`).
 
 ## 15) Local vs Authoritative State
 

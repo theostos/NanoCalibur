@@ -554,6 +554,18 @@ class KeyboardCondition:
         return None
 
 
+class KeyboardInfo:
+    """Runtime keyboard condition payload bound in actions.
+
+    Available fields:
+    - ``pressed_tick``: tick when the matching key entered ``begin_press``
+    - ``current_tick``: tick when the condition was evaluated
+    """
+
+    pressed_tick: int
+    current_tick: int
+
+
 class Random:
     """Deterministic-friendly random helpers for action expressions."""
 
@@ -633,6 +645,70 @@ class MouseCondition:
         for compatibility with existing code.
         """
         return None
+
+
+class MouseInfo:
+    """Runtime mouse condition payload bound in actions.
+
+    Available fields:
+    - ``pressed_tick``: tick when the matching button entered ``begin_click``
+    - ``current_tick``: tick when the condition was evaluated
+    - ``pressed_x`` / ``pressed_y``: mouse position at press start
+    - ``x`` / ``y``: mouse position for current tick
+    """
+
+    pressed_tick: int
+    current_tick: int
+    pressed_x: float
+    pressed_y: float
+    x: float
+    y: float
+
+
+class ButtonCondition:
+    """UI button input condition helpers."""
+
+    @staticmethod
+    def begin(
+        _name: str,
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ) -> None:
+        """Trigger when a UI button is pressed this frame."""
+        return None
+
+    @staticmethod
+    def on(
+        _name: str,
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ) -> None:
+        """Trigger while a UI button is held."""
+        return None
+
+    @staticmethod
+    def end(
+        _name: str,
+        _role: "str | type[Role] | None" = None,
+        *,
+        id: str | None = None,
+    ) -> None:
+        """Trigger when a UI button is released this frame."""
+        return None
+
+
+class ButtonInfo:
+    """Runtime button condition payload bound in actions.
+
+    Available fields:
+    - ``pressed_tick``: tick when the matching button entered ``begin``
+    - ``current_tick``: tick when the condition was evaluated
+    """
+
+    pressed_tick: int
+    current_tick: int
 
 
 class Camera:
@@ -763,15 +839,6 @@ def OnToolCall(
     return None
 
 
-def OnButton(_name: str) -> None:
-    """Condition helper for UI button clicks.
-
-    Usage:
-        ``@unsafe_condition(OnButton("spawn_bonus"))``
-    """
-    return None
-
-
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -825,6 +892,8 @@ __all__ = [
     "AbstractCodeBlock",
     "Actor",
     "BlockInSprite",
+    "ButtonCondition",
+    "ButtonInfo",
     "Camera",
     "CodeBlock",
     "Color",
@@ -833,11 +902,12 @@ __all__ = [
     "GlobalVariable",
     "HumanRole",
     "Interface",
+    "KeyboardInfo",
     "KeyboardCondition",
     "Local",
+    "MouseInfo",
     "MouseCondition",
     "Multiplayer",
-    "OnButton",
     "OnContact",
     "OnLogicalCondition",
     "OnOverlap",

@@ -89,6 +89,7 @@ from nanocalibur.project_compiler_ast import (
     _is_supported_action_binding_annotation,
     _looks_like_action,
     _looks_like_predicate,
+    _parse_button_phase,
     _parse_keyboard_phase,
     _parse_mouse_phase,
     _resolve_call_aliases,
@@ -376,6 +377,7 @@ class ProjectCompiler:
             self._validate_interface_role_ids(interfaces_by_role, roles)
             self._validate_role_bindings(actions, predicates, roles)
             self._validate_camera_bindings(actions, predicates, cameras)
+            self._validate_input_info_bindings(actions, rules)
             self._validate_role_cameras(roles, cameras)
             if (
                 multiplayer is not None
@@ -2225,6 +2227,8 @@ class ProjectCompiler:
                 role_id = condition.role_id
             elif isinstance(condition, MouseConditionSpec):
                 role_id = condition.role_id
+            elif isinstance(condition, ButtonConditionSpec):
+                role_id = condition.role_id
             elif isinstance(condition, ToolConditionSpec):
                 role_id = condition.role_id
 
@@ -2343,6 +2347,64 @@ class ProjectCompiler:
         for predicate in predicates.values():
             for param in predicate.params:
                 validate_param(f"Predicate '{predicate.name}'", param)
+
+    def _validate_input_info_bindings(
+        self,
+        actions: Dict[str, ActionIR],
+        rules: List[RuleSpec],
+    ) -> None:
+        info_kinds = {
+            BindingKind.KEYBOARD_INFO,
+            BindingKind.MOUSE_INFO,
+            BindingKind.BUTTON_INFO,
+        }
+        info_label_by_kind = {
+            BindingKind.KEYBOARD_INFO: "KeyboardInfo",
+            BindingKind.MOUSE_INFO: "MouseInfo",
+            BindingKind.BUTTON_INFO: "ButtonInfo",
+        }
+
+        def expected_info_kind(condition: ConditionSpec) -> Optional[BindingKind]:
+            if isinstance(condition, KeyboardConditionSpec):
+                return BindingKind.KEYBOARD_INFO
+            if isinstance(condition, MouseConditionSpec):
+                return BindingKind.MOUSE_INFO
+            if isinstance(condition, ButtonConditionSpec):
+                return BindingKind.BUTTON_INFO
+            return None
+
+        action_info_kinds: Dict[str, List[BindingKind]] = {}
+        for action in actions.values():
+            kinds = [param.kind for param in action.params if param.kind in info_kinds]
+            if len(kinds) > 1:
+                labels = ", ".join(info_label_by_kind[kind] for kind in kinds)
+                raise DSLValidationError(
+                    f"Action '{action.name}' declares multiple input info bindings ({labels}). "
+                    "Use at most one of KeyboardInfo, MouseInfo, or ButtonInfo."
+                )
+            action_info_kinds[action.name] = kinds
+
+        for rule in rules:
+            kinds = action_info_kinds.get(rule.action_name, [])
+            if not kinds:
+                continue
+            actual_kind = kinds[0]
+            wanted_kind = expected_info_kind(rule.condition)
+            if wanted_kind is None:
+                raise DSLValidationError(
+                    f"Action '{rule.action_name}' expects {info_label_by_kind[actual_kind]} "
+                    "but is attached to a non-input condition. "
+                    "Fix: remove the info parameter or use the matching input condition class."
+                )
+            if wanted_kind == actual_kind:
+                continue
+            raise DSLValidationError(
+                f"Action '{rule.action_name}' expects {info_label_by_kind[actual_kind]} "
+                f"but condition '{self._condition_decorator_label(rule.condition)}' provides "
+                f"{info_label_by_kind[wanted_kind]}. "
+                f"Fix: switch the parameter to {info_label_by_kind[wanted_kind]} or "
+                f"use a matching condition for {info_label_by_kind[actual_kind]}."
+            )
 
     def _validate_role_cameras(
         self,
@@ -2656,10 +2718,13 @@ class ProjectCompiler:
                 "OnContact",
                 "OnLogicalCondition",
                 "OnToolCall",
-                "OnButton",
             }
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-            return node.func.value.id in {"KeyboardCondition", "MouseCondition"}
+            return node.func.value.id in {
+                "KeyboardCondition",
+                "MouseCondition",
+                "ButtonCondition",
+            }
         return False
 
     def _has_plain_decorator(self, fn: ast.FunctionDef, name: str) -> bool:
@@ -2860,7 +2925,7 @@ class ProjectCompiler:
         if isinstance(condition, ToolConditionSpec):
             return "OnToolCall"
         if isinstance(condition, ButtonConditionSpec):
-            return "OnButton"
+            return "ButtonCondition"
         if isinstance(condition, LogicalConditionSpec):
             return "OnLogicalCondition"
         if isinstance(condition, CollisionConditionSpec):
@@ -2986,6 +3051,42 @@ class ProjectCompiler:
                     role_id=role_id,
                 )
 
+            if owner == "ButtonCondition":
+                phase = _parse_button_phase(method)
+                if phase is None:
+                    raise DSLValidationError("Unsupported button condition method.")
+                kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+                unexpected = sorted(set(kwargs.keys()) - {"id"})
+                if unexpected:
+                    raise DSLValidationError(
+                        "ButtonCondition.<phase>(...) only accepts keyword 'id'."
+                    )
+                if len(node.args) not in {1, 2}:
+                    raise DSLValidationError(
+                        "ButtonCondition.<phase>(...) expects button name and optional role selector."
+                    )
+                role_id = (
+                    self._parse_role_selector_id(
+                        node.args[1],
+                        compiler=compiler,
+                        source_name="ButtonCondition role",
+                        allow_plain_string=True,
+                    )
+                    if len(node.args) == 2
+                    else None
+                )
+                if len(node.args) == 2 and "id" in kwargs:
+                    raise DSLValidationError(
+                        "ButtonCondition.<phase>(...) role id must be provided once."
+                    )
+                if role_id is None and "id" in kwargs:
+                    role_id = _expect_string(kwargs["id"], "condition role id")
+                return ButtonConditionSpec(
+                    name=_expect_string(node.args[0], "button name"),
+                    phase=phase,
+                    role_id=role_id,
+                )
+
         if (
             isinstance(node.func, ast.Name)
             and node.func.id in {"OnOverlap", "OnContact"}
@@ -3075,11 +3176,6 @@ class ProjectCompiler:
                 tool_docstring="",
                 role_id=role_id,
             )
-
-        if isinstance(node.func, ast.Name) and node.func.id == "OnButton":
-            if len(node.args) != 1 or node.keywords:
-                raise DSLValidationError("OnButton(...) expects one button name argument.")
-            return ButtonConditionSpec(name=_expect_string(node.args[0], "button name"))
 
         raise DSLValidationError("Unsupported condition expression.")
 

@@ -371,7 +371,7 @@ def test_project_allows_compile_time_constants_in_actions_predicates_and_callabl
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0, speed=1))
-        scene.add_rule(OnButton("speed_up"), speed_up)
+        scene.add_rule(ButtonCondition.begin("speed_up"), speed_up)
         scene.add_rule(OnLogicalCondition(is_fast, Player), speed_up)
         """
     )
@@ -411,7 +411,7 @@ def test_project_allows_compile_time_constants_built_from_static_control_flow():
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0, speed=100))
-        scene.add_rule(OnButton("spend"), spend)
+        scene.add_rule(ButtonCondition.begin("spend"), spend)
         """
     )
 
@@ -440,7 +440,7 @@ def test_project_rejects_runtime_assignment_to_compile_time_constant():
             scene = Scene(gravity=False)
             game.set_scene(scene)
             scene.add_actor(Player(uid="hero", x=0, y=0, life=10))
-            scene.add_rule(OnButton("bad"), bad)
+            scene.add_rule(ButtonCondition.begin("bad"), bad)
             """
         )
 
@@ -2079,7 +2079,7 @@ def test_scene_declared_actor_attached_to_requires_target_uid():
 def test_on_button_condition_helper_registers_button_rule():
     project = compile_project(
         """
-        @unsafe_condition(OnButton("spawn_bonus"))
+        @unsafe_condition(ButtonCondition.begin("spawn_bonus"))
         def spawn(scene: Scene):
             scene.enable_gravity()
 
@@ -2093,6 +2093,64 @@ def test_on_button_condition_helper_registers_button_rule():
     condition = project.rules[0].condition
     assert isinstance(condition, ButtonConditionSpec)
     assert condition.name == "spawn_bonus"
+    assert condition.phase == InputPhase.BEGIN
+
+
+def test_keyboard_info_binding_is_allowed_on_matching_keyboard_condition():
+    project = compile_project(
+        """
+        @unsafe_condition(KeyboardCondition.on_press("d", id="human_1"))
+        def move(info: KeyboardInfo):
+            elapsed = info.current_tick - info.pressed_tick
+            _ = elapsed
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        """
+    )
+
+    assert len(project.actions) == 1
+    assert project.actions[0].params[0].kind == BindingKind.KEYBOARD_INFO
+
+
+def test_input_info_binding_rejects_condition_mismatch():
+    with pytest.raises(DSLValidationError, match="expects KeyboardInfo"):
+        compile_project(
+            """
+            @unsafe_condition(MouseCondition.on_click("left", id="human_1"))
+            def bad(info: KeyboardInfo):
+                _ = info.current_tick
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            """
+        )
+
+
+def test_input_info_binding_rejects_non_input_condition():
+    with pytest.raises(DSLValidationError, match="non-input condition"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            def always_true(player: Player) -> bool:
+                return True
+
+            @safe_condition(OnLogicalCondition(always_true, Player))
+            def bad(player: Player, info: ButtonInfo):
+                _ = info.current_tick
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="a", x=0, y=0))
+            """
+        )
 
 
 def test_scene_set_interface_accepts_literal_and_alias_variable():
@@ -2556,7 +2614,7 @@ def test_callable_supports_conditional_return_before_final_return():
                 return 1
             return x
 
-        @unsafe_condition(OnButton("strike"))
+        @unsafe_condition(ButtonCondition.begin("strike"))
         def strike(unit: Unit["u1"]):
             unit.attack = min_damage(unit.attack)
 

@@ -67,6 +67,9 @@ class ActionScope:
     camera_vars: Set[str]
     scene_vars: Set[str]
     tick_vars: Set[str]
+    keyboard_info_vars: Set[str]
+    mouse_info_vars: Set[str]
+    button_info_vars: Set[str]
     spawn_actor_templates: Dict[str, tuple[str, Expr, Expr]]
 
 
@@ -489,6 +492,15 @@ class DSLCompiler:
                 camera_vars=camera_vars,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
+                keyboard_info_vars={
+                    p.name for p in params if p.kind == BindingKind.KEYBOARD_INFO
+                },
+                mouse_info_vars={
+                    p.name for p in params if p.kind == BindingKind.MOUSE_INFO
+                },
+                button_info_vars={
+                    p.name for p in params if p.kind == BindingKind.BUTTON_INFO
+                },
                 spawn_actor_templates={},
             )
             body = []
@@ -521,6 +533,17 @@ class DSLCompiler:
                         )
                     self._reject_compile_time_constant_shadowing(arg.arg)
                     params.append(self._parse_binding(arg))
+
+            for param in params:
+                if param.kind in {
+                    BindingKind.KEYBOARD_INFO,
+                    BindingKind.MOUSE_INFO,
+                    BindingKind.BUTTON_INFO,
+                }:
+                    raise DSLValidationError(
+                        "Predicate parameters cannot use KeyboardInfo/MouseInfo/ButtonInfo. "
+                        "Input info bindings are only available in action functions."
+                    )
 
             actor_var_types: Dict[str, str] = {}
             actor_list_var_types: Dict[str, Optional[str]] = {}
@@ -566,6 +589,9 @@ class DSLCompiler:
                 camera_vars=camera_vars,
                 scene_vars={p.name for p in params if p.kind == BindingKind.SCENE},
                 tick_vars={p.name for p in params if p.kind == BindingKind.TICK},
+                keyboard_info_vars=set(),
+                mouse_info_vars=set(),
+                button_info_vars=set(),
                 spawn_actor_templates={},
             )
             expr = self._compile_expr(fn.body[0].value, scope, allow_range_call=False)
@@ -604,6 +630,11 @@ class DSLCompiler:
                     params.append(arg.arg)
                     ann = arg.annotation
                     if isinstance(ann, ast.Name):
+                        if ann.id in {"KeyboardInfo", "MouseInfo", "ButtonInfo"}:
+                            raise DSLValidationError(
+                                "Callable parameters cannot use KeyboardInfo/MouseInfo/ButtonInfo. "
+                                "Input info bindings are only available in action functions."
+                            )
                         if ann.id == "Scene":
                             scene_vars.add(arg.arg)
                         elif ann.id == "Tick":
@@ -673,6 +704,9 @@ class DSLCompiler:
                 camera_vars=camera_vars,
                 scene_vars=scene_vars,
                 tick_vars=tick_vars,
+                keyboard_info_vars=set(),
+                mouse_info_vars=set(),
+                button_info_vars=set(),
                 spawn_actor_templates={},
             )
             previous_in_callable = self._in_callable
@@ -724,6 +758,12 @@ class DSLCompiler:
                 return ParamBinding(name=arg.arg, kind=BindingKind.SCENE)
             if isinstance(ann, ast.Name) and ann.id == "Tick":
                 return ParamBinding(name=arg.arg, kind=BindingKind.TICK)
+            if isinstance(ann, ast.Name) and ann.id == "KeyboardInfo":
+                return ParamBinding(name=arg.arg, kind=BindingKind.KEYBOARD_INFO)
+            if isinstance(ann, ast.Name) and ann.id == "MouseInfo":
+                return ParamBinding(name=arg.arg, kind=BindingKind.MOUSE_INFO)
+            if isinstance(ann, ast.Name) and ann.id == "ButtonInfo":
+                return ParamBinding(name=arg.arg, kind=BindingKind.BUTTON_INFO)
             if isinstance(ann, ast.Name) and ann.id in self.schemas.actor_fields:
                 return ParamBinding(
                     name=arg.arg,
@@ -2134,6 +2174,34 @@ class DSLCompiler:
                 )
             return Attr(obj=obj_name, field="elapsed")
 
+        if obj_name in scope.keyboard_info_vars:
+            if expr.attr not in {"pressed_tick", "current_tick"}:
+                raise DSLValidationError(
+                    f"KeyboardInfo has no field '{expr.attr}'."
+                )
+            return Attr(obj=obj_name, field=expr.attr)
+
+        if obj_name in scope.mouse_info_vars:
+            if expr.attr not in {
+                "pressed_tick",
+                "current_tick",
+                "pressed_x",
+                "pressed_y",
+                "x",
+                "y",
+            }:
+                raise DSLValidationError(
+                    f"MouseInfo has no field '{expr.attr}'."
+                )
+            return Attr(obj=obj_name, field=expr.attr)
+
+        if obj_name in scope.button_info_vars:
+            if expr.attr not in {"pressed_tick", "current_tick"}:
+                raise DSLValidationError(
+                    f"ButtonInfo has no field '{expr.attr}'."
+                )
+            return Attr(obj=obj_name, field=expr.attr)
+
         if obj_name in scope.camera_vars:
             if expr.attr not in {
                 "name",
@@ -2199,6 +2267,18 @@ class DSLCompiler:
                 scope.camera_vars.add(target_name)
             else:
                 scope.camera_vars.discard(target_name)
+            if value.name in scope.keyboard_info_vars:
+                scope.keyboard_info_vars.add(target_name)
+            else:
+                scope.keyboard_info_vars.discard(target_name)
+            if value.name in scope.mouse_info_vars:
+                scope.mouse_info_vars.add(target_name)
+            else:
+                scope.mouse_info_vars.discard(target_name)
+            if value.name in scope.button_info_vars:
+                scope.button_info_vars.add(target_name)
+            else:
+                scope.button_info_vars.discard(target_name)
             if value.name in scope.spawn_actor_templates:
                 scope.spawn_actor_templates[target_name] = scope.spawn_actor_templates[
                     value.name
@@ -2211,6 +2291,9 @@ class DSLCompiler:
         scope.actor_list_var_types.pop(target_name, None)
         scope.role_var_types.pop(target_name, None)
         scope.camera_vars.discard(target_name)
+        scope.keyboard_info_vars.discard(target_name)
+        scope.mouse_info_vars.discard(target_name)
+        scope.button_info_vars.discard(target_name)
         scope.spawn_actor_templates.pop(target_name, None)
 
     def _iterated_actor_type(self, iterable, scope: ActionScope) -> Optional[str]:

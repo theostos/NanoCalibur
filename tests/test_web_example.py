@@ -284,7 +284,7 @@ def test_collect_game_source_preserves_single_file_line_numbers(tmp_path):
         scene = Scene(gravity=False)
         game.set_scene(scene)
         scene.add_actor(Player(uid="hero", x=0, y=0, speed=1))
-        scene.add_rule(OnButton("bump"), bump)
+        scene.add_rule(ButtonCondition.begin("bump"), bump)
 
         CodeBlock.end("main")
         """

@@ -15,7 +15,7 @@ Use:
 - `KeyboardCondition.*`
 - `MouseCondition.*`
 - `OnToolCall(...)`
-- `OnButton(...)`
+- `ButtonCondition.*`
 - `@safe_condition(...)` for authoritative server-evaluated conditions:
 - `OnOverlap(...)`
 - `OnContact(...)`

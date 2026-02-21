@@ -37,11 +37,11 @@ This page is generated from Python docstrings and type hints.
         - Global
         - KeyboardCondition
         - MouseCondition
+        - ButtonCondition
         - OnOverlap
         - OnContact
         - OnLogicalCondition
         - OnToolCall
-        - OnButton
         - safe_condition
         - unsafe_condition
         - callable

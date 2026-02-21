@@ -26,6 +26,7 @@ from nanocalibur.ir import (
     SubscriptExpr,
     Unary,
     Var,
+    WaitTicks,
     While,
     Yield,
 )
@@ -180,7 +181,16 @@ def _is_supported_action_binding_annotation(
     compiler: DSLCompiler,
 ) -> bool:
     if isinstance(annotation, ast.Name):
-        if annotation.id in {"Scene", "Tick", "Actor", "Role", "Camera"}:
+        if annotation.id in {
+            "Scene",
+            "Tick",
+            "Actor",
+            "Role",
+            "Camera",
+            "KeyboardInfo",
+            "MouseInfo",
+            "ButtonInfo",
+        }:
             return True
         return (
             annotation.id in compiler.schemas.actor_fields
@@ -265,6 +275,16 @@ def _parse_mouse_phase(method: str) -> InputPhase | None:
     if method == "on_click":
         return InputPhase.ON
     if method == "end_click":
+        return InputPhase.END
+    return None
+
+
+def _parse_button_phase(method: str) -> InputPhase | None:
+    if method == "begin":
+        return InputPhase.BEGIN
+    if method == "on":
+        return InputPhase.ON
+    if method == "end":
         return InputPhase.END
     return None
 
@@ -364,6 +384,10 @@ def _callable_names_in_stmt(stmt) -> set[str]:
         return names
     if isinstance(stmt, Yield):
         return _callable_names_in_expr(stmt.value)
+    if isinstance(stmt, WaitTicks):
+        names = _callable_names_in_expr(stmt.tick)
+        names.update(_callable_names_in_expr(stmt.count))
+        return names
     if isinstance(stmt, Return):
         if stmt.value is None:
             return set()

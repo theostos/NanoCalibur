@@ -11,6 +11,9 @@ class BindingKind(Enum):
     CAMERA = "camera"
     SCENE = "scene"
     TICK = "tick"
+    KEYBOARD_INFO = "keyboard_info"
+    MOUSE_INFO = "mouse_info"
+    BUTTON_INFO = "button_info"
 
 
 @dataclass(frozen=True)
@@ -151,6 +154,12 @@ class For(Stmt):
 @dataclass(frozen=True)
 class Yield(Stmt):
     value: Expr
+
+
+@dataclass(frozen=True)
+class WaitTicks(Stmt):
+    tick: Expr
+    count: Expr
 
 
 @dataclass(frozen=True)

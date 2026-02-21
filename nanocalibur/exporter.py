@@ -263,6 +263,8 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
         return {
             "kind": "button",
             "name": condition.name,
+            "phase": condition.phase.value,
+            "role_id": condition.role_id,
         }
     if isinstance(condition, CollisionConditionSpec):
         return {

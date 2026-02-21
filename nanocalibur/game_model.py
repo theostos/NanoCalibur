@@ -65,6 +65,8 @@ class MouseConditionSpec:
 @dataclass(frozen=True)
 class ButtonConditionSpec:
     name: str
+    phase: InputPhase = InputPhase.ON
+    role_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

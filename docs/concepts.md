@@ -31,7 +31,7 @@ Per simulation tick:
 ## Safe vs Unsafe Conditions
 
 - Safe: server-authoritative (`OnOverlap`, `OnContact`, `OnLogicalCondition`).
-- Unsafe: client/tool-originated (`KeyboardCondition`, `MouseCondition`, `OnToolCall`, `OnButton`).
+- Unsafe: client/tool-originated (`KeyboardCondition`, `MouseCondition`, `ButtonCondition`, `OnToolCall`).
 
 Use:
 

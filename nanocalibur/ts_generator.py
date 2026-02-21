@@ -22,6 +22,7 @@ from nanocalibur.ir import (
     SubscriptExpr,
     Unary,
     Var,
+    WaitTicks,
     While,
     Yield,
 )
@@ -52,6 +53,7 @@ class TSGenerator:
 export interface RuntimeSceneContext {
   gravityEnabled?: boolean;
   elapsed?: number;
+  tickRate?: number;
   setGravityEnabled?: (enabled: boolean) => void;
   setInterfaceHtml?: (html: string, role?: any) => void;
   spawnActor?: (actorType: string, uid: string, fields?: Record<string, any>) => any;
@@ -67,8 +69,25 @@ export interface GameContext {
   cameras?: Record<string, any>;
   roles?: Record<string, any>;
   self?: any;
+  keyboardInfo?: {
+    pressed_tick?: number;
+    current_tick?: number;
+  };
+  mouseInfo?: {
+    pressed_tick?: number;
+    current_tick?: number;
+    pressed_x?: number;
+    pressed_y?: number;
+    x?: number;
+    y?: number;
+  };
+  buttonInfo?: {
+    pressed_tick?: number;
+    current_tick?: number;
+  };
   tick: number;
   elapsed?: number;
+  tickRate?: number;
   getActorByUid?: (uid: string) => any;
   getCameraByName?: (name: string) => any;
   getRoleById?: (id: string) => any;
@@ -215,6 +234,22 @@ function __nc_dict_items(base: any): any[] {
   }
   return Object.entries(base);
 }
+
+function __nc_resolve_tick_rate(ctx: GameContext): number {
+  const candidate = Number(ctx.tickRate ?? ctx.scene?.tickRate ?? 20);
+  if (!Number.isFinite(candidate) || candidate <= 0) {
+    return 20;
+  }
+  return candidate;
+}
+
+function __nc_tick_to_second(tickCount: any, ctx: GameContext): number {
+  return Number(tickCount) / __nc_resolve_tick_rate(ctx);
+}
+
+function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
+  return Math.trunc(Number(seconds) * __nc_resolve_tick_rate(ctx));
+}
 """
 
     def _emit_callable(self, helper: CallableIR, typed: bool, exported: bool):
@@ -256,6 +291,8 @@ function __nc_dict_items(base: any): any[] {
             param.name for param in action.params if param.kind == BindingKind.SCENE
         }
         is_generator = self._action_uses_yield(action)
+        previous_wait_loop_counter = getattr(self, "_wait_loop_counter", 0)
+        self._wait_loop_counter = 0
         try:
             if typed:
                 prefix = "export " if exported else ""
@@ -280,6 +317,18 @@ function __nc_dict_items(base: any): any[] {
 
                 if param.kind == BindingKind.TICK:
                     lines.append(f"  let {param.name} = ctx.tick;")
+                    continue
+
+                if param.kind == BindingKind.KEYBOARD_INFO:
+                    lines.append(f"  let {param.name} = ctx.keyboardInfo;")
+                    continue
+
+                if param.kind == BindingKind.MOUSE_INFO:
+                    lines.append(f"  let {param.name} = ctx.mouseInfo;")
+                    continue
+
+                if param.kind == BindingKind.BUTTON_INFO:
+                    lines.append(f"  let {param.name} = ctx.buttonInfo;")
                     continue
 
                 if param.kind == BindingKind.GLOBAL:
@@ -397,6 +446,7 @@ function __nc_dict_items(base: any): any[] {
             lines.append("}")
             return "\n".join(lines)
         finally:
+            self._wait_loop_counter = previous_wait_loop_counter
             self._tick_vars = previous_tick_vars
             self._scene_vars = previous_scene_vars
 
@@ -500,6 +550,18 @@ function __nc_dict_items(base: any): any[] {
 
                 if param.kind == BindingKind.TICK:
                     lines.append(f"  let {param.name} = ctx.tick;")
+                    continue
+
+                if param.kind == BindingKind.KEYBOARD_INFO:
+                    lines.append(f"  let {param.name} = ctx.keyboardInfo;")
+                    continue
+
+                if param.kind == BindingKind.MOUSE_INFO:
+                    lines.append(f"  let {param.name} = ctx.mouseInfo;")
+                    continue
+
+                if param.kind == BindingKind.BUTTON_INFO:
+                    lines.append(f"  let {param.name} = ctx.buttonInfo;")
                     continue
 
                 if param.kind == BindingKind.GLOBAL:
@@ -775,6 +837,23 @@ function __nc_dict_items(base: any): any[] {
                 lines.append(pad + f"{refresh_fn}();")
             return lines
 
+        if isinstance(stmt, WaitTicks):
+            self._wait_loop_counter = getattr(self, "_wait_loop_counter", 0) + 1
+            loop_index = self._wait_loop_counter
+            count_expr = self._emit_expr(stmt.count)
+            tick_expr = self._emit_expr(stmt.tick)
+            wait_var = f"__nc_wait_ticks_{loop_index}"
+            iter_var = f"__nc_wait_i_{loop_index}"
+            lines = [
+                pad + f"const {wait_var} = Math.max(0, Math.floor(Number({count_expr})));",
+                pad + f"for (let {iter_var} = 0; {iter_var} < {wait_var}; {iter_var} += 1) {{",
+                pad + f"  yield {tick_expr};",
+            ]
+            for refresh_fn in post_yield_refresh_calls:
+                lines.append(pad + f"  {refresh_fn}();")
+            lines.append(pad + "}")
+            return lines
+
         if isinstance(stmt, Return):
             if stmt.value is None:
                 return [pad + "return;"]
@@ -823,7 +902,7 @@ function __nc_dict_items(base: any): any[] {
         return any(self._stmt_contains_yield(stmt) for stmt in action.body)
 
     def _stmt_contains_yield(self, stmt) -> bool:
-        if isinstance(stmt, Yield):
+        if isinstance(stmt, (Yield, WaitTicks)):
             return True
         if isinstance(stmt, If):
             return any(self._stmt_contains_yield(child) for child in stmt.body) or any(
@@ -952,6 +1031,10 @@ function __nc_dict_items(base: any): any[] {
                 return f"__nc_random_float_uniform({args[0]}, {args[1]})"
             if expr.name == "random_float_normal":
                 return f"__nc_random_float_normal({args[0]}, {args[1]})"
+            if expr.name == "tick_to_second":
+                return f"__nc_tick_to_second({args[0]}, ctx)"
+            if expr.name == "second_to_tick":
+                return f"__nc_second_to_tick({args[0]}, ctx)"
             if expr.name == "collection_pop":
                 return f"__nc_collection_pop({args[0]}, {args[1]})"
             if expr.name == "collection_concat":

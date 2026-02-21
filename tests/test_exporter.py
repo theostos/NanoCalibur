@@ -188,7 +188,7 @@ def test_export_project_resolves_grid_file_relative_to_source_path(tmp_path):
 def test_export_project_serializes_scene_interface_html_and_button_condition(tmp_path):
     source = textwrap.dedent(
         '''
-        @unsafe_condition(OnButton("spawn_bonus"))
+        @unsafe_condition(ButtonCondition.begin("spawn_bonus"))
         def spawn(scene: Scene):
             scene.enable_gravity()
 
@@ -206,6 +206,7 @@ def test_export_project_serializes_scene_interface_html_and_button_condition(tmp
     assert spec["interfaces_by_role"] == {}
     assert spec["rules"][0]["condition"]["kind"] == "button"
     assert spec["rules"][0]["condition"]["name"] == "spawn_bonus"
+    assert spec["rules"][0]["condition"]["phase"] == "begin"
 
 
 def test_export_project_serializes_role_scoped_interfaces(tmp_path):

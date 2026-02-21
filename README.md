@@ -160,7 +160,7 @@ Role bindings are id-scoped only (no index selectors).
 - `OnLogicalCondition(predicate_fn, selector)`
 - `OnToolCall("tool_name", id="human_1")`
 - `OnToolCall("tool_name", id="ai_1")`
-- `OnButton("button_name")`
+- `ButtonCondition.begin("button_name")`
 
 `id` is mandatory for `KeyboardCondition`, `MouseCondition`, and `OnToolCall`.
 The `id` value must match a role declared with `game.add_role(Role(...))`.
@@ -169,7 +169,7 @@ Rule declaration styles:
 - `scene.add_rule(condition_expr, action_fn)` (preferred)
 - `game.add_rule(condition_expr, action_fn)` (legacy-compatible)
 - `@safe_condition(condition_expr)` marker for server-evaluated conditions (`OnOverlap`/`OnContact`/`OnLogicalCondition`)
-- `@unsafe_condition(condition_expr)` marker for client-input-driven conditions (`KeyboardCondition`/`MouseCondition`/`OnToolCall`/`OnButton`)
+- `@unsafe_condition(condition_expr)` marker for client-input-driven conditions (`KeyboardCondition`/`MouseCondition`/`OnToolCall`/`ButtonCondition`)
 - `@callable` decorator on helper functions that can be called inside action/predicate expressions
 
 `@safe_condition` and `@unsafe_condition` do not change runtime translation; they add intent metadata and compiler errors on mismatches.
@@ -279,7 +279,7 @@ hud_h1 = Interface("ui/hud_human.html", Role["human_1"])
 scene.set_interface(hud_h1)
 ```
 
-Use `OnButton("spawn_bonus")` conditions only when your interface includes a matching `data-button` entry.
+Use `ButtonCondition.begin("spawn_bonus")` conditions only when your interface includes a matching `data-button` entry.
 You can update the overlay at runtime from an action with `scene.set_interface(...)` (for example to show/hide a panel based on game state).
 Built-in dynamic placeholders available in interface HTML:
 - `{{__actors_count}}`
