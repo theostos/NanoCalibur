@@ -70,7 +70,7 @@ game.add_role(
 game.add_role(
     StarRole(
         id="human_2",
-        required=True,
+        required=False,
         kind=RoleKind.HUMAN,
         minerals=START_MINERALS,
         gas=START_GAS,

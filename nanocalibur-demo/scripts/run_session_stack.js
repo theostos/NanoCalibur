@@ -372,11 +372,45 @@ function launchClientToLog(label, args, envExtras, logPath) {
   return child;
 }
 
+function openUrlInBrowser(url) {
+  if (!url || typeof url !== 'string') {
+    return false;
+  }
+  let child = null;
+  try {
+    if (process.platform === 'win32') {
+      child = spawn('cmd', ['/c', 'start', '', url], {
+        detached: true,
+        stdio: 'ignore',
+      });
+    } else if (process.platform === 'darwin') {
+      child = spawn('open', [url], {
+        detached: true,
+        stdio: 'ignore',
+      });
+    } else {
+      child = spawn('xdg-open', [url], {
+        detached: true,
+        stdio: 'ignore',
+      });
+    }
+  } catch (_error) {
+    return false;
+  }
+  if (!child) {
+    return false;
+  }
+  child.on('error', () => {});
+  child.unref();
+  return true;
+}
+
 async function main() {
   const requestedWebPort = process.argv[2] || process.env.NC_WEB_PORT || '';
   const shouldStartWebHost = (process.env.NC_START_WEB_HOST || '1') !== '0';
   const shouldLaunchDummy = (process.env.NC_LAUNCH_DUMMY || '1') !== '0';
   const shouldLaunchLocalHuman = process.env.NC_LAUNCH_LOCAL_HUMAN === '1';
+  const shouldAutoOpenHumanOne = (process.env.NC_AUTO_OPEN_HUMAN1 || '1') !== '0';
   const shouldAutoStartSession = (process.env.NC_AUTOSTART_SESSION || '1') !== '0';
   const shouldLogDummyToFile = (process.env.NC_DUMMY_LOG_TO_FILE || '1') !== '0';
   const waitTimeoutMs = toOptionalTimeoutMs(process.env.NC_WAIT_TIMEOUT_MS || '');
@@ -519,6 +553,18 @@ async function main() {
     for (const invite of shareInvites) {
       const url = buildSessionShareUrl(shareWebBase, shareApiBase, invite.invite_token);
       console.log(`[share] ${invite.role_id}: ${url}`);
+    }
+  }
+
+  if (shouldAutoOpenHumanOne && shareInvites.length > 0) {
+    const humanOneInvite = shareInvites.find((entry) => entry.role_id === 'human_1') || shareInvites[0];
+    if (humanOneInvite && humanOneInvite.invite_token) {
+      const localOpenUrl = buildSessionShareUrl(localWebUrl, baseUrl, humanOneInvite.invite_token);
+      if (openUrlInBrowser(localOpenUrl)) {
+        console.log(`[stack] opened local browser for ${humanOneInvite.role_id}: ${localOpenUrl}`);
+      } else {
+        console.warn(`[stack] failed to open browser automatically. Use: ${localOpenUrl}`);
+      }
     }
   }
 
