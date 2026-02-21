@@ -73,14 +73,18 @@ export class AssetStore {
       return;
     }
 
-    await new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve) => {
       const image = new Image();
       image.onload = () => {
         this.images.set(id, image);
         resolve();
       };
       image.onerror = () => {
-        reject(new Error(`Failed to load image '${id}' from '${src}'.`));
+        // Missing sprites are non-fatal: renderer can still use color/symbol fallback.
+        // Keep a warning for troubleshooting asset paths.
+        // eslint-disable-next-line no-console
+        console.warn(`Failed to load image '${id}' from '${src}'. Falling back to color/symbol rendering.`);
+        resolve();
       };
       image.src = src;
     });
