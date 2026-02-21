@@ -96,6 +96,24 @@ def _collect_game_source(main_path: Path) -> str:
     visited: set[Path] = set()
     ordered_sources: list[tuple[Path, str]] = []
 
+    def strip_local_imports_preserving_line_numbers(
+        source_text: str,
+        import_nodes: List[ast.stmt],
+    ) -> str:
+        if not import_nodes:
+            return source_text
+        lines = source_text.splitlines(keepends=True)
+        for node in import_nodes:
+            start = getattr(node, "lineno", None)
+            end = getattr(node, "end_lineno", None) or start
+            if start is None or end is None:
+                continue
+            start_index = max(0, start - 1)
+            end_index = min(len(lines), end)
+            for idx in range(start_index, end_index):
+                lines[idx] = "\n" if lines[idx].endswith("\n") else ""
+        return "".join(lines)
+
     def visit(path: Path) -> None:
         path = path.resolve()
         if path in visited:
@@ -112,7 +130,7 @@ def _collect_game_source(main_path: Path) -> str:
             ) from exc
 
         deps: list[Path] = []
-        kept_body: list[ast.stmt] = []
+        local_import_nodes: list[ast.stmt] = []
         for stmt in module.body:
             local_deps = _extract_local_import_paths(
                 stmt,
@@ -121,17 +139,22 @@ def _collect_game_source(main_path: Path) -> str:
             )
             if local_deps:
                 deps.extend(local_deps)
+                local_import_nodes.append(stmt)
                 continue
-            kept_body.append(stmt)
 
         for dep in deps:
             visit(dep)
 
-        filtered_module = ast.Module(body=kept_body, type_ignores=[])
-        ast.fix_missing_locations(filtered_module)
-        ordered_sources.append((path, ast.unparse(filtered_module)))
+        filtered_source = strip_local_imports_preserving_line_numbers(
+            source,
+            local_import_nodes,
+        )
+        ordered_sources.append((path, filtered_source))
 
     visit(main_path)
+
+    if len(ordered_sources) == 1:
+        return ordered_sources[0][1]
 
     chunks: list[str] = []
     for path, chunk in ordered_sources:

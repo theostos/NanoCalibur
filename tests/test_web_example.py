@@ -4,6 +4,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+from nanocalibur.build_game import _collect_game_source
+
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_SCRIPT = ROOT / "nanocalibur" / "build_game.py"
@@ -260,3 +262,37 @@ def test_build_game_resolves_local_relative_imports(tmp_path):
     )
     assert "Player" in spec["schemas"]
     assert spec["rules"][0]["action"] == "move_right"
+
+
+def test_collect_game_source_preserves_single_file_line_numbers(tmp_path):
+    scene_path = tmp_path / "scene.py"
+    scene_source = textwrap.dedent(
+        """
+        # header comment
+        CodeBlock.begin("main")
+        \"\"\"main\"\"\"
+
+        VALUE = 7
+
+        class Player(Actor):
+            speed: int
+
+        def bump(player: Player["hero"]):
+            player.speed = player.speed + VALUE
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0, speed=1))
+        scene.add_rule(OnButton("bump"), bump)
+
+        CodeBlock.end("main")
+        """
+    )
+    scene_path.write_text(scene_source, encoding="utf-8")
+
+    merged_source = _collect_game_source(scene_path)
+    marker_line = next(
+        idx for idx, line in enumerate(scene_source.splitlines(), start=1) if "VALUE = 7" in line
+    )
+    assert merged_source.splitlines()[marker_line - 1].strip() == "VALUE = 7"
