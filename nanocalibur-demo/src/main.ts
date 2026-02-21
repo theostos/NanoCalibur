@@ -670,6 +670,51 @@ async function fetchSessionStatus(
   return target.status;
 }
 
+function buildSessionWebSocketUrl(
+  baseUrl: string,
+  sessionId: string,
+  accessToken: string,
+): string {
+  const normalized = baseUrl.replace(/\/$/, '');
+  const httpUrl = new URL(
+    `${normalized}/sessions/${encodeURIComponent(sessionId)}/ws`,
+  );
+  httpUrl.searchParams.set('access_token', accessToken);
+  httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  return httpUrl.toString();
+}
+
+function readSessionSnapshotFromWebSocketData(raw: unknown): SessionSnapshot | null {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return null;
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!decoded || typeof decoded !== 'object') {
+    return null;
+  }
+  const record = decoded as Record<string, any>;
+  const eventName = typeof record.event === 'string' ? record.event : '';
+  if (eventName && eventName !== 'snapshot') {
+    return null;
+  }
+  const payload =
+    eventName === 'snapshot' && record.data && typeof record.data === 'object'
+      ? (record.data as Record<string, any>)
+      : record;
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (typeof payload.session_id !== 'string' || !payload.frame || !payload.state) {
+    return null;
+  }
+  return payload as SessionSnapshot;
+}
+
 function uniqueStrings(values: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -830,10 +875,14 @@ async function startSessionBrowserClient(
     void refreshSessionWarning();
   }, 1500);
 
+  let liveTransportActive = false;
   let snapshotPollInFlight = false;
   let snapshotPollFailureCount = 0;
   const snapshotPollMs = Math.max(20, Math.round(1000 / normalizedTickRate));
   const snapshotPollHandle = window.setInterval(() => {
+    if (liveTransportActive) {
+      return;
+    }
     if (snapshotPollInFlight) {
       return;
     }
@@ -1059,68 +1108,158 @@ async function startSessionBrowserClient(
     );
   }, inputPulseMs);
 
-  const streamResponse = await fetch(
-    `${config.baseUrl}/sessions/${encodeURIComponent(sessionId)}/stream?access_token=${encodeURIComponent(accessToken)}`,
-    {
-      method: 'GET',
-      headers: {
-        Accept: 'text/event-stream',
-        'x-role-token': accessToken,
-      },
-    },
-  );
-  if (!streamResponse.ok || !streamResponse.body) {
-    window.clearInterval(statusPollHandle);
-    const text = await streamResponse.text();
-    throw new Error(text || `Session stream failed: ${streamResponse.status}`);
-  }
-
-  const decoder = new TextDecoder('utf-8');
-  let sseBuffer = '';
-  const reader = streamResponse.body.getReader();
+  let activeWebSocket: WebSocket | null = null;
   try {
-    while (true) {
-      const chunk = await reader.read();
-      if (chunk.done) {
-        break;
+    const consumeWebSocketStream = async (): Promise<void> => {
+      if (typeof WebSocket !== 'function') {
+        throw new Error('WebSocket API is not available.');
       }
-      sseBuffer += decoder.decode(chunk.value, { stream: true });
-      sseBuffer = sseBuffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      while (true) {
-        const split = sseBuffer.indexOf('\n\n');
-        if (split < 0) {
-          break;
-        }
-        const rawEvent = sseBuffer.slice(0, split);
-        sseBuffer = sseBuffer.slice(split + 2);
+      const wsUrl = buildSessionWebSocketUrl(config.baseUrl, sessionId, accessToken);
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(wsUrl);
+        activeWebSocket = ws;
+        let opened = false;
+        let settled = false;
 
-        const lines = rawEvent.split('\n');
-        let eventName = '';
-        let dataPayload = '';
-        for (const line of lines) {
-          if (line.startsWith('event:')) {
-            eventName = line.slice('event:'.length).trim();
-          } else if (line.startsWith('data:')) {
-            if (dataPayload.length > 0) {
-              dataPayload += '\n';
-            }
-            dataPayload += line.slice('data:'.length).trim();
+        const fail = (error: Error): void => {
+          if (settled) {
+            return;
           }
-        }
-        if (eventName !== 'snapshot' || !dataPayload) {
-          continue;
-        }
-        try {
-          const snapshot = JSON.parse(dataPayload) as SessionSnapshot;
+          settled = true;
+          liveTransportActive = false;
+          activeWebSocket = null;
+          reject(error);
+        };
+
+        ws.onopen = () => {
+          opened = true;
+          liveTransportActive = true;
+        };
+
+        ws.onmessage = (event) => {
+          if (typeof event.data !== 'string') {
+            return;
+          }
+          const snapshot = readSessionSnapshotFromWebSocketData(event.data);
+          if (!snapshot) {
+            return;
+          }
           if (hasSnapshotSceneProgress(latestSnapshot, snapshot)) {
             renderSnapshot(snapshot);
           }
-        } catch (error) {
-          console.error('Invalid session snapshot payload', error);
-        }
+        };
+
+        ws.onerror = () => {
+          if (!opened) {
+            fail(new Error('WebSocket handshake failed.'));
+            return;
+          }
+          console.warn('WebSocket session stream emitted an error.');
+        };
+
+        ws.onclose = (event) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          liveTransportActive = false;
+          activeWebSocket = null;
+          const suffix = typeof event.code === 'number' ? ` (code=${event.code})` : '';
+          if (!opened) {
+            reject(new Error(`WebSocket handshake failed${suffix}.`));
+            return;
+          }
+          reject(new Error(`WebSocket stream closed${suffix}.`));
+        };
+      });
+    };
+
+    const consumeSseStream = async (): Promise<void> => {
+      const streamResponse = await fetch(
+        `${config.baseUrl}/sessions/${encodeURIComponent(sessionId)}/stream?access_token=${encodeURIComponent(accessToken)}`,
+        {
+          method: 'GET',
+          headers: {
+            Accept: 'text/event-stream',
+            'x-role-token': accessToken,
+          },
+        },
+      );
+      if (!streamResponse.ok || !streamResponse.body) {
+        const text = await streamResponse.text();
+        throw new Error(text || `Session stream failed: ${streamResponse.status}`);
       }
+
+      liveTransportActive = true;
+      const decoder = new TextDecoder('utf-8');
+      let sseBuffer = '';
+      const reader = streamResponse.body.getReader();
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) {
+            break;
+          }
+          sseBuffer += decoder.decode(chunk.value, { stream: true });
+          sseBuffer = sseBuffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          while (true) {
+            const split = sseBuffer.indexOf('\n\n');
+            if (split < 0) {
+              break;
+            }
+            const rawEvent = sseBuffer.slice(0, split);
+            sseBuffer = sseBuffer.slice(split + 2);
+
+            const lines = rawEvent.split('\n');
+            let eventName = '';
+            let dataPayload = '';
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                eventName = line.slice('event:'.length).trim();
+              } else if (line.startsWith('data:')) {
+                if (dataPayload.length > 0) {
+                  dataPayload += '\n';
+                }
+                dataPayload += line.slice('data:'.length).trim();
+              }
+            }
+            if (eventName !== 'snapshot' || !dataPayload) {
+              continue;
+            }
+            try {
+              const snapshot = JSON.parse(dataPayload) as SessionSnapshot;
+              if (hasSnapshotSceneProgress(latestSnapshot, snapshot)) {
+                renderSnapshot(snapshot);
+              }
+            } catch (error) {
+              console.error('Invalid session snapshot payload', error);
+            }
+          }
+        }
+      } finally {
+        liveTransportActive = false;
+      }
+    };
+
+    try {
+      await consumeWebSocketStream();
+    } catch (webSocketError) {
+      console.warn('WebSocket stream unavailable; falling back to SSE.', webSocketError);
+      await consumeSseStream();
     }
   } finally {
+    liveTransportActive = false;
+    const wsForCleanup = activeWebSocket as unknown as {
+      readyState?: number;
+      close?: () => void;
+    } | null;
+    if (
+      wsForCleanup
+      && typeof wsForCleanup.close === 'function'
+      && (wsForCleanup.readyState === 0 || wsForCleanup.readyState === 1)
+    ) {
+      wsForCleanup.close();
+    }
     window.clearInterval(statusPollHandle);
     window.clearInterval(snapshotPollHandle);
     window.clearInterval(inputPulseHandle);

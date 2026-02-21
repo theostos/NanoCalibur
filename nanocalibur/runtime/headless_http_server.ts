@@ -5,6 +5,7 @@ import { SessionCommand } from "./session_runtime";
 declare const require: any;
 const http = require("http");
 const crypto = require("crypto");
+const nodeBuffer = require("buffer");
 
 export interface HeadlessHttpServerOptions {
   host?: string;
@@ -21,6 +22,12 @@ interface SessionStreamSubscriber {
   viewer: SessionViewer;
 }
 
+interface SessionWebSocketSubscriber {
+  socket: any;
+  viewer: SessionViewer;
+  recvBuffer: any;
+}
+
 export class HeadlessHttpServer {
   private readonly host: HeadlessHost;
   private readonly sessionManager: SessionManager | null;
@@ -29,6 +36,7 @@ export class HeadlessHttpServer {
   private server: any | null = null;
   private port: number | null = null;
   private readonly streamSubscribersBySession = new Map<string, Set<SessionStreamSubscriber>>();
+  private readonly webSocketSubscribersBySession = new Map<string, Set<SessionWebSocketSubscriber>>();
   private readonly runtimeTickersBySession = new Map<string, any>();
 
   constructor(
@@ -55,6 +63,9 @@ export class HeadlessHttpServer {
     const server = http.createServer((req: any, res: any) => {
       void this.handleRequest(req, res);
     });
+    server.on("upgrade", (req: any, socket: any, head: any) => {
+      this.handleUpgrade(req, socket, head);
+    });
 
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -76,6 +87,7 @@ export class HeadlessHttpServer {
   async stop(): Promise<void> {
     this.stopAllSessionRuntimeTickers();
     this.closeAllSessionStreamSubscribers();
+    this.closeAllSessionWebSocketSubscribers();
 
     if (!this.server) {
       return;
@@ -190,6 +202,398 @@ export class HeadlessHttpServer {
       const message = error instanceof Error ? error.message : String(error);
       this.respondJson(res, 500, { error: message });
     }
+  }
+
+  private handleUpgrade(req: any, socket: any, head: any): void {
+    try {
+      if (!this.sessionManager) {
+        this.rejectWebSocketUpgrade(socket, 503, "Session manager is not available.");
+        return;
+      }
+
+      const method = typeof req.method === "string" ? req.method.toUpperCase() : "";
+      if (method !== "GET") {
+        this.rejectWebSocketUpgrade(socket, 405, "WebSocket upgrade requires GET.");
+        return;
+      }
+
+      const url = this.parseRequestUrl(req.url);
+      const wsMatch = /^\/sessions\/([^/]+)\/ws$/.exec(url.pathname);
+      if (!wsMatch) {
+        this.rejectWebSocketUpgrade(socket, 404, "Not found.");
+        return;
+      }
+
+      const sessionId = decodeURIComponent(wsMatch[1]);
+      const viewer = this.resolveSessionViewer(req, url, sessionId, null);
+      if (!viewer) {
+        this.rejectWebSocketUpgrade(socket, 401, "Unauthorized.");
+        return;
+      }
+
+      const upgradeHeader = (this.readHeader(req, "upgrade") || "").toLowerCase();
+      const connectionHeader = (this.readHeader(req, "connection") || "").toLowerCase();
+      if (upgradeHeader !== "websocket" || !connectionHeader.includes("upgrade")) {
+        this.rejectWebSocketUpgrade(socket, 400, "Invalid WebSocket upgrade headers.");
+        return;
+      }
+
+      const secKey = this.readHeader(req, "sec-websocket-key");
+      const secVersion = this.readHeader(req, "sec-websocket-version");
+      if (!secKey || secVersion !== "13") {
+        this.rejectWebSocketUpgrade(socket, 400, "Invalid WebSocket handshake.");
+        return;
+      }
+
+      const accept = this.computeWebSocketAccept(secKey);
+      const response = [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${accept}`,
+        "",
+        "",
+      ].join("\r\n");
+      socket.write(response);
+
+      const subscriber: SessionWebSocketSubscriber = {
+        socket,
+        viewer,
+        recvBuffer: this.toNodeBuffer(head),
+      };
+      this.registerSessionWebSocketSubscriber(sessionId, subscriber);
+
+      if (subscriber.recvBuffer && subscriber.recvBuffer.length > 0) {
+        this.handleWebSocketIncomingData(sessionId, subscriber, null);
+      }
+
+      this.sendSnapshotToWebSocketSubscriber(sessionId, subscriber);
+      this.ensureSessionRuntimeTicker(sessionId);
+
+      socket.on("data", (chunk: unknown) => {
+        this.handleWebSocketIncomingData(sessionId, subscriber, chunk);
+      });
+      socket.on("close", () => {
+        this.unregisterSessionWebSocketSubscriber(sessionId, subscriber);
+      });
+      socket.on("end", () => {
+        this.unregisterSessionWebSocketSubscriber(sessionId, subscriber);
+      });
+      socket.on("error", () => {
+        this.unregisterSessionWebSocketSubscriber(sessionId, subscriber);
+      });
+    } catch (_error) {
+      this.rejectWebSocketUpgrade(socket, 500, "WebSocket upgrade failed.");
+    }
+  }
+
+  private rejectWebSocketUpgrade(socket: any, statusCode: number, message: string): void {
+    if (!socket) {
+      return;
+    }
+    const reason = this.reasonPhrase(statusCode);
+    const body = JSON.stringify({ error: message });
+    const byteLength = this.byteLength(body);
+    const response = [
+      `HTTP/1.1 ${statusCode} ${reason}`,
+      "Connection: close",
+      "Content-Type: application/json; charset=utf-8",
+      `Content-Length: ${byteLength}`,
+      "",
+      "",
+      body,
+    ].join("\r\n");
+    try {
+      socket.write(response);
+    } catch (_ignored) {
+      // ignore broken upgrade socket writes
+    } finally {
+      try {
+        socket.destroy();
+      } catch (_ignored) {
+        // ignore shutdown errors
+      }
+    }
+  }
+
+  private reasonPhrase(statusCode: number): string {
+    if (statusCode === 400) {
+      return "Bad Request";
+    }
+    if (statusCode === 401) {
+      return "Unauthorized";
+    }
+    if (statusCode === 404) {
+      return "Not Found";
+    }
+    if (statusCode === 405) {
+      return "Method Not Allowed";
+    }
+    if (statusCode === 503) {
+      return "Service Unavailable";
+    }
+    return "Internal Server Error";
+  }
+
+  private computeWebSocketAccept(key: string): string {
+    const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    return crypto
+      .createHash("sha1")
+      .update(`${key}${guid}`, "utf8")
+      .digest("base64");
+  }
+
+  private handleWebSocketIncomingData(
+    sessionId: string,
+    subscriber: SessionWebSocketSubscriber,
+    chunk: unknown,
+  ): void {
+    const incoming = this.toNodeBuffer(chunk);
+    if (incoming && incoming.length > 0) {
+      if (subscriber.recvBuffer && subscriber.recvBuffer.length > 0) {
+        subscriber.recvBuffer = this.concatBuffers([subscriber.recvBuffer, incoming]);
+      } else {
+        subscriber.recvBuffer = incoming;
+      }
+    }
+
+    const buffer = subscriber.recvBuffer;
+    if (!buffer || buffer.length < 2) {
+      return;
+    }
+
+    while (subscriber.recvBuffer && subscriber.recvBuffer.length >= 2) {
+      const firstByte = subscriber.recvBuffer[0];
+      const secondByte = subscriber.recvBuffer[1];
+      const opcode = firstByte & 0x0f;
+      const isMasked = (secondByte & 0x80) !== 0;
+      let payloadLength = secondByte & 0x7f;
+      let offset = 2;
+
+      if (payloadLength === 126) {
+        if (subscriber.recvBuffer.length < 4) {
+          return;
+        }
+        payloadLength = subscriber.recvBuffer.readUInt16BE(2);
+        offset = 4;
+      } else if (payloadLength === 127) {
+        if (subscriber.recvBuffer.length < 10) {
+          return;
+        }
+        const highBits = subscriber.recvBuffer.readUInt32BE(2);
+        const lowBits = subscriber.recvBuffer.readUInt32BE(6);
+        if (highBits !== 0) {
+          this.sendWebSocketClose(subscriber.socket);
+          this.unregisterSessionWebSocketSubscriber(sessionId, subscriber);
+          return;
+        }
+        payloadLength = lowBits;
+        offset = 10;
+      }
+
+      let maskingKey: any = null;
+      if (isMasked) {
+        if (subscriber.recvBuffer.length < offset + 4) {
+          return;
+        }
+        maskingKey = subscriber.recvBuffer.subarray(offset, offset + 4);
+        offset += 4;
+      }
+
+      if (subscriber.recvBuffer.length < offset + payloadLength) {
+        return;
+      }
+
+      let payload = subscriber.recvBuffer.subarray(offset, offset + payloadLength);
+      subscriber.recvBuffer = subscriber.recvBuffer.subarray(offset + payloadLength);
+
+      if (isMasked) {
+        payload = this.unmaskWebSocketPayload(payload, maskingKey);
+      }
+
+      if (opcode === 0x8) {
+        this.sendWebSocketClose(subscriber.socket);
+        this.unregisterSessionWebSocketSubscriber(sessionId, subscriber);
+        return;
+      }
+      if (opcode === 0x9) {
+        this.sendWebSocketPong(subscriber.socket, payload);
+        continue;
+      }
+      if (opcode !== 0x1) {
+        continue;
+      }
+
+      try {
+        const text = payload.toString("utf8");
+        this.handleWebSocketClientText(sessionId, subscriber, text);
+      } catch (_ignored) {
+        // ignore malformed text frames
+      }
+    }
+  }
+
+  private handleWebSocketClientText(
+    _sessionId: string,
+    _subscriber: SessionWebSocketSubscriber,
+    text: string,
+  ): void {
+    // Reserved for future bidirectional session commands.
+    // Current phase uses WebSocket as a low-latency snapshot channel.
+    if (!text || typeof text !== "string") {
+      return;
+    }
+  }
+
+  private sendWebSocketSnapshot(
+    subscriber: SessionWebSocketSubscriber,
+    payload: Record<string, any>,
+  ): void {
+    this.writeWebSocketJson(subscriber.socket, {
+      event: "snapshot",
+      data: payload,
+    });
+  }
+
+  private sendWebSocketClose(socket: any): void {
+    const frame = this.encodeWebSocketFrame(0x8, null);
+    if (!frame) {
+      try {
+        socket.end();
+      } catch (_ignored) {
+        // ignore close errors
+      }
+      return;
+    }
+    try {
+      socket.write(frame);
+      socket.end();
+    } catch (_ignored) {
+      // ignore close errors
+    }
+  }
+
+  private sendWebSocketPong(socket: any, payload: any): void {
+    const frame = this.encodeWebSocketFrame(0xA, payload);
+    if (!frame) {
+      return;
+    }
+    try {
+      socket.write(frame);
+    } catch (_ignored) {
+      // ignore broken pipe writes
+    }
+  }
+
+  private writeWebSocketJson(socket: any, payload: Record<string, any>): void {
+    const frame = this.encodeWebSocketFrame(0x1, JSON.stringify(payload));
+    if (!frame) {
+      return;
+    }
+    socket.write(frame);
+  }
+
+  private encodeWebSocketFrame(opcode: number, payload: unknown): any | null {
+    const BufferCtor = this.getNodeBufferCtor();
+    if (!BufferCtor) {
+      return null;
+    }
+    const body =
+      payload == null
+        ? BufferCtor.alloc(0)
+        : typeof payload === "string"
+          ? BufferCtor.from(payload, "utf8")
+          : this.toNodeBuffer(payload) || BufferCtor.alloc(0);
+
+    const bodyLength = body.length;
+    if (bodyLength < 126) {
+      const frame = BufferCtor.alloc(2 + bodyLength);
+      frame[0] = 0x80 | (opcode & 0x0f);
+      frame[1] = bodyLength;
+      body.copy(frame, 2);
+      return frame;
+    }
+    if (bodyLength <= 0xffff) {
+      const frame = BufferCtor.alloc(4 + bodyLength);
+      frame[0] = 0x80 | (opcode & 0x0f);
+      frame[1] = 126;
+      frame.writeUInt16BE(bodyLength, 2);
+      body.copy(frame, 4);
+      return frame;
+    }
+
+    const frame = BufferCtor.alloc(10 + bodyLength);
+    frame[0] = 0x80 | (opcode & 0x0f);
+    frame[1] = 127;
+    frame.writeUInt32BE(0, 2);
+    frame.writeUInt32BE(bodyLength, 6);
+    body.copy(frame, 10);
+    return frame;
+  }
+
+  private unmaskWebSocketPayload(payload: any, mask: any): any {
+    const BufferCtor = this.getNodeBufferCtor();
+    if (!BufferCtor || !mask || mask.length !== 4) {
+      return payload;
+    }
+    const out = BufferCtor.alloc(payload.length);
+    for (let index = 0; index < payload.length; index += 1) {
+      out[index] = payload[index] ^ mask[index % 4];
+    }
+    return out;
+  }
+
+  private getNodeBufferCtor(): any | null {
+    if (nodeBuffer && nodeBuffer.Buffer) {
+      return nodeBuffer.Buffer;
+    }
+    return null;
+  }
+
+  private toNodeBuffer(value: unknown): any | null {
+    const BufferCtor = this.getNodeBufferCtor();
+    if (!BufferCtor) {
+      return null;
+    }
+    if (!value) {
+      return BufferCtor.alloc(0);
+    }
+    if (BufferCtor.isBuffer(value)) {
+      return value;
+    }
+    if (typeof value === "string") {
+      return BufferCtor.from(value, "utf8");
+    }
+    if (ArrayBuffer.isView(value)) {
+      return BufferCtor.from(value.buffer, value.byteOffset, value.byteLength);
+    }
+    if (value instanceof ArrayBuffer) {
+      return BufferCtor.from(value);
+    }
+    return null;
+  }
+
+  private concatBuffers(chunks: any[]): any {
+    const BufferCtor = this.getNodeBufferCtor();
+    if (!BufferCtor) {
+      return null;
+    }
+    const normalized = chunks.filter((chunk) => chunk && chunk.length > 0);
+    if (normalized.length === 0) {
+      return BufferCtor.alloc(0);
+    }
+    if (normalized.length === 1) {
+      return normalized[0];
+    }
+    return BufferCtor.concat(normalized);
+  }
+
+  private byteLength(value: string): number {
+    const BufferCtor = this.getNodeBufferCtor();
+    if (!BufferCtor) {
+      return value.length;
+    }
+    return BufferCtor.byteLength(value, "utf8");
   }
 
   private async handleSessionRequest(
@@ -768,6 +1172,17 @@ export class HeadlessHttpServer {
     );
   }
 
+  private sendSnapshotToWebSocketSubscriber(
+    sessionId: string,
+    subscriber: SessionWebSocketSubscriber,
+    stateOverride?: Record<string, any>,
+  ): void {
+    this.sendWebSocketSnapshot(
+      subscriber,
+      this.buildSessionSnapshotPayload(sessionId, subscriber.viewer, stateOverride),
+    );
+  }
+
   private registerSessionStreamSubscriber(
     sessionId: string,
     subscriber: SessionStreamSubscriber,
@@ -791,6 +1206,32 @@ export class HeadlessHttpServer {
     subscribers.delete(subscriber);
     if (subscribers.size === 0) {
       this.streamSubscribersBySession.delete(sessionId);
+    }
+  }
+
+  private registerSessionWebSocketSubscriber(
+    sessionId: string,
+    subscriber: SessionWebSocketSubscriber,
+  ): void {
+    const existing = this.webSocketSubscribersBySession.get(sessionId);
+    if (existing) {
+      existing.add(subscriber);
+      return;
+    }
+    this.webSocketSubscribersBySession.set(sessionId, new Set([subscriber]));
+  }
+
+  private unregisterSessionWebSocketSubscriber(
+    sessionId: string,
+    subscriber: SessionWebSocketSubscriber,
+  ): void {
+    const subscribers = this.webSocketSubscribersBySession.get(sessionId);
+    if (!subscribers) {
+      return;
+    }
+    subscribers.delete(subscriber);
+    if (subscribers.size === 0) {
+      this.webSocketSubscribersBySession.delete(sessionId);
     }
   }
 
@@ -845,6 +1286,19 @@ export class HeadlessHttpServer {
     this.streamSubscribersBySession.clear();
   }
 
+  private closeAllSessionWebSocketSubscribers(): void {
+    for (const subscribers of this.webSocketSubscribersBySession.values()) {
+      for (const subscriber of subscribers) {
+        try {
+          this.sendWebSocketClose(subscriber.socket);
+        } catch (_ignored) {
+          // ignore websocket shutdown errors
+        }
+      }
+    }
+    this.webSocketSubscribersBySession.clear();
+  }
+
   private tickSessionAndBroadcastSnapshot(
     sessionId: string,
     stepSeconds: number,
@@ -860,35 +1314,67 @@ export class HeadlessHttpServer {
       state = result.state as Record<string, any>;
     } catch (_error) {
       this.stopSessionRuntimeTicker(sessionId);
-      const subscribers = this.streamSubscribersBySession.get(sessionId);
-      if (!subscribers || subscribers.size === 0) {
-        return;
+      const streamSubscribers = this.streamSubscribersBySession.get(sessionId);
+      if (streamSubscribers && streamSubscribers.size > 0) {
+        for (const subscriber of streamSubscribers) {
+          try {
+            subscriber.res.end();
+          } catch (_ignored) {
+            // ignore broken connection writes
+          }
+        }
+        this.streamSubscribersBySession.delete(sessionId);
       }
-      for (const subscriber of subscribers) {
+      const webSocketSubscribers = this.webSocketSubscribersBySession.get(sessionId);
+      if (webSocketSubscribers && webSocketSubscribers.size > 0) {
+        for (const subscriber of webSocketSubscribers) {
+          try {
+            this.sendWebSocketClose(subscriber.socket);
+          } catch (_ignored) {
+            // ignore broken websocket writes
+          }
+        }
+        this.webSocketSubscribersBySession.delete(sessionId);
+      }
+      return;
+    }
+
+    const streamSubscribers = this.streamSubscribersBySession.get(sessionId);
+    const webSocketSubscribers = this.webSocketSubscribersBySession.get(sessionId);
+    const hasStreamSubscribers = Boolean(streamSubscribers && streamSubscribers.size > 0);
+    const hasWebSocketSubscribers = Boolean(
+      webSocketSubscribers && webSocketSubscribers.size > 0,
+    );
+    if (!hasStreamSubscribers && !hasWebSocketSubscribers) {
+      return;
+    }
+
+    if (streamSubscribers) {
+      for (const subscriber of Array.from(streamSubscribers)) {
         try {
-          subscriber.res.end();
-        } catch (_ignored) {
-          // ignore broken connection writes
+          this.sendSnapshotToSubscriber(sessionId, subscriber, state);
+        } catch (_error) {
+          this.unregisterSessionStreamSubscriber(sessionId, subscriber);
+          try {
+            subscriber.res.end();
+          } catch (_ignored) {
+            // ignore broken connection writes
+          }
         }
       }
-      this.streamSubscribersBySession.delete(sessionId);
-      return;
     }
 
-    const subscribers = this.streamSubscribersBySession.get(sessionId);
-    if (!subscribers || subscribers.size === 0) {
-      return;
-    }
-
-    for (const subscriber of Array.from(subscribers)) {
-      try {
-        this.sendSnapshotToSubscriber(sessionId, subscriber, state);
-      } catch (_error) {
-        this.unregisterSessionStreamSubscriber(sessionId, subscriber);
+    if (webSocketSubscribers) {
+      for (const subscriber of Array.from(webSocketSubscribers)) {
         try {
-          subscriber.res.end();
-        } catch (_ignored) {
-          // ignore broken connection writes
+          this.sendSnapshotToWebSocketSubscriber(sessionId, subscriber, state);
+        } catch (_error) {
+          this.unregisterSessionWebSocketSubscriber(sessionId, subscriber);
+          try {
+            this.sendWebSocketClose(subscriber.socket);
+          } catch (_ignored) {
+            // ignore broken websocket writes
+          }
         }
       }
     }
