@@ -29,6 +29,7 @@ from nanocalibur.ir import (
     SubscriptExpr,
     Unary,
     Var,
+    WaitTicks,
     While,
     Yield,
 )
@@ -85,6 +86,7 @@ class DSLCompiler:
         self.callable_returns_value: Dict[str, bool] = {}
         self._compile_time_constant_values: Dict[str, object] = {}
         self._compile_time_constant_exprs: Dict[str, Expr] = {}
+        self._in_callable: bool = False
 
     def set_callable_signatures(self, signatures: Dict[str, int]) -> None:
         """Register callable helper signatures available in expressions."""
@@ -605,7 +607,10 @@ class DSLCompiler:
                         if ann.id == "Scene":
                             scene_vars.add(arg.arg)
                         elif ann.id == "Tick":
-                            tick_vars.add(arg.arg)
+                            raise DSLValidationError(
+                                "Callable parameters cannot use Tick. "
+                                "Tick bindings are only supported in action/predicate functions."
+                            )
                         elif ann.id in self.schemas.actor_fields:
                             actor_var_types[arg.arg] = ann.id
                         elif ann.id in self.schemas.role_fields:
@@ -619,7 +624,10 @@ class DSLCompiler:
                         if head == "Scene":
                             scene_vars.add(arg.arg)
                         elif head == "Tick":
-                            tick_vars.add(arg.arg)
+                            raise DSLValidationError(
+                                "Callable parameters cannot use Tick. "
+                                "Tick bindings are only supported in action/predicate functions."
+                            )
                         elif head in self.schemas.actor_fields:
                             actor_var_types[arg.arg] = head
                         elif head in self.schemas.role_fields:
@@ -667,38 +675,47 @@ class DSLCompiler:
                 tick_vars=tick_vars,
                 spawn_actor_templates={},
             )
-            body = []
-            compile_stmts = fn.body[:-1] if returns_value else fn.body
-            for stmt in compile_stmts:
-                with dsl_node_context(stmt):
-                    if returns_value and isinstance(stmt, ast.Return):
-                        raise DSLValidationError(
-                            "Return statements are only allowed as the last callable statement."
-                        )
-                    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
-                        raise DSLValidationError("yield is not allowed inside callable functions.")
-                compiled = self._compile_stmt(
-                    stmt,
+            previous_in_callable = self._in_callable
+            self._in_callable = True
+            try:
+                body = []
+                compile_stmts = fn.body[:-1] if returns_value else fn.body
+                for stmt in compile_stmts:
+                    with dsl_node_context(stmt):
+                        if returns_value and isinstance(stmt, ast.Return):
+                            raise DSLValidationError(
+                                "Return statements are only allowed as the last callable statement."
+                            )
+                        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Yield):
+                            raise DSLValidationError("yield is not allowed inside callable functions.")
+                    compiled = self._compile_stmt(
+                        stmt,
+                        scope,
+                        loop_depth=0,
+                        allow_value_return=True,
+                    )
+                    if compiled is not None:
+                        body.append(compiled)
+
+                if not returns_value:
+                    return CallableIR(
+                        name=fn.name,
+                        params=params,
+                        body=body,
+                        return_expr=None,
+                    )
+
+                return_stmt = fn.body[-1]
+                assert isinstance(return_stmt, ast.Return)
+                assert return_stmt.value is not None
+                return_expr = self._compile_expr(
+                    return_stmt.value,
                     scope,
-                    loop_depth=0,
-                    allow_value_return=True,
+                    allow_range_call=False,
                 )
-                if compiled is not None:
-                    body.append(compiled)
-
-            if not returns_value:
-                return CallableIR(
-                    name=fn.name,
-                    params=params,
-                    body=body,
-                    return_expr=None,
-                )
-
-            return_stmt = fn.body[-1]
-            assert isinstance(return_stmt, ast.Return)
-            assert return_stmt.value is not None
-            return_expr = self._compile_expr(return_stmt.value, scope, allow_range_call=False)
-            return CallableIR(name=fn.name, params=params, body=body, return_expr=return_expr)
+                return CallableIR(name=fn.name, params=params, body=body, return_expr=return_expr)
+            finally:
+                self._in_callable = previous_in_callable
 
     def _parse_binding(self, arg: ast.arg) -> ParamBinding:
         with dsl_node_context(arg):
@@ -1017,7 +1034,11 @@ class DSLCompiler:
                 return self._compile_yield_stmt(stmt.value, scope)
 
             if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                return self._compile_call_stmt(stmt.value, scope)
+                return self._compile_call_stmt(
+                    stmt.value,
+                    scope,
+                    allow_value_return=allow_value_return,
+                )
 
             if isinstance(stmt, ast.Pass):
                 return None
@@ -1032,6 +1053,16 @@ class DSLCompiler:
     def _compile_yield_stmt(self, expr: ast.Yield, scope: ActionScope) -> Yield:
         if expr.value is None:
             raise DSLValidationError("yield must return a Tick binding variable.")
+        if (
+            isinstance(expr.value, ast.Call)
+            and isinstance(expr.value.func, ast.Attribute)
+            and isinstance(expr.value.func.value, ast.Name)
+            and expr.value.func.value.id in scope.tick_vars
+            and expr.value.func.attr == "wait_tick"
+        ):
+            raise DSLValidationError(
+                "Use 'tick.wait_tick(k)' as a statement, not 'yield tick.wait_tick(k)'."
+            )
         value = self._compile_expr(expr.value, scope, allow_range_call=False)
         if not isinstance(value, Var) or value.name not in scope.tick_vars:
             raise DSLValidationError(
@@ -1039,7 +1070,13 @@ class DSLCompiler:
             )
         return Yield(value=value)
 
-    def _compile_call_stmt(self, expr: ast.Call, scope: ActionScope):
+    def _compile_call_stmt(
+        self,
+        expr: ast.Call,
+        scope: ActionScope,
+        *,
+        allow_value_return: bool = False,
+    ):
         if isinstance(expr.func, ast.Name) and expr.func.id in self.callable_signatures:
             if expr.keywords:
                 raise DSLValidationError(
@@ -1079,6 +1116,14 @@ class DSLCompiler:
 
         if owner in scope.camera_vars:
             return self._compile_camera_instance_call(expr, scope, owner)
+
+        if owner in scope.tick_vars:
+            return self._compile_tick_instance_call(
+                expr,
+                scope,
+                owner,
+                allow_value_return=allow_value_return,
+            )
 
         if owner in scope.scene_vars:
             return self._compile_scene_instance_call(expr, scope, owner)
@@ -1145,6 +1190,40 @@ class DSLCompiler:
             f"Unsupported camera method '{owner}.{method}(...)'. "
             "Supported methods: follow, detach, translate."
         )
+
+    def _compile_tick_instance_call(
+        self,
+        expr: ast.Call,
+        scope: ActionScope,
+        owner: str,
+        *,
+        allow_value_return: bool = False,
+    ) -> WaitTicks:
+        method = expr.func.attr
+        if method != "wait_tick":
+            raise DSLValidationError(
+                f"Unsupported Tick method '{owner}.{method}(...)'. "
+                "Supported methods: wait_tick."
+            )
+        if allow_value_return:
+            raise DSLValidationError(
+                f"{owner}.wait_tick(...) is not allowed in callable functions."
+            )
+        if expr.keywords:
+            raise DSLValidationError(
+                f"{owner}.wait_tick(...) does not accept keyword arguments."
+            )
+        if len(expr.args) != 1:
+            raise DSLValidationError(
+                f"{owner}.wait_tick(...) expects exactly one tick count argument."
+            )
+        count_expr = self._compile_expr(expr.args[0], scope, allow_range_call=False)
+        if isinstance(count_expr, Const):
+            if isinstance(count_expr.value, bool) or not isinstance(count_expr.value, int):
+                raise DSLValidationError(
+                    f"{owner}.wait_tick(...) tick count must be an integer."
+                )
+        return WaitTicks(tick=Var(owner), count=count_expr)
 
     def _compile_actor_instance_attach_call(
         self, expr: ast.Call, scope: ActionScope, owner: str
@@ -1924,6 +2003,28 @@ class DSLCompiler:
                     self._compile_expr(arg, scope, allow_range_call=False)
                     for arg in expr.args
                 ],
+            )
+
+        if isinstance(expr.func, ast.Name) and expr.func.id in {
+            "tick_to_second",
+            "second_to_tick",
+        }:
+            if self._in_callable:
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) is not supported inside @callable helpers. "
+                    "Use it directly in actions/predicates."
+                )
+            if expr.keywords:
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) does not accept keyword arguments."
+                )
+            if len(expr.args) != 1:
+                raise DSLValidationError(
+                    f"{expr.func.id}(...) expects exactly one argument."
+                )
+            return CallExpr(
+                name=expr.func.id,
+                args=[self._compile_expr(expr.args[0], scope, allow_range_call=False)],
             )
 
         raise DSLValidationError("Function calls are not allowed.")

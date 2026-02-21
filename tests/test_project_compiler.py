@@ -2373,6 +2373,30 @@ def test_void_callable_helper_cannot_be_used_in_expression():
         )
 
 
+def test_callable_rejects_tick_parameter_binding():
+    with pytest.raises(DSLValidationError, match="Callable parameters cannot use Tick"):
+        compile_project(
+            """
+            class Worker(Actor):
+                speed: int
+
+            @callable
+            def wait_for_tick(tick: Tick):
+                return 1
+
+            @unsafe_condition(KeyboardCondition.begin_press("e", id="human_1"))
+            def run(worker: Worker["w1"]):
+                worker.vx = worker.speed
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Worker(uid="w1", x=0, y=0, speed=2, active=False))
+            """
+        )
+
+
 def test_callable_selector_annotations_warn_and_are_ignored():
     with pytest.warns(UserWarning, match="Selector annotation on callable parameter"):
         project = compile_project(

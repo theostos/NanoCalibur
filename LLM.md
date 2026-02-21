@@ -168,12 +168,58 @@ Common forms:
 
 - `Player["hero"]`, `Coin["coin_1"]`
 - `Player` (type selector)
+- `List[Actor]` (all actor instances)
+- `List[Player]` / `List[Unit]` (all instances of that exact actor schema)
 - `Player[-1]` (special selector usage where supported)
 - `Role["human_1"]`, `HeroRole["human_1"]`
 - `Camera["camera_h1"]`
 - `Global["global_score", int]`
 - `Scene`
 - `Tick`
+
+Tick helpers:
+
+- `tick.wait_tick(k)` in action bodies: pauses current action for `k` ticks.
+- `tick_to_second(ticks)` in action/predicate expressions.
+- `second_to_tick(seconds)` in action/predicate expressions.
+- `Tick` is not allowed as a `@callable` parameter type.
+- `tick_to_second` / `second_to_tick` are currently not allowed inside `@callable` helpers.
+
+Example:
+
+```python
+@unsafe_condition(KeyboardCondition.begin_press("space", Role["human_1"]))
+def dash_with_delay(hero: Player["hero_1"], tick: Tick):
+    hero.vx = 300
+    tick.wait_tick(6)  # equivalent to: for _ in range(6): yield tick
+    hero.vx = 0
+```
+
+### 8.1.1 Actor list bindings (selector + type)
+
+You can bind a function argument to a list of actors directly:
+
+- `actors: List[Actor]` -> all actors in scene state.
+- `units: List[Unit]` -> actors whose runtime type is exactly `Unit`.
+
+This works in action/predicate/callable parameter bindings.
+
+Example:
+
+```python
+@safe_condition(OnOverlap(Player["hero"], Coin))
+def collect_coin_for_any_unit(
+    units: List[Unit],
+    coin: Coin,
+):
+    if len(units) > 0 and coin.active:
+        coin.destroy()
+```
+
+Important:
+
+- `List[Unit]` is exact schema filtering (not automatic polymorphic expansion to all subclasses).
+- Multi-level actor inheritance is supported for schema declarations (subclass of subclass of `Actor` is valid).
 
 ### 8.2 Selector conventions
 
@@ -315,6 +361,7 @@ scene.add_camera(cam)
 Runtime camera control in actions/callables:
 
 ```python
+@callable
 def shake(cam: Camera["camera_h1"]):
     cam.detach()
     cam.translate(4, 0)
