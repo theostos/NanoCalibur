@@ -168,6 +168,11 @@ class Continue(Stmt):
 
 
 @dataclass(frozen=True)
+class Break(Stmt):
+    pass
+
+
+@dataclass(frozen=True)
 class Return(Stmt):
     value: Optional[Expr] = None
 

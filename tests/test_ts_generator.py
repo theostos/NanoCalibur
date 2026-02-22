@@ -301,6 +301,21 @@ def test_ts_emits_continue_statement():
     assert "continue;" in ts
 
 
+def test_ts_emits_break_statement():
+    ts = compile_to_ts(
+        """
+        class Player(Actor):
+            speed: int
+
+        def stop_steps(player: Player["hero"]):
+            for i in range(0, 4):
+                break
+        """
+    )
+
+    assert "break;" in ts
+
+
 def test_ts_emits_predicate_with_context_bindings():
     ts = compile_project_to_ts(
         """

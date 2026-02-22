@@ -6,6 +6,7 @@ from nanocalibur.ir import (
     Assign,
     Attr,
     Binary,
+    Break,
     BindingKind,
     CallableIR,
     CallExpr,
@@ -881,6 +882,9 @@ function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
 
         if isinstance(stmt, Continue):
             return [pad + "continue;"]
+
+        if isinstance(stmt, Break):
+            return [pad + "break;"]
 
         raise DSLValidationError(f"Unsupported statement IR node: {type(stmt).__name__}")
 

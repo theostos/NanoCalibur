@@ -9,6 +9,7 @@ from nanocalibur.ir import (
     Attr,
     Binary,
     BindingKind,
+    Break,
     CallExpr,
     CallStmt,
     Continue,
@@ -722,6 +723,27 @@ def test_accept_continue_inside_loops():
     assert isinstance(action.body[1].body[0], Continue)
 
 
+def test_accept_break_inside_loops():
+    actions = compile_source(
+        """
+        class Player(Actor):
+            speed: int
+
+        def stop_early(player: Player["hero"]):
+            for i in range(0, 5):
+                break
+            while player.speed > 0:
+                break
+        """
+    )
+
+    action = actions[0]
+    assert isinstance(action.body[0], For)
+    assert isinstance(action.body[0].body[0], Break)
+    assert isinstance(action.body[1], While)
+    assert isinstance(action.body[1].body[0], Break)
+
+
 def test_accept_bare_return_in_action():
     actions = compile_source(
         """
@@ -765,6 +787,19 @@ def test_reject_continue_outside_loop():
 
             def bad(player: Player["hero"]):
                 continue
+            """
+        )
+
+
+def test_reject_break_outside_loop():
+    with pytest.raises(DSLValidationError, match="only allowed inside loops"):
+        compile_source(
+            """
+            class Player(Actor):
+                speed: int
+
+            def bad(player: Player["hero"]):
+                break
             """
         )
 

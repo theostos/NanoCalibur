@@ -9,6 +9,7 @@ from nanocalibur.ir import (
     Assign,
     Attr,
     Binary,
+    Break,
     BindingKind,
     CallableIR,
     CallExpr,
@@ -1087,6 +1088,11 @@ class DSLCompiler:
                 if loop_depth <= 0:
                     raise DSLValidationError("'continue' is only allowed inside loops.")
                 return Continue()
+
+            if isinstance(stmt, ast.Break):
+                if loop_depth <= 0:
+                    raise DSLValidationError("'break' is only allowed inside loops.")
+                return Break()
 
             raise DSLValidationError(f"Unsupported statement: {type(stmt).__name__}")
 
