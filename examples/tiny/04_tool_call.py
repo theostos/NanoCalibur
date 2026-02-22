@@ -12,6 +12,7 @@ from nanocalibur.dsl_markers import *
 
 class Bot(Actor):
     speed: int
+    can_move: bool
 
 @unsafe_condition(OnToolCall("bot_move_right", Role["dummy_1"]))
 def bot_move_right(bot: Bot["bot_1"]):
@@ -22,7 +23,7 @@ game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
 game.add_role(Role(id="dummy_1", required=True, kind=RoleKind.AI))
-scene.add_actor(Bot(uid="bot_1", x=32, y=32, speed=8))
+scene.add_actor(Bot(uid="bot_1", x=32, y=32, speed=8, can_move=True))
 """
 
 

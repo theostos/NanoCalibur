@@ -382,7 +382,7 @@ export class PhysicsSystem {
   private resolveBodyConfig(actor: ActorState): ResolvedBodyConfig {
     const inferredDefault: PhysicsBodyConfig = {
       enabled: true,
-      dynamic: actor.type === "Player" || actor.type === "Enemy",
+      dynamic: this.inferDynamicByActor(actor),
       collidable: true,
     };
 
@@ -401,6 +401,25 @@ export class PhysicsSystem {
       dynamic: Boolean(merged.dynamic),
       collidable: merged.collidable !== false,
     };
+  }
+
+  private inferDynamicByActor(actor: ActorState): boolean {
+    // Generic movement capability hints used by game schemas.
+    if (actor.can_move === true) {
+      return true;
+    }
+
+    if (asNumber(actor.move_speed, 0) > 0) {
+      return true;
+    }
+
+    if (asNumber(actor.speed, 0) > 0) {
+      return true;
+    }
+
+    const vx = asNumber(actor.vx, 0);
+    const vy = asNumber(actor.vy, 0);
+    return Math.abs(vx) > EPSILON || Math.abs(vy) > EPSILON;
   }
 
   private resolveHorizontalTileCollisions(body: PhysicsBodyRuntime): void {

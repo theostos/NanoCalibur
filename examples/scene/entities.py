@@ -9,6 +9,7 @@ CodeBlock.begin("actors_and_spawn")
 
 class Player(Actor):
     speed: int
+    can_move: bool
 
 
 class Coin(Actor):
@@ -23,6 +24,7 @@ scene.add_actor(
         w=32,
         h=32,
         speed=180,
+        can_move=True,
         z=1,
         block_mask=1,
         sprite=Sprite["hero"],
@@ -36,6 +38,7 @@ scene.add_actor(
         w=32,
         h=32,
         speed=170,
+        can_move=True,
         z=1,
         block_mask=1,
         sprite=Sprite["hero"],
@@ -49,6 +52,7 @@ scene.add_actor(
         w=32,
         h=32,
         speed=170,
+        can_move=True,
         z=1,
         block_mask=1,
         sprite=Sprite["hero"],
@@ -62,6 +66,7 @@ scene.add_actor(
         w=32,
         h=32,
         speed=170,
+        can_move=True,
         z=1,
         block_mask=1,
         sprite=Sprite["hero"],
@@ -75,6 +80,7 @@ scene.add_actor(
         w=32,
         h=32,
         speed=140,
+        can_move=True,
         z=1,
         block_mask=1,
         sprite=Sprite["hero"],

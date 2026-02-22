@@ -12,6 +12,7 @@ from nanocalibur.dsl_markers import *
 
 class Player(Actor):
     speed: int
+    can_move: bool
 
 def act(player: Player["hero"], scene: Scene):
     player.x = player.x + player.speed
@@ -21,7 +22,7 @@ game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
 game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
-scene.add_actor(Player(uid="hero", x=32, y=32, speed=10))
+scene.add_actor(Player(uid="hero", x=32, y=32, speed=10, can_move=True))
 scene.add_rule(KeyboardCondition.on_press("act", Role["human_1"]), act)
 cam = Camera("cam_h1", Role["human_1"], width=24, height=16)
 cam.follow("hero")
