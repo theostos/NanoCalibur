@@ -325,6 +325,7 @@ def _map_to_dict(map_spec):
                     "r": tile_def.color.r,
                     "g": tile_def.color.g,
                     "b": tile_def.color.b,
+                    "a": tile_def.color.a,
                     "symbol": tile_def.color.symbol,
                     "description": tile_def.color.description,
                 }
@@ -414,6 +415,7 @@ def _sprite_to_dict(sprite: SpriteSpec) -> Dict[str, Any]:
                 "r": sprite.color.r,
                 "g": sprite.color.g,
                 "b": sprite.color.b,
+                "a": sprite.color.a,
                 "symbol": sprite.color.symbol,
                 "description": sprite.color.description,
             }

@@ -29,6 +29,7 @@ export interface MapSpec {
         r: number;
         g: number;
         b: number;
+        a?: number;
         symbol?: string | null;
         description?: string | null;
       } | null;
@@ -75,6 +76,7 @@ export interface SpriteAnimationConfig {
     r: number;
     g: number;
     b: number;
+    a?: number;
   };
   frameWidth: number;
   frameHeight: number;
@@ -140,6 +142,7 @@ export interface SpecSpriteDef {
     r?: number;
     g?: number;
     b?: number;
+    a?: number;
     symbol?: string;
     description?: string;
   } | null;

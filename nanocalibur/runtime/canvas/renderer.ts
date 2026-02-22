@@ -173,6 +173,7 @@ export class CanvasRenderer {
           r: number;
           g: number;
           b: number;
+          a?: number;
           symbol?: string | null;
           description?: string | null;
         }
@@ -185,7 +186,8 @@ export class CanvasRenderer {
     const r = clamp(Math.floor(asNumber(color.r, 0)), 0, 255);
     const g = clamp(Math.floor(asNumber(color.g, 0)), 0, 255);
     const b = clamp(Math.floor(asNumber(color.b, 0)), 0, 255);
-    return `rgb(${r}, ${g}, ${b})`;
+    const a = clamp(asNumber(color.a, 1), 0, 1);
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
   }
 
   private drawTileSprite(
@@ -442,6 +444,7 @@ export class CanvasRenderer {
             r: number;
             g: number;
             b: number;
+            a?: number;
           };
         }
       | null
@@ -453,7 +456,8 @@ export class CanvasRenderer {
     const r = clamp(Math.floor(asNumber(sprite.color.r, 0)), 0, 255);
     const g = clamp(Math.floor(asNumber(sprite.color.g, 0)), 0, 255);
     const b = clamp(Math.floor(asNumber(sprite.color.b, 0)), 0, 255);
-    return `rgb(${r}, ${g}, ${b})`;
+    const a = clamp(asNumber(sprite.color.a, 1), 0, 1);
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
   }
 
   private worldToScreenX(worldX: number, camera: WorldCamera): number {

@@ -113,6 +113,7 @@ def test_export_project_serializes_tile_grid_and_tile_defs(tmp_path):
     assert tile_map["tile_defs"]["1"]["color"]["r"] == 0
     assert tile_map["tile_defs"]["1"]["color"]["g"] == 180
     assert tile_map["tile_defs"]["1"]["color"]["b"] == 0
+    assert tile_map["tile_defs"]["1"]["color"]["a"] == 1.0
     assert tile_map["tile_defs"]["1"]["color"]["symbol"] == ","
     assert tile_map["tile_defs"]["1"]["color"]["description"] == "grass"
     assert "mask" not in tile_map["tile_defs"]["1"]
@@ -350,12 +351,49 @@ def test_export_project_serializes_color_sprite_and_block_in_sprite_fallback(tmp
     hero = spec["sprites"]["by_name"]["hero"]
     assert hero["resource"] is None
     assert hero["color"]["r"] == 255
+    assert hero["color"]["a"] == 1.0
     assert hero["clips"] == {}
 
     bot = spec["sprites"]["by_name"]["bot"]
     assert bot["resource"] is None
     assert bot["color"]["b"] == 255
+    assert bot["color"]["a"] == 1.0
     assert bot["clips"]["idle"]["frames"] == [0]
+
+
+def test_export_project_serializes_explicit_color_alpha(tmp_path):
+    source = textwrap.dedent(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=0, y=0, sprite="hero"))
+        scene.set_map(
+            TileMap(
+                tile_size=16,
+                grid=[[1]],
+                tiles={1: Tile(color=Color(70, 130, 180, a=0.4))},
+            )
+        )
+        game.add_sprite(
+            ColorSprite(
+                name="hero",
+                frame_width=16,
+                frame_height=16,
+                color=Color(10, 200, 90, a=0.25),
+            )
+        )
+        """
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+
+    assert spec["map"]["tile_defs"]["1"]["color"]["a"] == 0.4
+    assert spec["sprites"]["by_name"]["hero"]["color"]["a"] == 0.25
 
 
 def test_export_project_serializes_multiplayer_and_next_turn_metadata(tmp_path):

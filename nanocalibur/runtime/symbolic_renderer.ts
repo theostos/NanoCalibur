@@ -378,6 +378,7 @@ export class SymbolicRenderer {
         r: number;
         g: number;
         b: number;
+        a?: number;
         symbol?: string | null;
         description?: string | null;
       } | null;

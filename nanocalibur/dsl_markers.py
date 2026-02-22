@@ -777,6 +777,7 @@ class TileMap:
 class Color:
     """Tile color definition.
 
+    ``a`` is optional alpha in [0.0, 1.0].
     ``symbol`` and ``description`` are used by symbolic rendering.
     """
 
@@ -785,6 +786,7 @@ class Color:
         r: int,
         g: int,
         b: int,
+        a: float = 1.0,
         *,
         symbol: str | None = None,
         description: str | None = None,

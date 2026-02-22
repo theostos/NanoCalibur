@@ -3489,23 +3489,27 @@ class ProjectCompiler:
             raise DSLValidationError(f"{error_label} must be Color(...).")
 
         kwargs = {kw.arg: kw.value for kw in color_expr.keywords if kw.arg is not None}
-        allowed = {"r", "g", "b", "symbol", "description"}
+        allowed = {"r", "g", "b", "a", "symbol", "description"}
         unexpected = sorted(set(kwargs.keys()) - allowed)
         if unexpected:
             raise DSLValidationError(
                 f"Color(...) received unsupported arguments: {unexpected}"
             )
 
-        if len(color_expr.args) not in {0, 3}:
-            raise DSLValidationError("Color(...) expects either 3 positional args or keyword r/g/b.")
+        if len(color_expr.args) not in {0, 3, 4}:
+            raise DSLValidationError(
+                "Color(...) expects either 3/4 positional args or keyword r/g/b[/a]."
+            )
 
         channel_nodes: Dict[str, ast.AST] = {}
         if color_expr.args:
             channel_nodes["r"] = color_expr.args[0]
             channel_nodes["g"] = color_expr.args[1]
             channel_nodes["b"] = color_expr.args[2]
+            if len(color_expr.args) == 4:
+                channel_nodes["a"] = color_expr.args[3]
 
-        for channel in ("r", "g", "b"):
+        for channel in ("r", "g", "b", "a"):
             if channel in kwargs:
                 if channel in channel_nodes:
                     raise DSLValidationError(
@@ -3525,6 +3529,13 @@ class ProjectCompiler:
         for label, value in (("red", r), ("green", g), ("blue", b)):
             if value < 0 or value > 255:
                 raise DSLValidationError(f"Color {label} must be between 0 and 255.")
+        a = _expect_number_or_default(
+            channel_nodes.get("a"),
+            "color alpha",
+            1.0,
+        )
+        if a < 0 or a > 1:
+            raise DSLValidationError("Color alpha must be between 0 and 1.")
 
         symbol = _expect_single_character_or_default(
             kwargs.get("symbol"),
@@ -3541,6 +3552,7 @@ class ProjectCompiler:
             r=r,
             g=g,
             b=b,
+            a=a,
             symbol=symbol,
             description=description,
         )

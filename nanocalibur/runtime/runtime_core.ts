@@ -59,6 +59,7 @@ function toSpriteConfig(specSprite: SpecSpriteDef): SpriteAnimationConfig | null
           r: asNumber(specSprite.color.r, 255),
           g: asNumber(specSprite.color.g, 255),
           b: asNumber(specSprite.color.b, 255),
+          a: asNumber(specSprite.color.a, 1),
         }
       : undefined;
 

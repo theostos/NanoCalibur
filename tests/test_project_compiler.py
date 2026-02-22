@@ -1311,6 +1311,68 @@ def test_tile_map_grid_palette_supports_color_and_sprite_tiles():
     assert project.tile_map.tile_defs[2].color is None
 
 
+def test_color_supports_optional_alpha_channel():
+    project = compile_project(
+        """
+        class Player(Actor):
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Player(uid="hero", x=10, y=20))
+        scene.set_map(
+            TileMap(
+                tile_size=16,
+                grid=[[1]],
+                tiles={1: Tile(color=Color(10, 120, 20, a=0.35))},
+            )
+        )
+        game.add_sprite(
+            ColorSprite(
+                name="hero_fallback",
+                frame_width=16,
+                frame_height=16,
+                color=Color(250, 160, 30, 0.2),
+                symbol="@",
+                description="hero fallback",
+            )
+        )
+        """
+    )
+
+    assert project.tile_map is not None
+    tile_color = project.tile_map.tile_defs[1].color
+    assert tile_color is not None
+    assert tile_color.a == 0.35
+
+    sprite = project.sprites[0]
+    assert sprite.color is not None
+    assert sprite.color.a == 0.2
+
+
+def test_color_rejects_out_of_range_alpha():
+    with pytest.raises(DSLValidationError, match="alpha must be between 0 and 1"):
+        compile_project(
+            """
+            class Player(Actor):
+                pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", x=10, y=20))
+            scene.set_map(
+                TileMap(
+                    tile_size=16,
+                    grid=[[1]],
+                    tiles={1: Tile(color=Color(10, 120, 20, a=1.5))},
+                )
+            )
+            """
+        )
+
+
 def test_tile_map_rejects_legacy_solid_argument():
     with pytest.raises(DSLValidationError, match="unsupported arguments"):
         compile_project(

@@ -150,6 +150,7 @@ class ColorSpec:
     r: int
     g: int
     b: int
+    a: float = 1.0
     symbol: Optional[str] = None
     description: Optional[str] = None
 
