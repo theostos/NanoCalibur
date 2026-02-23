@@ -60,6 +60,7 @@ class MouseConditionSpec:
     button: str
     phase: InputPhase = InputPhase.ON
     role_id: Optional[str] = None
+    view_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class ButtonConditionSpec:
     name: str
     phase: InputPhase = InputPhase.ON
     role_id: Optional[str] = None
+    view_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +195,27 @@ class CameraSpec:
 
 
 @dataclass(frozen=True)
+class ViewSpec:
+    id: str
+    role_id: Optional[str] = None
+    camera_name: Optional[str] = None
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 1.0
+    height: float = 1.0
+    z: int = 0
+    interactive: bool = True
+    symbolic: bool = True
+
+
+@dataclass(frozen=True)
+class InterfaceBindingSpec:
+    html: str
+    role_id: Optional[str] = None
+    view_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class MultiplayerSpec:
     default_loop: MultiplayerLoopMode = MultiplayerLoopMode.REAL_TIME
     allowed_loops: List[MultiplayerLoopMode] = field(
@@ -265,12 +288,14 @@ class ProjectSpec:
     rules: List[RuleSpec]
     tile_map: Optional[TileMapSpec]
     cameras: List[CameraSpec]
+    views: List[ViewSpec]
     actions: List[ActionIR]
     predicates: List[PredicateIR]
     callables: List[CallableIR]
     resources: List[ResourceSpec]
     sprites: List[SpriteSpec]
     scene: Optional[SceneSpec]
+    interfaces: List[InterfaceBindingSpec] = field(default_factory=list)
     role_local_schemas: Dict[str, Dict[str, str]] = field(default_factory=dict)
     role_local_defaults: Dict[str, Dict[str, StructuredValue]] = field(default_factory=dict)
     interface_html: Optional[str] = None

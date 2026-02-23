@@ -4,6 +4,17 @@ export interface FramePhaseInput {
   end?: string[];
 }
 
+export interface UIButtonEventInput {
+  name?: string;
+  view_id?: string;
+}
+
+export interface UIButtonFrameInput {
+  begin?: Array<string | UIButtonEventInput>;
+  on?: Array<string | UIButtonEventInput>;
+  end?: Array<string | UIButtonEventInput>;
+}
+
 export interface CollisionFrameInput {
   a?: Record<string, any>;
   b?: Record<string, any>;
@@ -21,7 +32,7 @@ export interface ToolFrameInput {
 export interface NanoCaliburFrameInput {
   keyboard?: FramePhaseInput;
   mouse?: FramePhaseInput;
-  uiButtons?: FramePhaseInput | string[];
+  uiButtons?: UIButtonFrameInput | string[] | Array<string | UIButtonEventInput>;
   collisions?: CollisionFrameInput[];
   contacts?: CollisionFrameInput[];
   toolCalls?: Array<string | ToolFrameInput>;
@@ -45,6 +56,29 @@ export interface NanoCaliburFrameInput {
   mouseClicked?: boolean | { button?: string };
   mousePosition?: { x?: number; y?: number };
   mouse_position?: { x?: number; y?: number };
+  mouseWorldPosition?: { x?: number; y?: number };
+  mouse_world_position?: { x?: number; y?: number };
+  mouseViewId?: string;
+  mouse_view_id?: string;
+}
+
+export interface SceneInterfaceBindingState {
+  html: string;
+  role_id: string | null;
+  view_id: string | null;
+}
+
+export interface SceneViewState {
+  id: string;
+  role_id: string | null;
+  camera_name: string | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  z: number;
+  interactive: boolean;
+  symbolic: boolean;
 }
 
 export interface InterpreterSceneState {
@@ -55,6 +89,8 @@ export interface InterpreterSceneState {
   turnChangedThisStep: boolean;
   interfaceHtml: string;
   interfaceByRole: Record<string, string>;
+  interfaces: SceneInterfaceBindingState[];
+  views: SceneViewState[];
 }
 
 export interface InterpreterState {
@@ -98,11 +134,30 @@ interface MouseInfoPayload {
   pressed_y: number;
   x: number;
   y: number;
+  pressed_world_x: number;
+  pressed_world_y: number;
+  world_x: number;
+  world_y: number;
+  view_id: string;
 }
 
 interface ButtonInfoPayload {
   pressed_tick: number;
   current_tick: number;
+  view_id: string;
+}
+
+interface UIButtonEvent {
+  name: string;
+  view_id: string | null;
+}
+
+interface ResolvedMousePosition {
+  x: number;
+  y: number;
+  world_x: number;
+  world_y: number;
+  view_id: string;
 }
 
 type ActionGenerator = Iterator<unknown, void, unknown>;
@@ -139,9 +194,9 @@ export class NanoCaliburInterpreter {
   private readonly buttonPressedTickByRole = new Map<string, Map<string, number>>();
   private readonly mousePressPositionByRole = new Map<
     string,
-    Map<string, { x: number; y: number }>
+    Map<string, ResolvedMousePosition>
   >();
-  private readonly mousePositionByRole = new Map<string, { x: number; y: number }>();
+  private readonly mousePositionByRole = new Map<string, ResolvedMousePosition>();
   private runtimeHooks: RuntimeHooks;
 
   constructor(
@@ -251,6 +306,8 @@ export class NanoCaliburInterpreter {
         turnChangedThisStep: this.sceneState.turnChangedThisStep,
         interfaceHtml: this.sceneState.interfaceHtml,
         interfaceByRole: { ...this.sceneState.interfaceByRole },
+        interfaces: this.sceneState.interfaces.map((entry) => ({ ...entry })),
+        views: this.sceneState.views.map((entry) => ({ ...entry })),
       },
     };
   }
@@ -268,6 +325,8 @@ export class NanoCaliburInterpreter {
       turnChangedThisStep: this.sceneState.turnChangedThisStep,
       interfaceHtml: this.sceneState.interfaceHtml,
       interfaceByRole: { ...this.sceneState.interfaceByRole },
+      interfaces: this.sceneState.interfaces.map((entry) => ({ ...entry })),
+      views: this.sceneState.views.map((entry) => ({ ...entry })),
     };
   }
 
@@ -404,7 +463,8 @@ export class NanoCaliburInterpreter {
         setGravityEnabled: (enabled: boolean) => this.setGravityEnabled(enabled),
         isSolidAt: (x: number, y: number) => this.isSolidAtWorld(x, y),
         nextTurn: () => this.nextTurn(),
-        setInterfaceHtml: (html: string, role?: unknown) => this.setInterfaceHtml(html, role),
+        setInterfaceHtml: (html: string, role?: unknown, view?: unknown) =>
+          this.setInterfaceHtml(html, role, view),
         followCamera: (camera: Record<string, any>, targetUid: string) =>
           this.followCamera(camera, targetUid),
         detachCamera: (camera: Record<string, any>) => this.detachCamera(camera),
@@ -453,7 +513,8 @@ export class NanoCaliburInterpreter {
         detachCamera: (camera: Record<string, any>) => this.detachCamera(camera),
         translateCamera: (camera: Record<string, any>, dx: number, dy: number) =>
           this.translateCamera(camera, dx, dy),
-        setInterfaceHtml: (html: string, role?: unknown) => this.setInterfaceHtml(html, role),
+        setInterfaceHtml: (html: string, role?: unknown, view?: unknown) =>
+          this.setInterfaceHtml(html, role, view),
         spawnActor: (
           actorType: string,
           uid: string,
@@ -704,19 +765,92 @@ export class NanoCaliburInterpreter {
         ? this.spec.multiplayer.default_loop
         : null,
     );
+    const interfaces: SceneInterfaceBindingState[] = [];
     const interfaceByRole: Record<string, string> = {};
-    const roleInterfacesRaw =
-      this.spec && this.spec.interfaces_by_role && typeof this.spec.interfaces_by_role === "object"
-        ? (this.spec.interfaces_by_role as Record<string, unknown>)
-        : {};
-    for (const [roleId, html] of Object.entries(roleInterfacesRaw)) {
-      if (typeof roleId !== "string" || !roleId) {
+    const interfacesRaw = Array.isArray(this.spec?.interfaces)
+      ? (this.spec.interfaces as Array<Record<string, unknown>>)
+      : [];
+    if (interfacesRaw.length > 0) {
+      for (const entry of interfacesRaw) {
+        if (!entry || typeof entry !== "object") {
+          continue;
+        }
+        const html = typeof entry.html === "string" ? entry.html : "";
+        const roleId =
+          typeof entry.role_id === "string" && entry.role_id ? entry.role_id : null;
+        const viewId =
+          typeof entry.view_id === "string" && entry.view_id ? entry.view_id : null;
+        interfaces.push({
+          html,
+          role_id: roleId,
+          view_id: viewId,
+        });
+      }
+    } else {
+      const defaultHtml =
+        typeof this.spec?.interface_html === "string" ? this.spec.interface_html : "";
+      interfaces.push({
+        html: defaultHtml,
+        role_id: null,
+        view_id: null,
+      });
+      const roleInterfacesRaw =
+        this.spec && this.spec.interfaces_by_role && typeof this.spec.interfaces_by_role === "object"
+          ? (this.spec.interfaces_by_role as Record<string, unknown>)
+          : {};
+      for (const [roleId, html] of Object.entries(roleInterfacesRaw)) {
+        if (typeof roleId !== "string" || !roleId) {
+          continue;
+        }
+        if (typeof html !== "string") {
+          continue;
+        }
+        interfaces.push({
+          html,
+          role_id: roleId,
+          view_id: null,
+        });
+      }
+    }
+    for (const entry of interfaces) {
+      if (!entry.role_id || entry.view_id) {
         continue;
       }
-      if (typeof html !== "string") {
+      interfaceByRole[entry.role_id] = entry.html;
+    }
+    const defaultBinding = interfaces.find((entry) => entry.role_id === null && entry.view_id === null);
+    const interfaceHtml = defaultBinding
+      ? defaultBinding.html
+      : typeof this.spec?.interface_html === "string"
+        ? this.spec.interface_html
+        : "";
+
+    const views: SceneViewState[] = [];
+    const viewsRaw = Array.isArray(this.spec?.views)
+      ? (this.spec.views as Array<Record<string, unknown>>)
+      : [];
+    for (const entry of viewsRaw) {
+      if (!entry || typeof entry !== "object") {
         continue;
       }
-      interfaceByRole[roleId] = html;
+      const id = typeof entry.id === "string" ? entry.id : "";
+      if (!id) {
+        continue;
+      }
+      views.push({
+        id,
+        role_id:
+          typeof entry.role_id === "string" && entry.role_id ? entry.role_id : null,
+        camera_name:
+          typeof entry.camera_name === "string" && entry.camera_name ? entry.camera_name : null,
+        x: this.clamp01(this.asFiniteNumber(entry.x, 0)),
+        y: this.clamp01(this.asFiniteNumber(entry.y, 0)),
+        width: this.clamp01Positive(this.asFiniteNumber(entry.width, 1)),
+        height: this.clamp01Positive(this.asFiniteNumber(entry.height, 1)),
+        z: Math.floor(this.asFiniteNumber(entry.z, 0)),
+        interactive: entry.interactive !== false,
+        symbolic: entry.symbolic !== false,
+      });
     }
     return {
       gravityEnabled: Boolean(sceneSpec && sceneSpec.gravity_enabled),
@@ -724,9 +858,10 @@ export class NanoCaliburInterpreter {
       turn: 0,
       loopMode,
       turnChangedThisStep: false,
-      interfaceHtml:
-        typeof this.spec?.interface_html === "string" ? this.spec.interface_html : "",
+      interfaceHtml,
       interfaceByRole,
+      interfaces,
+      views,
     };
   }
 
@@ -753,14 +888,25 @@ export class NanoCaliburInterpreter {
     this.sceneState.turnChangedThisStep = true;
   }
 
-  private setInterfaceHtml(html: string, role?: unknown): void {
+  private setInterfaceHtml(html: string, role?: unknown, view?: unknown): void {
     const nextHtml = typeof html === "string" ? html : String(html ?? "");
     const roleId = this.resolveRoleIdArg(role);
-    if (roleId) {
+    const viewId = this.resolveViewIdArg(view);
+    this.sceneState.interfaces = this.upsertSceneInterfaceBinding(
+      this.sceneState.interfaces,
+      {
+        html: nextHtml,
+        role_id: roleId,
+        view_id: viewId,
+      },
+    );
+    if (roleId && !viewId) {
       this.sceneState.interfaceByRole[roleId] = nextHtml;
       return;
     }
-    this.sceneState.interfaceHtml = nextHtml;
+    if (!roleId && !viewId) {
+      this.sceneState.interfaceHtml = nextHtml;
+    }
   }
 
   private resolveRoleIdArg(role: unknown): string | null {
@@ -772,6 +918,39 @@ export class NanoCaliburInterpreter {
       return id || null;
     }
     return null;
+  }
+
+  private resolveViewIdArg(view: unknown): string | null {
+    if (typeof view === "string") {
+      return view || null;
+    }
+    if (view && typeof view === "object" && typeof (view as { id?: unknown }).id === "string") {
+      const id = (view as { id: string }).id;
+      return id || null;
+    }
+    return null;
+  }
+
+  private upsertSceneInterfaceBinding(
+    bindings: SceneInterfaceBindingState[],
+    next: SceneInterfaceBindingState,
+  ): SceneInterfaceBindingState[] {
+    const key = `${next.role_id || ""}::${next.view_id || ""}`;
+    const out: SceneInterfaceBindingState[] = [];
+    let replaced = false;
+    for (const entry of bindings) {
+      const entryKey = `${entry.role_id || ""}::${entry.view_id || ""}`;
+      if (entryKey === key) {
+        out.push(next);
+        replaced = true;
+      } else {
+        out.push(entry);
+      }
+    }
+    if (!replaced) {
+      out.push(next);
+    }
+    return out;
   }
 
   private buildMaskedTileSet(mapSpec: Record<string, any> | null): Set<string> {
@@ -866,7 +1045,9 @@ export class NanoCaliburInterpreter {
       const phase = condition.phase || "on";
       const roleKey = this.resolveInputRoleKey(frame);
       const button = typeof condition.button === "string" ? condition.button : "left";
-      if (!this.matchMousePhase(frame, phase, button, roleKey)) {
+      const viewId =
+        typeof condition.view_id === "string" && condition.view_id ? condition.view_id : null;
+      if (!this.matchMousePhase(frame, phase, button, roleKey, viewId)) {
         return { matched: false };
       }
       return {
@@ -942,7 +1123,10 @@ export class NanoCaliburInterpreter {
         return { matched: false };
       }
       const phase = condition.phase || "on";
-      if (!this.matchUIButtonPhase(frame, phase, buttonName)) {
+      const viewId =
+        typeof condition.view_id === "string" && condition.view_id ? condition.view_id : null;
+      const matchedViewId = this.matchUIButtonPhase(frame, phase, buttonName, viewId);
+      if (matchedViewId === null) {
         return { matched: false };
       }
       return {
@@ -950,6 +1134,7 @@ export class NanoCaliburInterpreter {
         buttonInfo: this.buildButtonInfo(
           this.resolveInputRoleKey(frame),
           buttonName,
+          matchedViewId,
           currentTick,
         ),
       };
@@ -1025,6 +1210,7 @@ export class NanoCaliburInterpreter {
     phase: string,
     button: string,
     roleKey: string,
+    requiredViewId: string | null,
   ): boolean {
     // An end event without an active press state is a stale duplicate and
     // should not match role-scoped mouse end conditions.
@@ -1033,6 +1219,11 @@ export class NanoCaliburInterpreter {
       if (!tickMap || !tickMap.has(button)) {
         return false;
       }
+    }
+
+    const frameViewId = this.resolveMouseViewId(frame);
+    if (requiredViewId && requiredViewId !== frameViewId) {
+      return false;
     }
 
     const phases = this.resolveMousePhases(frame);
@@ -1058,9 +1249,20 @@ export class NanoCaliburInterpreter {
     frame: NanoCaliburFrameInput,
     phase: string,
     buttonName: string,
-  ): boolean {
+    requiredViewId: string | null,
+  ): string | null {
     const phases = this.resolveUIButtonPhases(frame);
-    return this.phaseArrayContains(phase, phases.begin, phases.on, phases.end, buttonName);
+    const candidates = phase === "begin" ? phases.begin : phase === "end" ? phases.end : phases.on;
+    for (const event of candidates) {
+      if (event.name !== buttonName) {
+        continue;
+      }
+      if (requiredViewId && event.view_id !== requiredViewId) {
+        continue;
+      }
+      return event.view_id || "";
+    }
+    return null;
   }
 
   private resolveKeyboardPhases(frame: NanoCaliburFrameInput): {
@@ -1096,22 +1298,22 @@ export class NanoCaliburInterpreter {
   }
 
   private resolveUIButtonPhases(frame: NanoCaliburFrameInput): {
-    begin: string[];
-    on: string[];
-    end: string[];
+    begin: UIButtonEvent[];
+    on: UIButtonEvent[];
+    end: UIButtonEvent[];
   } {
     const uiButtons = frame.uiButtons;
     if (Array.isArray(uiButtons)) {
-      const begin = this.normalizeStringArray(uiButtons);
+      const begin = this.normalizeUIButtonEvents(uiButtons);
       return { begin, on: [], end: [] };
     }
     if (!uiButtons || typeof uiButtons !== "object") {
       return { begin: [], on: [], end: [] };
     }
     return {
-      begin: this.normalizeStringArray(uiButtons.begin || []),
-      on: this.normalizeStringArray(uiButtons.on || []),
-      end: this.normalizeStringArray(uiButtons.end || []),
+      begin: this.normalizeUIButtonEvents(uiButtons.begin || []),
+      on: this.normalizeUIButtonEvents(uiButtons.on || []),
+      end: this.normalizeUIButtonEvents(uiButtons.end || []),
     };
   }
 
@@ -1134,16 +1336,16 @@ export class NanoCaliburInterpreter {
 
   private getRoleMousePressPositionMap(
     roleKey: string,
-  ): Map<string, { x: number; y: number }> {
+  ): Map<string, ResolvedMousePosition> {
     let entry = this.mousePressPositionByRole.get(roleKey);
     if (!entry) {
-      entry = new Map<string, { x: number; y: number }>();
+      entry = new Map<string, ResolvedMousePosition>();
       this.mousePressPositionByRole.set(roleKey, entry);
     }
     return entry;
   }
 
-  private resolveMousePosition(frame: NanoCaliburFrameInput): { x: number; y: number } {
+  private resolveMousePosition(frame: NanoCaliburFrameInput): ResolvedMousePosition {
     const raw =
       frame.mousePosition && typeof frame.mousePosition === "object"
         ? frame.mousePosition
@@ -1154,7 +1356,23 @@ export class NanoCaliburInterpreter {
       typeof raw.x === "number" && Number.isFinite(raw.x) ? raw.x : 0;
     const y =
       typeof raw.y === "number" && Number.isFinite(raw.y) ? raw.y : 0;
-    return { x, y };
+    const rawWorld =
+      frame.mouseWorldPosition && typeof frame.mouseWorldPosition === "object"
+        ? frame.mouseWorldPosition
+        : frame.mouse_world_position && typeof frame.mouse_world_position === "object"
+          ? frame.mouse_world_position
+          : {};
+    const worldX =
+      typeof rawWorld.x === "number" && Number.isFinite(rawWorld.x) ? rawWorld.x : x;
+    const worldY =
+      typeof rawWorld.y === "number" && Number.isFinite(rawWorld.y) ? rawWorld.y : y;
+    return {
+      x,
+      y,
+      world_x: worldX,
+      world_y: worldY,
+      view_id: this.resolveMouseViewId(frame),
+    };
   }
 
   private updateInputPressState(
@@ -1194,11 +1412,12 @@ export class NanoCaliburInterpreter {
     const buttonPhases = this.resolveUIButtonPhases(frame);
     const buttonMap = this.getRolePressedTickMap(this.buttonPressedTickByRole, roleKey);
     for (const button of buttonPhases.begin) {
-      buttonMap.set(button, currentTick);
+      buttonMap.set(this.buildButtonPressKey(button.name, button.view_id), currentTick);
     }
     for (const button of buttonPhases.on) {
-      if (!buttonMap.has(button)) {
-        buttonMap.set(button, currentTick);
+      const key = this.buildButtonPressKey(button.name, button.view_id);
+      if (!buttonMap.has(key)) {
+        buttonMap.set(key, currentTick);
       }
     }
   }
@@ -1230,7 +1449,7 @@ export class NanoCaliburInterpreter {
     const buttonMap = this.buttonPressedTickByRole.get(roleKey);
     if (buttonMap) {
       for (const button of buttonEnd) {
-        buttonMap.delete(button);
+        buttonMap.delete(this.buildButtonPressKey(button.name, button.view_id));
       }
     }
   }
@@ -1283,22 +1502,30 @@ export class NanoCaliburInterpreter {
       pressed_y: pressedPos.y,
       x: currentPos.x,
       y: currentPos.y,
+      pressed_world_x: pressedPos.world_x,
+      pressed_world_y: pressedPos.world_y,
+      world_x: currentPos.world_x,
+      world_y: currentPos.world_y,
+      view_id: currentPos.view_id,
     };
   }
 
   private buildButtonInfo(
     roleKey: string,
     buttonName: string,
+    viewId: string,
     currentTick: number,
   ): ButtonInfoPayload {
     const tickMap = this.buttonPressedTickByRole.get(roleKey);
+    const key = this.buildButtonPressKey(buttonName, viewId || null);
     const pressedTick =
-      tickMap && typeof tickMap.get(buttonName) === "number"
-        ? (tickMap.get(buttonName) as number)
+      tickMap && typeof tickMap.get(key) === "number"
+        ? (tickMap.get(key) as number)
         : currentTick;
     return {
       pressed_tick: pressedTick,
       current_tick: currentTick,
+      view_id: viewId,
     };
   }
 
@@ -1478,6 +1705,47 @@ export class NanoCaliburInterpreter {
     return value
       .filter((item): item is string => typeof item === "string")
       .map((item) => item);
+  }
+
+  private normalizeUIButtonEvents(value: unknown): UIButtonEvent[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    const out: UIButtonEvent[] = [];
+    for (const item of value) {
+      if (typeof item === "string" && item) {
+        out.push({ name: item, view_id: null });
+        continue;
+      }
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const name = typeof (item as UIButtonEventInput).name === "string"
+        ? (item as UIButtonEventInput).name
+        : "";
+      if (!name) {
+        continue;
+      }
+      const viewId = typeof (item as UIButtonEventInput).view_id === "string"
+        ? (item as UIButtonEventInput).view_id
+        : "";
+      out.push({ name, view_id: viewId || null });
+    }
+    return out;
+  }
+
+  private resolveMouseViewId(frame: NanoCaliburFrameInput): string {
+    if (typeof frame.mouse_view_id === "string" && frame.mouse_view_id) {
+      return frame.mouse_view_id;
+    }
+    if (typeof frame.mouseViewId === "string" && frame.mouseViewId) {
+      return frame.mouseViewId;
+    }
+    return "";
+  }
+
+  private buildButtonPressKey(name: string, viewId: string | null): string {
+    return `${name}@@${viewId || ""}`;
   }
 
   private normalizeToolCalls(value: unknown): ToolFrameInput[] {
@@ -1888,6 +2156,29 @@ export class NanoCaliburInterpreter {
 
   private asFiniteNumber(value: unknown, fallback: number): number {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  }
+
+  private clamp01(value: number): number {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
+  }
+
+  private clamp01Positive(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) {
+      return 1;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
   }
 
   private generateActorUid(actorType: string): string {

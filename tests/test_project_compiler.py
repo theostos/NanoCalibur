@@ -848,6 +848,68 @@ def test_logical_predicate_requires_actor_binding_parameter():
         )
 
 
+def test_logical_action_rebinds_first_actor_binding_parameter():
+    project = compile_project(
+        """
+        class Player(Actor):
+            life: int
+
+        def mark_dead(player: Player, flag: Global["is_dead"]):
+            if player.life <= 0:
+                flag = True
+
+        def is_dead(player: Player) -> bool:
+            return player.life <= 0
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_global("is_dead", False)
+        scene.add_actor(Player(uid="hero", life=1))
+        scene.add_rule(OnLogicalCondition(is_dead, Player), mark_dead)
+        """
+    )
+
+    assert len(project.actions) == 1
+    action = project.actions[0]
+    assert action.name == "mark_dead"
+    assert action.params[0].kind.value == "actor"
+    assert action.params[0].actor_selector is not None
+    assert action.params[0].actor_selector.uid == "__nanocalibur_logical_target__"
+
+
+def test_logical_action_mixed_with_non_logical_rule_disables_rebinding():
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        project = compile_project(
+            """
+            class Player(Actor):
+                life: int
+
+            def move_player(player: Player):
+                player.x = player.x + 1
+
+            def always(player: Player) -> bool:
+                return True
+
+            game = Game()
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            scene.add_actor(Player(uid="hero", life=1))
+            scene.add_rule(OnLogicalCondition(always, Player), move_player)
+            scene.add_rule(KeyboardCondition.on_press("D", id="human_1"), move_player)
+            """
+        )
+
+    assert any(
+        "used by both logical and non-logical rules" in str(item.message) for item in captured
+    )
+    action = next(item for item in project.actions if item.name == "move_player")
+    assert action.params[0].actor_selector is not None
+    assert action.params[0].actor_selector.uid == "Player"
+
+
 def test_compile_project_with_scene_managed_actors_rules_map_and_camera():
     project = compile_project(
         """
@@ -2355,6 +2417,92 @@ def test_scene_set_interface_rejects_unknown_role_selector():
             game.set_scene(scene)
             game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
             scene.set_interface("<div>P9 HUD</div>", Role["human_9"])
+            '''
+        )
+
+
+def test_scene_add_view_and_interface_binding_to_view():
+    project = compile_project(
+        '''
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        main_cam = Camera("main_cam", Role["human_1"], width=30, height=20, x=320, y=240)
+        scene.add_camera(main_cam)
+        main_view = View("main_view", Role["human_1"], camera=Camera["main_cam"], x=0.0, y=0.0, width=1.0, height=1.0)
+        scene.add_view(main_view)
+        scene.set_interface("<div>Main HUD</div>", Role["human_1"], View["main_view"])
+        '''
+    )
+
+    assert len(project.views) == 1
+    view = project.views[0]
+    assert view.id == "main_view"
+    assert view.camera_name == "main_cam"
+    assert any(
+        binding.role_id == "human_1"
+        and binding.view_id == "main_view"
+        and binding.html == "<div>Main HUD</div>"
+        for binding in project.interfaces
+    )
+
+
+def test_mouse_and_button_conditions_accept_view_keyword():
+    project = compile_project(
+        '''
+        class Unit(ActorModel):
+            x: float
+            y: float
+
+        def on_mouse():
+            pass
+
+        def on_button():
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene.add_actor(Unit(uid="u1", x=0, y=0))
+        cam = Camera("cam", Role["human_1"])
+        scene.add_camera(cam)
+        scene.add_view(View("main_view", Role["human_1"], camera=Camera["cam"]))
+        scene.add_rule(MouseCondition.begin_click("left", id="human_1", view=View["main_view"]), on_mouse)
+        scene.add_rule(ButtonCondition.begin("go", id="human_1", view=View["main_view"]), on_button)
+        '''
+    )
+
+    mouse_conditions = [
+        rule.condition for rule in project.rules if isinstance(rule.condition, MouseConditionSpec)
+    ]
+    button_conditions = [
+        rule.condition for rule in project.rules if isinstance(rule.condition, ButtonConditionSpec)
+    ]
+    assert len(mouse_conditions) == 1
+    assert len(button_conditions) == 1
+    assert mouse_conditions[0].view_id == "main_view"
+    assert button_conditions[0].view_id == "main_view"
+
+
+def test_mouse_condition_rejects_unknown_view_selector():
+    with pytest.raises(DSLValidationError, match="references view id 'missing_view'"):
+        compile_project(
+            '''
+            class Unit(ActorModel):
+                x: float
+                y: float
+
+            def on_mouse():
+                pass
+
+            game = Game()
+            scene = Scene(gravity=False)
+            game.set_scene(scene)
+            game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+            scene.add_actor(Unit(uid="u1", x=0, y=0))
+            scene.add_rule(MouseCondition.begin_click("left", id="human_1", view=View["missing_view"]), on_mouse)
             '''
         )
 

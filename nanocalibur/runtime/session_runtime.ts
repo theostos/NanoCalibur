@@ -16,6 +16,8 @@ export type SessionCommand =
       mouse?: HeadlessStepInput["mouse"];
       uiButtons?: HeadlessStepInput["uiButtons"];
       mousePosition?: HeadlessStepInput["mousePosition"];
+      mouseWorldPosition?: HeadlessStepInput["mouseWorldPosition"];
+      mouseViewId?: HeadlessStepInput["mouseViewId"];
     }
   | {
       kind: "noop";
@@ -279,7 +281,14 @@ export class SessionRuntime {
   private hasInputPayload(
     command: Extract<SessionCommand, { kind: "input" }>,
   ): boolean {
-    return Boolean(command.keyboard || command.mouse || command.uiButtons || command.mousePosition);
+    return Boolean(
+      command.keyboard
+      || command.mouse
+      || command.uiButtons
+      || command.mousePosition
+      || command.mouseWorldPosition
+      || command.mouseViewId,
+    );
   }
 
   private mergeInputCommand(
@@ -310,14 +319,20 @@ export class SessionRuntime {
     if (source.mousePosition) {
       target.mousePosition = source.mousePosition;
     }
+    if (source.mouseWorldPosition) {
+      target.mouseWorldPosition = source.mouseWorldPosition;
+    }
+    if (source.mouseViewId) {
+      target.mouseViewId = source.mouseViewId;
+    }
   }
 
   private mergeUnique(
-    base: string[] | undefined,
-    incoming: string[] | undefined,
+    base: unknown,
+    incoming: unknown,
   ): string[] | undefined {
-    const first = Array.isArray(base) ? base : [];
-    const second = Array.isArray(incoming) ? incoming : [];
+    const first = this.normalizeStringList(base);
+    const second = this.normalizeStringList(incoming);
     if (first.length === 0 && second.length === 0) {
       return undefined;
     }
@@ -338,6 +353,13 @@ export class SessionRuntime {
       merged.push(value);
     }
     return merged;
+  }
+
+  private normalizeStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
   }
 
   private readCurrentTurn(): number {
@@ -375,6 +397,8 @@ export class SessionRuntime {
         mouse: command.mouse,
         uiButtons: command.uiButtons,
         mousePosition: command.mousePosition,
+        mouseWorldPosition: command.mouseWorldPosition,
+        mouseViewId: command.mouseViewId,
       });
       return;
     }

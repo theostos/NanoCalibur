@@ -16,6 +16,7 @@ from nanocalibur.game_model import (
     LogicalConditionSpec,
     MouseConditionSpec,
     MultiplayerSpec,
+    InterfaceBindingSpec,
     ProjectSpec,
     RoleSpec,
     ResourceSpec,
@@ -24,6 +25,7 @@ from nanocalibur.game_model import (
     SelectorKind,
     SpriteSpec,
     ToolConditionSpec,
+    ViewSpec,
 )
 from nanocalibur.errors import DSLValidationError
 from nanocalibur.project_compiler import ProjectCompiler
@@ -113,9 +115,11 @@ def project_to_dict(project: ProjectSpec) -> Dict[str, Any]:
         "tools": _tools_to_dict(project.rules),
         "map": _map_to_dict(project.tile_map),
         "cameras": [_camera_to_dict(camera) for camera in project.cameras],
+        "views": [_view_to_dict(view) for view in project.views],
         "scene": _scene_to_dict(project.scene),
         "multiplayer": _multiplayer_to_dict(project.multiplayer),
         "roles": [_role_to_dict(role) for role in project.roles],
+        "interfaces": [_interface_binding_to_dict(binding) for binding in project.interfaces],
         "interface_html": project.interface_html,
         "interfaces_by_role": dict(project.interfaces_by_role),
         "resources": [_resource_to_dict(resource) for resource in project.resources],
@@ -258,6 +262,7 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "phase": condition.phase.value,
             "button": condition.button,
             "role_id": condition.role_id,
+            "view_id": condition.view_id,
         }
     if isinstance(condition, ButtonConditionSpec):
         return {
@@ -265,6 +270,7 @@ def _condition_to_dict(condition: ConditionSpec) -> Dict[str, Any]:
             "name": condition.name,
             "phase": condition.phase.value,
             "role_id": condition.role_id,
+            "view_id": condition.view_id,
         }
     if isinstance(condition, CollisionConditionSpec):
         return {
@@ -353,6 +359,29 @@ def _camera_to_dict(camera: CameraSpec):
         "target_uid": camera.target_uid,
         "offset_x": camera.offset_x,
         "offset_y": camera.offset_y,
+    }
+
+
+def _view_to_dict(view: ViewSpec) -> Dict[str, Any]:
+    return {
+        "id": view.id,
+        "role_id": view.role_id,
+        "camera_name": view.camera_name,
+        "x": view.x,
+        "y": view.y,
+        "width": view.width,
+        "height": view.height,
+        "z": view.z,
+        "interactive": view.interactive,
+        "symbolic": view.symbolic,
+    }
+
+
+def _interface_binding_to_dict(binding: InterfaceBindingSpec) -> Dict[str, Any]:
+    return {
+        "html": binding.html,
+        "role_id": binding.role_id,
+        "view_id": binding.view_id,
     }
 
 

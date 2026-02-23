@@ -51,6 +51,16 @@ export class HeadlessHost {
         input.mousePosition && typeof input.mousePosition === "object"
           ? input.mousePosition
           : input.mouse_position,
+      mouseWorldPosition:
+        input.mouseWorldPosition && typeof input.mouseWorldPosition === "object"
+          ? input.mouseWorldPosition
+          : input.mouse_world_position,
+      mouseViewId:
+        typeof input.mouseViewId === "string"
+          ? input.mouseViewId
+          : typeof input.mouse_view_id === "string"
+            ? input.mouse_view_id
+            : undefined,
       toolCalls: input.toolCalls,
       roleId:
         typeof input.roleId === "string"

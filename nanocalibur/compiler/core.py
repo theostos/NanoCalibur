@@ -1406,30 +1406,44 @@ class DSLCompiler:
                 raise DSLValidationError(
                     f"{owner}.set_interface(...) does not accept keyword args."
                 )
-            if len(expr.args) not in {1, 2}:
+            if len(expr.args) < 1 or len(expr.args) > 3:
                 raise DSLValidationError(
-                    f"{owner}.set_interface(...) expects html and optional role selector."
+                    f"{owner}.set_interface(...) expects html/interface and optional role/view selectors."
                 )
-            html_expr, embedded_role_expr = self._compile_scene_interface_arg_expr(
+            html_expr, embedded_role_expr, embedded_view_expr = self._compile_scene_interface_arg_expr(
                 expr.args[0],
                 scope,
                 source_name=f"{owner}.set_interface(...) first argument",
             )
-            explicit_role_expr: Optional[Expr] = None
-            if len(expr.args) == 2:
-                explicit_role_expr = self._compile_role_ref_expr(
-                    expr.args[1], scope, f"{owner}.set_interface(...) role"
+            role_expr = embedded_role_expr
+            view_expr = embedded_view_expr
+            for selector_node in expr.args[1:]:
+                selector_kind, selector_expr = self._compile_scene_interface_selector_expr(
+                    selector_node,
+                    scope,
+                    source_name=f"{owner}.set_interface(...)",
+                    prefer_view=role_expr is not None and view_expr is None,
                 )
-            if embedded_role_expr is not None and explicit_role_expr is not None:
-                raise DSLValidationError(
-                    f"{owner}.set_interface(...) role is provided twice. "
-                    "Either use set_interface(Interface(..., Role[...])) "
-                    "or set_interface(html, Role[...])."
-                )
-            role_expr = embedded_role_expr or explicit_role_expr
-            if role_expr is None:
+                if selector_kind == "role":
+                    if role_expr is not None:
+                        raise DSLValidationError(
+                            f"{owner}.set_interface(...) role is provided multiple times."
+                        )
+                    role_expr = selector_expr
+                else:
+                    if view_expr is not None:
+                        raise DSLValidationError(
+                            f"{owner}.set_interface(...) view is provided multiple times."
+                        )
+                    view_expr = selector_expr
+            if role_expr is None and view_expr is None:
                 return CallStmt(name="scene_set_interface", args=[html_expr])
-            return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
+            if view_expr is None:
+                return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
+            return CallStmt(
+                name="scene_set_interface",
+                args=[html_expr, role_expr if role_expr is not None else Const(None), view_expr],
+            )
         if method == "next_turn":
             if expr.args or expr.keywords:
                 raise DSLValidationError(f"{owner}.next_turn(...) does not accept arguments.")
@@ -1461,32 +1475,46 @@ class DSLCompiler:
                 raise DSLValidationError(
                     "Scene.set_interface(...) does not accept keyword args."
                 )
-            if len(expr.args) not in {2, 3}:
+            if len(expr.args) < 2 or len(expr.args) > 4:
                 raise DSLValidationError(
-                    "Scene.set_interface(...) expects scene, html, and optional role selector."
+                    "Scene.set_interface(...) expects scene, html/interface, and optional role/view selectors."
                 )
             scene_arg = self._compile_expr(expr.args[0], scope, allow_range_call=False)
             self._require_scene_var(scene_arg, scope, "Scene.set_interface(...)")
-            html_expr, embedded_role_expr = self._compile_scene_interface_arg_expr(
+            html_expr, embedded_role_expr, embedded_view_expr = self._compile_scene_interface_arg_expr(
                 expr.args[1],
                 scope,
                 source_name="Scene.set_interface(...) first argument",
             )
-            explicit_role_expr: Optional[Expr] = None
-            if len(expr.args) == 3:
-                explicit_role_expr = self._compile_role_ref_expr(
-                    expr.args[2], scope, "Scene.set_interface(...) role"
+            role_expr = embedded_role_expr
+            view_expr = embedded_view_expr
+            for selector_node in expr.args[2:]:
+                selector_kind, selector_expr = self._compile_scene_interface_selector_expr(
+                    selector_node,
+                    scope,
+                    source_name="Scene.set_interface(...)",
+                    prefer_view=role_expr is not None and view_expr is None,
                 )
-            if embedded_role_expr is not None and explicit_role_expr is not None:
-                raise DSLValidationError(
-                    "Scene.set_interface(...) role is provided twice. "
-                    "Either use Scene.set_interface(scene, Interface(..., Role[...])) "
-                    "or Scene.set_interface(scene, html, Role[...])."
-                )
-            role_expr = embedded_role_expr or explicit_role_expr
-            if role_expr is None:
+                if selector_kind == "role":
+                    if role_expr is not None:
+                        raise DSLValidationError(
+                            "Scene.set_interface(...) role is provided multiple times."
+                        )
+                    role_expr = selector_expr
+                else:
+                    if view_expr is not None:
+                        raise DSLValidationError(
+                            "Scene.set_interface(...) view is provided multiple times."
+                        )
+                    view_expr = selector_expr
+            if role_expr is None and view_expr is None:
                 return CallStmt(name="scene_set_interface", args=[html_expr])
-            return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
+            if view_expr is None:
+                return CallStmt(name="scene_set_interface", args=[html_expr, role_expr])
+            return CallStmt(
+                name="scene_set_interface",
+                args=[html_expr, role_expr if role_expr is not None else Const(None), view_expr],
+            )
         if method == "next_turn":
             if expr.keywords:
                 raise DSLValidationError("Scene.next_turn(...) does not accept keyword args.")
@@ -1515,23 +1543,27 @@ class DSLCompiler:
         node: ast.AST,
         scope: ActionScope,
         source_name: str,
-    ) -> tuple[Expr, Optional[Expr]]:
+    ) -> tuple[Expr, Optional[Expr], Optional[Expr]]:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Interface":
             if any(keyword.arg is None for keyword in node.keywords):
                 raise DSLValidationError("Interface(...) does not support **kwargs expansion.")
             kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
-            unexpected = sorted(set(kwargs.keys()) - {"role", "from_file"})
+            unexpected = sorted(set(kwargs.keys()) - {"role", "view", "from_file"})
             if unexpected:
                 raise DSLValidationError(
                     f"Interface(...) received unsupported arguments: {unexpected}."
                 )
-            if len(node.args) not in {1, 2}:
+            if len(node.args) < 1 or len(node.args) > 3:
                 raise DSLValidationError(
-                    "Interface(...) expects source html and optional role selector."
+                    "Interface(...) expects source html and up to two selectors (role/view)."
                 )
-            if len(node.args) == 2 and "role" in kwargs:
+            if len(node.args) >= 2 and "role" in kwargs:
                 raise DSLValidationError(
                     "Interface(...) role must be provided once (positional or keyword)."
+                )
+            if len(node.args) >= 2 and "view" in kwargs:
+                raise DSLValidationError(
+                    "Interface(...) view must be provided once (positional or keyword)."
                 )
             source_expr = self._compile_expr(node.args[0], scope, allow_range_call=False)
             if not (isinstance(source_expr, Const) and isinstance(source_expr.value, str)):
@@ -1554,22 +1586,58 @@ class DSLCompiler:
                     "Interface(..., from_file=True) is not supported inside actions. "
                     "Use inline HTML (from_file=False) or pass a plain string directly."
                 )
-            role_node: Optional[ast.AST]
-            if len(node.args) == 2:
-                role_node = node.args[1]
-            else:
-                role_node = kwargs.get("role")
-            role_expr = (
-                self._compile_role_ref_expr(role_node, scope, "Interface role")
-                if role_node is not None
-                else None
-            )
-            return source_expr, role_expr
+            role_expr: Optional[Expr] = None
+            view_expr: Optional[Expr] = None
+            if len(node.args) > 1:
+                for selector_node in node.args[1:]:
+                    selector_kind, selector_value = self._compile_scene_interface_selector_expr(
+                        selector_node,
+                        scope,
+                        source_name="Interface(...)",
+                        prefer_view=role_expr is not None and view_expr is None,
+                    )
+                    if selector_kind == "role":
+                        if role_expr is not None:
+                            raise DSLValidationError(
+                                "Interface(...) role must be provided once."
+                            )
+                        role_expr = selector_value
+                    else:
+                        if view_expr is not None:
+                            raise DSLValidationError(
+                                "Interface(...) view must be provided once."
+                            )
+                        view_expr = selector_value
+            keyword_selectors: List[ast.AST] = []
+            if "role" in kwargs:
+                keyword_selectors.append(kwargs["role"])
+            if "view" in kwargs:
+                keyword_selectors.append(kwargs["view"])
+            for selector_node in keyword_selectors:
+                selector_kind, selector_value = self._compile_scene_interface_selector_expr(
+                    selector_node,
+                    scope,
+                    source_name="Interface(...)",
+                    prefer_view=role_expr is not None and view_expr is None,
+                )
+                if selector_kind == "role":
+                    if role_expr is not None:
+                        raise DSLValidationError(
+                            "Interface(...) role must be provided once."
+                        )
+                    role_expr = selector_value
+                else:
+                    if view_expr is not None:
+                        raise DSLValidationError(
+                            "Interface(...) view must be provided once."
+                        )
+                    view_expr = selector_value
+            return source_expr, role_expr, view_expr
 
         html_expr = self._compile_expr(node, scope, allow_range_call=False)
         if isinstance(html_expr, Const) and not isinstance(html_expr.value, str):
             raise DSLValidationError(f"{source_name} HTML must be a string.")
-        return html_expr, None
+        return html_expr, None, None
 
     def _compile_scene_spawn_call(
         self,
@@ -1795,6 +1863,59 @@ class DSLCompiler:
         raise DSLValidationError(
             f"{source_name} must be role variable or Role selector."
         )
+
+    def _compile_view_ref_expr(
+        self,
+        node: ast.AST,
+        scope: ActionScope,
+        source_name: str,
+    ) -> Expr:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if not node.value:
+                raise DSLValidationError(f"{source_name} must be non-empty.")
+            return Const(node.value)
+
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner == "View":
+                if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                    if not node.slice.value:
+                        raise DSLValidationError(f"{source_name} must be non-empty.")
+                    return Const(node.slice.value)
+                raise DSLValidationError(
+                    f'{source_name} must use View["view_id"].'
+                )
+
+        compiled = self._compile_expr(node, scope, allow_range_call=False)
+        if isinstance(compiled, Var):
+            return compiled
+        raise DSLValidationError(
+            f"{source_name} must be view variable or View selector."
+        )
+
+    def _compile_scene_interface_selector_expr(
+        self,
+        node: ast.AST,
+        scope: ActionScope,
+        *,
+        source_name: str,
+        prefer_view: bool,
+    ) -> tuple[str, Expr]:
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner == "View":
+                return "view", self._compile_view_ref_expr(node, scope, f"{source_name} view")
+            if owner == "Role" or owner in self.schemas.role_fields:
+                return "role", self._compile_role_ref_expr(node, scope, f"{source_name} role")
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if prefer_view:
+                return "view", self._compile_view_ref_expr(node, scope, f"{source_name} view")
+            return "role", self._compile_role_ref_expr(node, scope, f"{source_name} role")
+        try:
+            return "role", self._compile_role_ref_expr(node, scope, f"{source_name} role")
+        except DSLValidationError:
+            pass
+        return "view", self._compile_view_ref_expr(node, scope, f"{source_name} view")
 
     def _compile_assign_target(self, target: ast.AST, scope: ActionScope):
         if isinstance(target, ast.Name):
@@ -2195,6 +2316,11 @@ class DSLCompiler:
                 "pressed_y",
                 "x",
                 "y",
+                "pressed_world_x",
+                "pressed_world_y",
+                "world_x",
+                "world_y",
+                "view_id",
             }:
                 raise DSLValidationError(
                     f"MouseInfo has no field '{expr.attr}'."
@@ -2202,7 +2328,7 @@ class DSLCompiler:
             return Attr(obj=obj_name, field=expr.attr)
 
         if obj_name in scope.button_info_vars:
-            if expr.attr not in {"pressed_tick", "current_tick"}:
+            if expr.attr not in {"pressed_tick", "current_tick", "view_id"}:
                 raise DSLValidationError(
                     f"ButtonInfo has no field '{expr.attr}'."
                 )

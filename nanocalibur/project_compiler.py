@@ -32,6 +32,7 @@ from nanocalibur.game_model import (
     GlobalValueKind,
     GlobalVariableSpec,
     InputPhase,
+    InterfaceBindingSpec,
     KeyboardConditionSpec,
     LogicalConditionSpec,
     MultiplayerLoopMode,
@@ -48,6 +49,7 @@ from nanocalibur.game_model import (
     TileSpec,
     TileMapSpec,
     ToolConditionSpec,
+    ViewSpec,
     VisibilityMode,
 )
 from nanocalibur.ir import (
@@ -148,6 +150,7 @@ IMMUTABLE_DSL_CLASS_NAMES = {
     "Resource",
     "Interface",
     "Camera",
+    "View",
     "Tile",
     "TileMap",
     "Color",
@@ -243,9 +246,11 @@ class ProjectCompiler:
                 rules,
                 tile_map,
                 cameras,
+                views,
                 resources,
                 sprites,
                 scene,
+                interfaces,
                 interface_html,
                 interfaces_by_role,
                 multiplayer,
@@ -374,11 +379,13 @@ class ProjectCompiler:
                 _action_contains_next_turn(action) for action in actions.values()
             )
             self._validate_condition_role_ids(rules, roles)
-            self._validate_interface_role_ids(interfaces_by_role, roles)
+            self._validate_condition_view_ids(rules, views)
+            self._validate_interface_bindings(interfaces, roles, views)
             self._validate_role_bindings(actions, predicates, roles)
             self._validate_camera_bindings(actions, predicates, cameras)
             self._validate_input_info_bindings(actions, rules)
             self._validate_role_cameras(roles, cameras)
+            self._validate_views(views, roles, cameras)
             if (
                 multiplayer is not None
                 and multiplayer.default_loop
@@ -402,12 +409,14 @@ class ProjectCompiler:
                 rules=rules,
                 tile_map=tile_map,
                 cameras=cameras,
+                views=views,
                 actions=list(actions.values()),
                 predicates=list(predicates.values()),
                 callables=list(callables.values()),
                 resources=resources,
                 sprites=sprites,
                 scene=scene,
+                interfaces=interfaces,
                 interface_html=interface_html,
                 interfaces_by_role=interfaces_by_role,
                 multiplayer=multiplayer,
@@ -998,9 +1007,11 @@ class ProjectCompiler:
         List[RuleSpec],
         Optional[TileMapSpec],
         List[CameraSpec],
+        List[ViewSpec],
         List[ResourceSpec],
         List[SpriteSpec],
         Optional[SceneSpec],
+        List[InterfaceBindingSpec],
         Optional[str],
         Dict[str, str],
         Optional[MultiplayerSpec],
@@ -1011,9 +1022,11 @@ class ProjectCompiler:
         rules: List[RuleSpec] = []
         tile_map: Optional[TileMapSpec] = None
         cameras: List[CameraSpec] = []
+        views: List[ViewSpec] = []
         resources_by_name: Dict[str, ResourceSpec] = {}
         sprites: List[SpriteSpec] = []
         scene: Optional[SceneSpec] = None
+        interfaces: List[InterfaceBindingSpec] = []
         interface_html: Optional[str] = None
         interfaces_by_role: Dict[str, str] = {}
         multiplayer: Optional[MultiplayerSpec] = None
@@ -1021,11 +1034,12 @@ class ProjectCompiler:
         declared_scene_vars: Dict[str, SceneSpec] = {}
         declared_multiplayer_vars: Dict[str, ast.Call] = {}
         declared_role_vars: Dict[str, ast.Call] = {}
-        declared_interface_vars: Dict[str, Tuple[str, Optional[str]]] = {}
+        declared_interface_vars: Dict[str, InterfaceBindingSpec] = {}
         active_scene_vars: set[str] = set()
         declared_actor_vars: Dict[str, ast.Call] = {}
         declared_tile_map_vars: Dict[str, ast.Call] = {}
         declared_camera_vars: Dict[str, CameraSpec] = {}
+        declared_view_vars: Dict[str, ViewSpec] = {}
         declared_resource_vars: Dict[str, ast.Call] = {}
         declared_sprite_vars: Dict[str, ast.Call] = {}
         declared_color_vars: Dict[str, ast.Call] = {}
@@ -1033,10 +1047,16 @@ class ProjectCompiler:
         collision_bound_actions: set[str] = set()
         non_collision_actions: set[str] = set()
         collision_warning_actions: set[str] = set()
+        logical_bound_actions: set[str] = set()
+        non_logical_actions: set[str] = set()
+        logical_rebind_disabled_actions: set[str] = set()
+        logical_mixed_warning_actions: set[str] = set()
         logical_warning_predicates: set[str] = set()
+        logical_warning_actions: set[str] = set()
         tool_action_by_name: Dict[str, str] = {}
         name_aliases: Dict[str, str] = {}
         callable_aliases: Dict[str, ast.AST] = {}
+        original_actions_by_name: Dict[str, ActionIR] = dict(actions)
         function_nodes: Dict[str, ast.FunctionDef] = {
             node.name: node for node in module.body if isinstance(node, ast.FunctionDef)
         }
@@ -1045,6 +1065,7 @@ class ProjectCompiler:
             declared_actor_vars.pop(name, None)
             declared_tile_map_vars.pop(name, None)
             declared_camera_vars.pop(name, None)
+            declared_view_vars.pop(name, None)
             declared_resource_vars.pop(name, None)
             declared_sprite_vars.pop(name, None)
             declared_color_vars.pop(name, None)
@@ -1085,6 +1106,29 @@ class ProjectCompiler:
                 non_collision_actions.add(action_name)
 
             if isinstance(condition, LogicalConditionSpec):
+                if action_name in non_logical_actions:
+                    logical_rebind_disabled_actions.add(action_name)
+                    if action_name not in logical_mixed_warning_actions:
+                        warnings.warn(
+                            format_dsl_diagnostic(
+                                f"Action '{action_name}' is used by both logical and non-logical rules. "
+                                "Logical actor target rebinding is disabled for this action. "
+                                "Use separate actions if you need strict logical-target binding.",
+                                node=source_node,
+                            ),
+                            stacklevel=2,
+                        )
+                        logical_mixed_warning_actions.add(action_name)
+                elif action_name not in logical_rebind_disabled_actions:
+                    actions[action_name] = self._bind_logical_action_params(
+                        action_name=action_name,
+                        action=actions[action_name],
+                        condition=condition,
+                        warned_actions=logical_warning_actions,
+                        source_node=source_node,
+                    )
+                    logical_bound_actions.add(action_name)
+
                 predicate_name = condition.predicate_name
                 if predicate_name not in predicates:
                     raise DSLValidationError(
@@ -1097,6 +1141,25 @@ class ProjectCompiler:
                     warned_predicates=logical_warning_predicates,
                     source_node=source_node,
                 )
+            else:
+                non_logical_actions.add(action_name)
+                if action_name in logical_bound_actions:
+                    original_action = original_actions_by_name.get(action_name)
+                    if original_action is not None:
+                        actions[action_name] = original_action
+                    logical_bound_actions.discard(action_name)
+                    logical_rebind_disabled_actions.add(action_name)
+                    if action_name not in logical_mixed_warning_actions:
+                        warnings.warn(
+                            format_dsl_diagnostic(
+                                f"Action '{action_name}' is used by both logical and non-logical rules. "
+                                "Logical actor target rebinding is disabled for this action. "
+                                "Use separate actions if you need strict logical-target binding.",
+                                node=source_node,
+                            ),
+                            stacklevel=2,
+                        )
+                        logical_mixed_warning_actions.add(action_name)
 
             if isinstance(condition, ToolConditionSpec) and not condition.tool_docstring.strip():
                 action_node = function_nodes.get(action_name)
@@ -1224,7 +1287,9 @@ class ProjectCompiler:
                             else None
                         )
                         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                            declared_interface_vars[target.id] = (node.value.value, None)
+                            declared_interface_vars[target.id] = InterfaceBindingSpec(
+                                html=node.value.value,
+                            )
                         elif isinstance(node.value, ast.Name):
                             source_name = _resolve_name_alias(node.value.id, name_aliases)
                             if source_name in declared_interface_vars:
@@ -1244,6 +1309,7 @@ class ProjectCompiler:
                                 source_name=f"Interface variable '{target.id}'",
                             )
                         if resolved_call is not None:
+                            declared_view_vars.pop(target.id, None)
                             if (
                                 isinstance(resolved_call.func, ast.Name)
                                 and resolved_call.func.id in compiler.schemas.actor_fields
@@ -1337,6 +1403,25 @@ class ProjectCompiler:
                                 declared_color_vars.pop(target.id, None)
                                 declared_tile_vars.pop(target.id, None)
                                 declared_scene_vars.pop(target.id, None)
+                                active_scene_vars.discard(target.id)
+                            elif (
+                                isinstance(resolved_call.func, ast.Name)
+                                and resolved_call.func.id == "View"
+                            ):
+                                declared_view_vars[target.id] = self._parse_view_constructor(
+                                    resolved_call,
+                                    compiler=compiler,
+                                )
+                                declared_actor_vars.pop(target.id, None)
+                                declared_tile_map_vars.pop(target.id, None)
+                                declared_camera_vars.pop(target.id, None)
+                                declared_resource_vars.pop(target.id, None)
+                                declared_sprite_vars.pop(target.id, None)
+                                declared_color_vars.pop(target.id, None)
+                                declared_tile_vars.pop(target.id, None)
+                                declared_scene_vars.pop(target.id, None)
+                                declared_multiplayer_vars.pop(target.id, None)
+                                declared_role_vars.pop(target.id, None)
                                 active_scene_vars.discard(target.id)
                             elif (
                                 isinstance(resolved_call.func, ast.Name)
@@ -1643,43 +1728,51 @@ class ProjectCompiler:
                     cameras.append(copy.deepcopy(camera_spec))
                     continue
 
+                if scene_method_name == "add_view":
+                    if scene_kwargs:
+                        raise DSLValidationError(
+                            "scene.add_view(...) does not accept keyword args."
+                        )
+                    if len(scene_args) != 1:
+                        raise DSLValidationError("scene.add_view(...) expects one argument.")
+                    view_spec = self._resolve_view_binding_arg(
+                        scene_args[0],
+                        declared_view_vars=declared_view_vars,
+                        compiler=compiler,
+                    )
+                    if any(existing.id == view_spec.id for existing in views):
+                        raise DSLValidationError(
+                            f"View '{view_spec.id}' is already added to the scene."
+                        )
+                    views.append(copy.deepcopy(view_spec))
+                    continue
+
                 if scene_method_name == "set_interface":
                     if scene_kwargs:
                         raise DSLValidationError(
                             "scene.set_interface(...) does not accept keyword args."
                         )
-                    if len(scene_args) not in {1, 2}:
+                    if len(scene_args) < 1 or len(scene_args) > 3:
                         raise DSLValidationError(
-                            "scene.set_interface(...) expects html and optional role selector."
+                            "scene.set_interface(...) expects html/interface and optional role/view selectors."
                         )
-                    html, role_id = self._resolve_interface_arg(
+                    binding = self._resolve_interface_arg(
                         scene_args[0],
                         declared_interface_vars,
                         compiler=compiler,
                         source_name="scene.set_interface(...) first argument",
                     )
-                    if len(scene_args) == 1 and role_id is None:
-                        interface_html = html
-                    else:
-                        if len(scene_args) == 2:
-                            if role_id is not None:
-                                raise DSLValidationError(
-                                    "scene.set_interface(...) role is provided twice. "
-                                    "Either use scene.set_interface(Interface(..., Role[...])) "
-                                    "or scene.set_interface(html, Role[...])."
-                                )
-                            role_id = self._parse_role_selector_id(
-                                scene_args[1],
-                                compiler=compiler,
-                                source_name="scene.set_interface role",
-                                allow_plain_string=True,
-                            )
-                        if role_id is None:
-                            raise DSLValidationError(
-                                "scene.set_interface(...) role selector is required when the "
-                                "first argument is not a plain html string."
-                            )
-                        interfaces_by_role[role_id] = html
+                    binding = self._apply_interface_selector_args(
+                        binding=binding,
+                        selector_nodes=scene_args[1:],
+                        compiler=compiler,
+                        source_name="scene.set_interface(...)",
+                    )
+                    interfaces = self._upsert_interface_binding(interfaces, binding)
+                    if binding.role_id is None and binding.view_id is None:
+                        interface_html = binding.html
+                    if binding.role_id is not None and binding.view_id is None:
+                        interfaces_by_role[binding.role_id] = binding.html
                     continue
 
                 raise DSLValidationError(
@@ -1694,9 +1787,11 @@ class ProjectCompiler:
             rules,
             tile_map,
             cameras,
+            views,
             list(resources_by_name.values()),
             sprites,
             scene,
+            interfaces,
             interface_html,
             interfaces_by_role,
             multiplayer,
@@ -1934,16 +2029,34 @@ class ProjectCompiler:
             "scene.add_camera(...) expects Camera(...) or a camera variable."
         )
 
+    def _resolve_view_binding_arg(
+        self,
+        node: ast.AST,
+        declared_view_vars: Dict[str, ViewSpec],
+        compiler: DSLCompiler,
+    ) -> ViewSpec:
+        if isinstance(node, ast.Name):
+            if node.id not in declared_view_vars:
+                raise DSLValidationError(
+                    f"Unknown view variable '{node.id}' in scene.add_view(...)."
+                )
+            return declared_view_vars[node.id]
+        if isinstance(node, ast.Call):
+            return self._parse_view_constructor(node, compiler=compiler)
+        raise DSLValidationError(
+            "scene.add_view(...) expects View(...) or a view variable."
+        )
+
     def _resolve_interface_arg(
         self,
         node: ast.AST,
-        declared_interface_vars: Dict[str, Tuple[str, Optional[str]]],
+        declared_interface_vars: Dict[str, InterfaceBindingSpec],
         *,
         compiler: DSLCompiler,
         source_name: str,
-    ) -> Tuple[str, Optional[str]]:
+    ) -> InterfaceBindingSpec:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value, None
+            return InterfaceBindingSpec(html=node.value)
         if isinstance(node, ast.Name):
             if node.id not in declared_interface_vars:
                 raise DSLValidationError(
@@ -1966,7 +2079,7 @@ class ProjectCompiler:
         *,
         compiler: DSLCompiler,
         source_name: str,
-    ) -> Tuple[str, Optional[str]]:
+    ) -> InterfaceBindingSpec:
         if not isinstance(node.func, ast.Name) or node.func.id != "Interface":
             raise DSLValidationError(
                 f"{source_name} must be Interface(...), an html string, or an interface variable."
@@ -1974,19 +2087,23 @@ class ProjectCompiler:
         if any(keyword.arg is None for keyword in node.keywords):
             raise DSLValidationError("Interface(...) does not support **kwargs expansion.")
         kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
-        allowed = {"role", "from_file"}
+        allowed = {"role", "view", "from_file"}
         unexpected = sorted(set(kwargs.keys()) - allowed)
         if unexpected:
             raise DSLValidationError(
                 f"Interface(...) received unsupported arguments: {unexpected}."
             )
-        if len(node.args) not in {1, 2}:
+        if len(node.args) < 1 or len(node.args) > 3:
             raise DSLValidationError(
-                "Interface(...) expects source path/html and optional role selector."
+                "Interface(...) expects source path/html and up to two selectors (role/view)."
             )
-        if len(node.args) == 2 and "role" in kwargs:
+        if len(node.args) >= 2 and "role" in kwargs:
             raise DSLValidationError(
                 "Interface(...) role must be provided once (positional or keyword)."
+            )
+        if len(node.args) >= 2 and "view" in kwargs:
+            raise DSLValidationError(
+                "Interface(...) view must be provided once (positional or keyword)."
             )
 
         source = _expect_string(node.args[0], "Interface source")
@@ -1997,20 +2114,155 @@ class ProjectCompiler:
         )
         html = self._load_interface_html_from_file(source) if from_file else source
 
-        role_node: Optional[ast.AST]
-        if len(node.args) == 2:
-            role_node = node.args[1]
-        else:
-            role_node = kwargs.get("role")
-        role_id: Optional[str] = None
-        if role_node is not None:
-            role_id = self._parse_role_selector_id(
-                role_node,
+        binding = InterfaceBindingSpec(html=html)
+        if len(node.args) > 1:
+            binding = self._apply_interface_selector_args(
+                binding=binding,
+                selector_nodes=node.args[1:],
                 compiler=compiler,
-                source_name="Interface role",
-                allow_plain_string=True,
+                source_name="Interface(...)",
             )
-        return html, role_id
+        keyword_selectors: List[ast.AST] = []
+        if "role" in kwargs:
+            keyword_selectors.append(kwargs["role"])
+        if "view" in kwargs:
+            keyword_selectors.append(kwargs["view"])
+        if keyword_selectors:
+            binding = self._apply_interface_selector_args(
+                binding=binding,
+                selector_nodes=keyword_selectors,
+                compiler=compiler,
+                source_name="Interface(...)",
+            )
+        return binding
+
+    def _apply_interface_selector_args(
+        self,
+        *,
+        binding: InterfaceBindingSpec,
+        selector_nodes: List[ast.AST],
+        compiler: DSLCompiler,
+        source_name: str,
+    ) -> InterfaceBindingSpec:
+        role_id = binding.role_id
+        view_id = binding.view_id
+        for selector_node in selector_nodes:
+            selector_kind, selector_id = self._parse_interface_selector_node(
+                selector_node,
+                compiler=compiler,
+                source_name=source_name,
+                prefer_view=role_id is not None and view_id is None,
+            )
+            if selector_kind == "role":
+                if role_id is not None:
+                    raise DSLValidationError(
+                        f"{source_name} role is provided twice."
+                    )
+                role_id = selector_id
+                continue
+            if view_id is not None:
+                raise DSLValidationError(
+                    f"{source_name} view is provided twice."
+                )
+            view_id = selector_id
+        return InterfaceBindingSpec(
+            html=binding.html,
+            role_id=role_id,
+            view_id=view_id,
+        )
+
+    def _parse_interface_selector_node(
+        self,
+        node: ast.AST,
+        *,
+        compiler: DSLCompiler,
+        source_name: str,
+        prefer_view: bool,
+    ) -> Tuple[str, str]:
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner == "View":
+                return (
+                    "view",
+                    self._parse_view_selector_id(
+                        node,
+                        compiler=compiler,
+                        source_name=f"{source_name} view selector",
+                        allow_plain_string=False,
+                    ),
+                )
+            if owner == "Role" or owner in compiler.schemas.role_fields:
+                return (
+                    "role",
+                    self._parse_role_selector_id(
+                        node,
+                        compiler=compiler,
+                        source_name=f"{source_name} role selector",
+                        allow_plain_string=False,
+                    ),
+                )
+
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if prefer_view:
+                return (
+                    "view",
+                    self._parse_view_selector_id(
+                        node,
+                        compiler=compiler,
+                        source_name=f"{source_name} view selector",
+                        allow_plain_string=True,
+                    ),
+                )
+            return (
+                "role",
+                self._parse_role_selector_id(
+                    node,
+                    compiler=compiler,
+                    source_name=f"{source_name} role selector",
+                    allow_plain_string=True,
+                ),
+            )
+
+        try:
+            return (
+                "role",
+                self._parse_role_selector_id(
+                    node,
+                    compiler=compiler,
+                    source_name=f"{source_name} role selector",
+                    allow_plain_string=True,
+                ),
+            )
+        except DSLValidationError:
+            pass
+        return (
+            "view",
+            self._parse_view_selector_id(
+                node,
+                compiler=compiler,
+                source_name=f"{source_name} view selector",
+                allow_plain_string=True,
+            ),
+        )
+
+    def _upsert_interface_binding(
+        self,
+        existing: List[InterfaceBindingSpec],
+        binding: InterfaceBindingSpec,
+    ) -> List[InterfaceBindingSpec]:
+        key = (binding.role_id or "", binding.view_id or "")
+        replaced = False
+        updated: List[InterfaceBindingSpec] = []
+        for item in existing:
+            item_key = (item.role_id or "", item.view_id or "")
+            if item_key == key:
+                updated.append(binding)
+                replaced = True
+            else:
+                updated.append(item)
+        if not replaced:
+            updated.append(binding)
+        return updated
 
     def _load_interface_html_from_file(self, path_value: str) -> str:
         raw_path = path_value.strip()
@@ -2026,6 +2278,120 @@ class ProjectCompiler:
             raise DSLValidationError(
                 f"Cannot read interface file '{raw_path}': {exc}."
             ) from exc
+
+    def _parse_view_constructor(
+        self,
+        node: ast.AST,
+        *,
+        compiler: DSLCompiler,
+    ) -> ViewSpec:
+        if not isinstance(node, ast.Call):
+            raise DSLValidationError("View declaration expects View(...).")
+        if not isinstance(node.func, ast.Name) or node.func.id != "View":
+            raise DSLValidationError("View declaration expects View(...).")
+        if len(node.args) < 1 or len(node.args) > 2:
+            raise DSLValidationError(
+                "View(...) expects id and optional role selector."
+            )
+        kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
+        allowed = {
+            "role",
+            "camera",
+            "x",
+            "y",
+            "width",
+            "height",
+            "z",
+            "interactive",
+            "symbolic",
+        }
+        unexpected = sorted(set(kwargs.keys()) - allowed)
+        if unexpected:
+            raise DSLValidationError(
+                f"View(...) received unsupported arguments: {unexpected}"
+            )
+        if len(node.args) == 2 and "role" in kwargs:
+            raise DSLValidationError(
+                "View(...) role must be provided once (positional or keyword)."
+            )
+
+        view_id = _expect_string(node.args[0], "view id")
+        if not view_id:
+            raise DSLValidationError("View id must be a non-empty string.")
+
+        role_node = node.args[1] if len(node.args) == 2 else kwargs.get("role")
+        role_id: Optional[str] = None
+        if role_node is not None:
+            role_id = self._parse_role_selector_id(
+                role_node,
+                compiler=compiler,
+                source_name="View role selector",
+                allow_plain_string=True,
+            )
+
+        camera_name: Optional[str] = None
+        if "camera" in kwargs:
+            camera_name = self._parse_camera_name_selector(
+                kwargs["camera"],
+                source_name="View camera selector",
+            )
+
+        x = _expect_number_or_default(kwargs.get("x"), "view x", 0.0)
+        y = _expect_number_or_default(kwargs.get("y"), "view y", 0.0)
+        width = _expect_number_or_default(kwargs.get("width"), "view width", 1.0)
+        height = _expect_number_or_default(kwargs.get("height"), "view height", 1.0)
+        z = _expect_int_or_default(kwargs.get("z"), "view z", 0)
+        interactive = _expect_bool_or_default(kwargs.get("interactive"), "view interactive", True)
+        symbolic = _expect_bool_or_default(kwargs.get("symbolic"), "view symbolic", True)
+
+        if x < 0 or x > 1:
+            raise DSLValidationError("View x must be between 0.0 and 1.0.")
+        if y < 0 or y > 1:
+            raise DSLValidationError("View y must be between 0.0 and 1.0.")
+        if width <= 0 or width > 1:
+            raise DSLValidationError("View width must be > 0.0 and <= 1.0.")
+        if height <= 0 or height > 1:
+            raise DSLValidationError("View height must be > 0.0 and <= 1.0.")
+        if x + width > 1.000001:
+            raise DSLValidationError("View x + width must be <= 1.0.")
+        if y + height > 1.000001:
+            raise DSLValidationError("View y + height must be <= 1.0.")
+
+        return ViewSpec(
+            id=view_id,
+            role_id=role_id,
+            camera_name=camera_name,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            z=z,
+            interactive=interactive,
+            symbolic=symbolic,
+        )
+
+    def _parse_camera_name_selector(
+        self,
+        node: ast.AST,
+        *,
+        source_name: str,
+    ) -> str:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if not node.value:
+                raise DSLValidationError(f"{source_name} must be non-empty.")
+            return node.value
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            if node.value.id != "Camera":
+                raise DSLValidationError(
+                    f"{source_name} must use Camera[\"name\"] or a camera name string."
+                )
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if not node.slice.value:
+                    raise DSLValidationError(f"{source_name} must be non-empty.")
+                return node.slice.value
+        raise DSLValidationError(
+            f"{source_name} must use Camera[\"name\"] or a camera name string."
+        )
 
     def _resolve_multiplayer_arg(
         self,
@@ -2247,27 +2613,79 @@ class ProjectCompiler:
                 f"Declared roles: {declared_list}."
             )
 
-    def _validate_interface_role_ids(
+    def _validate_condition_view_ids(
         self,
-        interfaces_by_role: Dict[str, str],
-        roles: List[RoleSpec],
+        rules: List[RuleSpec],
+        views: List[ViewSpec],
     ) -> None:
-        if not interfaces_by_role:
-            return
-        declared = {role.id for role in roles}
-        for role_id in interfaces_by_role.keys():
-            if role_id in declared:
+        declared = {view.id for view in views}
+        for rule in rules:
+            condition = rule.condition
+            view_id: Optional[str] = None
+            if isinstance(condition, MouseConditionSpec):
+                view_id = condition.view_id
+            elif isinstance(condition, ButtonConditionSpec):
+                view_id = condition.view_id
+            if view_id is None:
+                continue
+            if view_id in declared:
                 continue
             if not declared:
                 raise DSLValidationError(
-                    f"scene.set_interface(..., Role['{role_id}']) references role id '{role_id}', "
-                    "but no roles were declared via game.add_role(...)."
+                    f"Condition for action '{rule.action_name}' references view id '{view_id}', "
+                    "but no views were declared via scene.add_view(...)."
                 )
             declared_list = ", ".join(sorted(declared))
             raise DSLValidationError(
-                f"scene.set_interface(..., Role['{role_id}']) references unknown role id '{role_id}'. "
-                f"Declared roles: {declared_list}."
+                f"Condition for action '{rule.action_name}' references unknown view id '{view_id}'. "
+                f"Declared views: {declared_list}."
             )
+
+    def _validate_interface_bindings(
+        self,
+        interfaces: List[InterfaceBindingSpec],
+        roles: List[RoleSpec],
+        views: List[ViewSpec],
+    ) -> None:
+        if not interfaces:
+            return
+        declared_roles = {role.id for role in roles}
+        view_by_id = {view.id: view for view in views}
+        for binding in interfaces:
+            role_id = binding.role_id
+            if role_id is not None and role_id not in declared_roles:
+                if not declared_roles:
+                    raise DSLValidationError(
+                        f"scene.set_interface(..., Role['{role_id}']) references role id '{role_id}', "
+                        "but no roles were declared via game.add_role(...)."
+                    )
+                declared_list = ", ".join(sorted(declared_roles))
+                raise DSLValidationError(
+                    f"scene.set_interface(..., Role['{role_id}']) references unknown role id '{role_id}'. "
+                    f"Declared roles: {declared_list}."
+                )
+            view_id = binding.view_id
+            if view_id is None:
+                continue
+            view = view_by_id.get(view_id)
+            if view is None:
+                if not view_by_id:
+                    raise DSLValidationError(
+                        f"scene.set_interface(..., View['{view_id}']) references view id '{view_id}', "
+                        "but no views were declared via scene.add_view(...)."
+                    )
+                declared_views = ", ".join(sorted(view_by_id.keys()))
+                raise DSLValidationError(
+                    f"scene.set_interface(..., View['{view_id}']) references unknown view id '{view_id}'. "
+                    f"Declared views: {declared_views}."
+                )
+            if role_id is None or view.role_id is None:
+                continue
+            if role_id != view.role_id:
+                raise DSLValidationError(
+                    f"scene.set_interface(...) binds role '{role_id}' to view '{view_id}', "
+                    f"but view '{view_id}' is scoped to role '{view.role_id}'."
+                )
 
     def _validate_role_bindings(
         self,
@@ -2450,6 +2868,58 @@ class ProjectCompiler:
                 ),
                 stacklevel=2,
             )
+
+    def _validate_views(
+        self,
+        views: List[ViewSpec],
+        roles: List[RoleSpec],
+        cameras: List[CameraSpec],
+    ) -> None:
+        if not views:
+            return
+
+        role_by_id = {role.id: role for role in roles}
+        camera_by_name = {camera.name: camera for camera in cameras}
+        seen_ids: set[str] = set()
+
+        for view in views:
+            if view.id in seen_ids:
+                raise DSLValidationError(
+                    f"Duplicate view id '{view.id}' is not allowed."
+                )
+            seen_ids.add(view.id)
+
+            if view.role_id is not None and view.role_id not in role_by_id:
+                if not role_by_id:
+                    raise DSLValidationError(
+                        f"View '{view.id}' references role '{view.role_id}', "
+                        "but no roles were declared via game.add_role(...)."
+                    )
+                declared_roles = ", ".join(sorted(role_by_id.keys()))
+                raise DSLValidationError(
+                    f"View '{view.id}' references unknown role '{view.role_id}'. "
+                    f"Declared roles: {declared_roles}."
+                )
+
+            if view.camera_name is None:
+                continue
+            camera = camera_by_name.get(view.camera_name)
+            if camera is None:
+                if not camera_by_name:
+                    raise DSLValidationError(
+                        f"View '{view.id}' references camera '{view.camera_name}', "
+                        "but no camera was added via scene.add_camera(...)."
+                    )
+                declared_cameras = ", ".join(sorted(camera_by_name.keys()))
+                raise DSLValidationError(
+                    f"View '{view.id}' references unknown camera '{view.camera_name}'. "
+                    f"Declared cameras: {declared_cameras}."
+                )
+            if view.role_id is not None and camera.role_id != view.role_id:
+                raise DSLValidationError(
+                    f"View '{view.id}' is scoped to role '{view.role_id}' but "
+                    f"camera '{camera.name}' belongs to role '{camera.role_id}'."
+                )
 
     def _parse_global_value(
         self, node: ast.AST, compiler: DSLCompiler
@@ -3005,17 +3475,18 @@ class ProjectCompiler:
                 if phase is None:
                     raise DSLValidationError("Unsupported mouse condition method.")
                 kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
-                unexpected = sorted(set(kwargs.keys()) - {"id"})
+                unexpected = sorted(set(kwargs.keys()) - {"id", "view"})
                 if unexpected:
                     raise DSLValidationError(
-                        "MouseCondition.<phase>(...) only accepts keyword 'id'."
+                        "MouseCondition.<phase>(...) only accepts keywords 'id' and 'view'."
                     )
-                if len(node.args) > 2:
+                if len(node.args) > 3:
                     raise DSLValidationError(
-                        "MouseCondition.<phase>(...) accepts button and role selector."
+                        "MouseCondition.<phase>(...) accepts button, role selector, and optional view selector."
                     )
                 button = "left"
                 role_id: Optional[str] = None
+                view_id: Optional[str] = None
                 if len(node.args) == 1:
                     try:
                         role_id = self._parse_role_selector_id(
@@ -3034,12 +3505,37 @@ class ProjectCompiler:
                         source_name="MouseCondition role",
                         allow_plain_string=True,
                     )
-                if len(node.args) == 2 and "id" in kwargs:
+                elif len(node.args) == 3:
+                    button = _expect_string(node.args[0], "mouse button")
+                    role_id = self._parse_role_selector_id(
+                        node.args[1],
+                        compiler=compiler,
+                        source_name="MouseCondition role",
+                        allow_plain_string=True,
+                    )
+                    view_id = self._parse_view_selector_id(
+                        node.args[2],
+                        compiler=compiler,
+                        source_name="MouseCondition view",
+                        allow_plain_string=True,
+                    )
+                if len(node.args) >= 2 and "id" in kwargs:
                     raise DSLValidationError(
                         "MouseCondition.<phase>(...) role id must be provided once."
                     )
                 if role_id is None and "id" in kwargs:
                     role_id = _expect_string(kwargs["id"], "condition role id")
+                if view_id is not None and "view" in kwargs:
+                    raise DSLValidationError(
+                        "MouseCondition.<phase>(...) view must be provided once."
+                    )
+                if view_id is None and "view" in kwargs:
+                    view_id = self._parse_view_selector_id(
+                        kwargs["view"],
+                        compiler=compiler,
+                        source_name="MouseCondition view",
+                        allow_plain_string=True,
+                    )
                 if role_id is None:
                     raise DSLValidationError(
                         "MouseCondition.<phase>(...) requires role id. "
@@ -3049,6 +3545,7 @@ class ProjectCompiler:
                     button=button,
                     phase=phase,
                     role_id=role_id,
+                    view_id=view_id,
                 )
 
             if owner == "ButtonCondition":
@@ -3056,14 +3553,14 @@ class ProjectCompiler:
                 if phase is None:
                     raise DSLValidationError("Unsupported button condition method.")
                 kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
-                unexpected = sorted(set(kwargs.keys()) - {"id"})
+                unexpected = sorted(set(kwargs.keys()) - {"id", "view"})
                 if unexpected:
                     raise DSLValidationError(
-                        "ButtonCondition.<phase>(...) only accepts keyword 'id'."
+                        "ButtonCondition.<phase>(...) only accepts keywords 'id' and 'view'."
                     )
-                if len(node.args) not in {1, 2}:
+                if len(node.args) < 1 or len(node.args) > 3:
                     raise DSLValidationError(
-                        "ButtonCondition.<phase>(...) expects button name and optional role selector."
+                        "ButtonCondition.<phase>(...) expects button name, optional role selector, and optional view selector."
                     )
                 role_id = (
                     self._parse_role_selector_id(
@@ -3072,19 +3569,41 @@ class ProjectCompiler:
                         source_name="ButtonCondition role",
                         allow_plain_string=True,
                     )
-                    if len(node.args) == 2
+                    if len(node.args) >= 2
                     else None
                 )
-                if len(node.args) == 2 and "id" in kwargs:
+                view_id = (
+                    self._parse_view_selector_id(
+                        node.args[2],
+                        compiler=compiler,
+                        source_name="ButtonCondition view",
+                        allow_plain_string=True,
+                    )
+                    if len(node.args) >= 3
+                    else None
+                )
+                if len(node.args) >= 2 and "id" in kwargs:
                     raise DSLValidationError(
                         "ButtonCondition.<phase>(...) role id must be provided once."
                     )
                 if role_id is None and "id" in kwargs:
                     role_id = _expect_string(kwargs["id"], "condition role id")
+                if view_id is not None and "view" in kwargs:
+                    raise DSLValidationError(
+                        "ButtonCondition.<phase>(...) view must be provided once."
+                    )
+                if view_id is None and "view" in kwargs:
+                    view_id = self._parse_view_selector_id(
+                        kwargs["view"],
+                        compiler=compiler,
+                        source_name="ButtonCondition view",
+                        allow_plain_string=True,
+                    )
                 return ButtonConditionSpec(
                     name=_expect_string(node.args[0], "button name"),
                     phase=phase,
                     role_id=role_id,
+                    view_id=view_id,
                 )
 
         if (
@@ -3659,6 +4178,42 @@ class ProjectCompiler:
             f"{source_name} must be Role[\"id\"] or RoleType[\"id\"]."
         )
 
+    def _parse_view_selector_id(
+        self,
+        node: ast.AST,
+        *,
+        compiler: DSLCompiler,
+        source_name: str,
+        allow_plain_string: bool,
+    ) -> str:
+        if allow_plain_string and isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if not node.value:
+                raise DSLValidationError(f"{source_name} must be non-empty.")
+            return node.value
+
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            owner = node.value.id
+            if owner != "View":
+                raise DSLValidationError(
+                    f"{source_name} must use View[\"id\"]."
+                )
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int):
+                raise DSLValidationError(
+                    f"{source_name} does not support index selectors; use View[\"id\"]."
+                )
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                if not node.slice.value:
+                    raise DSLValidationError(f"{source_name} must be non-empty.")
+                return node.slice.value
+
+        if allow_plain_string:
+            raise DSLValidationError(
+                f"{source_name} must be view id string or View[\"id\"]."
+            )
+        raise DSLValidationError(
+            f"{source_name} must be View[\"id\"]."
+        )
+
     def _parse_resource_name_selector(
         self,
         node: ast.AST,
@@ -4221,6 +4776,69 @@ class ProjectCompiler:
         params = list(action.params)
         params[0] = rebound_left
         params[1] = rebound_right
+        return replace(action, params=params)
+
+    def _bind_logical_action_params(
+        self,
+        action_name: str,
+        action: ActionIR,
+        condition: LogicalConditionSpec,
+        warned_actions: set[str],
+        source_node: Optional[ast.AST] = None,
+    ) -> ActionIR:
+        params = list(action.params)
+        actor_param_index = next(
+            (idx for idx, param in enumerate(params) if param.kind == BindingKind.ACTOR),
+            None,
+        )
+        if actor_param_index is None:
+            return action
+
+        actor_param = params[actor_param_index]
+        actor_selector = actor_param.actor_selector
+        has_explicit_selector = (
+            actor_selector is not None
+            and (
+                actor_selector.index is not None
+                or (
+                    actor_selector.uid is not None
+                    and actor_selector.uid != LOGICAL_TARGET_BINDING_UID
+                    and (
+                        actor_param.actor_type is None
+                        or actor_selector.uid != actor_param.actor_type
+                    )
+                )
+            )
+        )
+        if action_name not in warned_actions and has_explicit_selector:
+            warnings.warn(
+                format_dsl_diagnostic(
+                    f"OnLogicalCondition imposes actor binding for action '{action_name}' "
+                    f"parameter '{actor_param.name}'. Explicit selector annotation on that "
+                    "parameter is ignored.",
+                    node=source_node,
+                ),
+                stacklevel=2,
+            )
+            warned_actions.add(action_name)
+
+        if (
+            actor_param.actor_type is not None
+            and condition.target.actor_type is not None
+            and actor_param.actor_type != condition.target.actor_type
+        ):
+            raise DSLValidationError(
+                f"OnLogicalCondition selector type '{condition.target.actor_type}' does not "
+                f"match action actor parameter type '{actor_param.actor_type}'."
+            )
+
+        bound_actor_type = actor_param.actor_type or condition.target.actor_type
+        params[actor_param_index] = ParamBinding(
+            name=actor_param.name,
+            kind=BindingKind.ACTOR,
+            actor_selector=ActorSelector(uid=LOGICAL_TARGET_BINDING_UID),
+            actor_type=bound_actor_type,
+        )
         return replace(action, params=params)
 
     def _bind_logical_predicate_params(

@@ -12,6 +12,7 @@ import {
   CanvasHostOptions,
   MapSpec,
   PhasePayload,
+  UIButtonPhasePayload,
   SceneState,
   SpecResourceDef,
   SpecSpriteDef,
@@ -22,9 +23,13 @@ import { actorCenterX, actorCenterY, asNumber } from "./canvas/utils";
 export interface RuntimeStepInput {
   keyboard?: PhasePayload;
   mouse?: PhasePayload;
-  uiButtons?: PhasePayload;
+  uiButtons?: UIButtonPhasePayload;
   mousePosition?: { x?: number; y?: number };
   mouse_position?: { x?: number; y?: number };
+  mouseWorldPosition?: { x?: number; y?: number };
+  mouse_world_position?: { x?: number; y?: number };
+  mouseViewId?: string;
+  mouse_view_id?: string;
   toolCalls?: Array<string | ToolFrameInput>;
   roleId?: string;
   role_id?: string;
@@ -265,6 +270,16 @@ export class RuntimeCore {
         input.mousePosition && typeof input.mousePosition === "object"
           ? input.mousePosition
           : input.mouse_position,
+      mouseWorldPosition:
+        input.mouseWorldPosition && typeof input.mouseWorldPosition === "object"
+          ? input.mouseWorldPosition
+          : input.mouse_world_position,
+      mouseViewId:
+        typeof input.mouseViewId === "string"
+          ? input.mouseViewId
+          : typeof input.mouse_view_id === "string"
+            ? input.mouse_view_id
+            : undefined,
       toolCalls: input.toolCalls,
       parentPreviousPositions,
       roleId:

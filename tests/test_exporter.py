@@ -205,9 +205,17 @@ def test_export_project_serializes_scene_interface_html_and_button_condition(tmp
     assert spec["interface_html"] is not None
     assert "Score: {{score}}" in spec["interface_html"]
     assert spec["interfaces_by_role"] == {}
+    assert spec["interfaces"] == [
+        {
+            "html": '<div>Score: {{score}}</div><button data-button="spawn_bonus">Spawn</button>',
+            "role_id": None,
+            "view_id": None,
+        }
+    ]
     assert spec["rules"][0]["condition"]["kind"] == "button"
     assert spec["rules"][0]["condition"]["name"] == "spawn_bonus"
     assert spec["rules"][0]["condition"]["phase"] == "begin"
+    assert spec["rules"][0]["condition"]["view_id"] is None
 
 
 def test_export_project_serializes_role_scoped_interfaces(tmp_path):
@@ -224,6 +232,56 @@ def test_export_project_serializes_role_scoped_interfaces(tmp_path):
     export_project(source, str(tmp_path))
     spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
     assert spec["interfaces_by_role"] == {"human_1": "<div>P1</div>"}
+    assert spec["interfaces"] == [
+        {"html": "<div>P1</div>", "role_id": "human_1", "view_id": None}
+    ]
+
+
+def test_export_project_serializes_views_and_view_scoped_bindings(tmp_path):
+    source = textwrap.dedent(
+        '''
+        class Unit(Actor):
+            x: float
+            y: float
+
+        @unsafe_condition(MouseCondition.begin_click("left", id="human_1", view=View["mini"]))
+        def click():
+            pass
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene.add_actor(Unit(uid="u1", x=16, y=16))
+        cam = Camera("main_cam", Role["human_1"], width=30, height=20)
+        scene.add_camera(cam)
+        scene.add_view(View("mini", Role["human_1"], camera=Camera["main_cam"], x=0.7, y=0.7, width=0.3, height=0.3))
+        scene.set_interface("<div>Mini</div>", Role["human_1"], View["mini"])
+        '''
+    )
+
+    export_project(source, str(tmp_path))
+    spec = json.loads((tmp_path / "game_spec.json").read_text(encoding="utf-8"))
+    assert spec["views"] == [
+        {
+            "id": "mini",
+            "role_id": "human_1",
+            "camera_name": "main_cam",
+            "x": 0.7,
+            "y": 0.7,
+            "width": 0.3,
+            "height": 0.3,
+            "z": 0,
+            "interactive": True,
+            "symbolic": True,
+        }
+    ]
+    assert spec["interfaces"][-1] == {
+        "html": "<div>Mini</div>",
+        "role_id": "human_1",
+        "view_id": "mini",
+    }
+    assert spec["rules"][0]["condition"]["view_id"] == "mini"
 
 
 def test_export_project_serializes_overlap_and_contact_modes(tmp_path):

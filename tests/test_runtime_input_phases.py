@@ -867,8 +867,8 @@ def test_runtime_button_condition_matches_ui_buttons(tmp_path):
         }};
 
         const i = new NanoCaliburInterpreter(spec, actions, {{}});
-        i.tick({{ uiButtons: { begin: ["other"] } }});
-        i.tick({{ uiButtons: { begin: ["spawn_bonus"] } }});
+        i.tick({{ uiButtons: {{ begin: ["other"] }} }});
+        i.tick({{ uiButtons: {{ begin: ["spawn_bonus"] }} }});
         console.log(JSON.stringify(i.getState().globals.count));
         """
     )
@@ -1023,7 +1023,7 @@ def test_runtime_scene_set_interface_updates_state(tmp_path):
 
         const i = new NanoCaliburInterpreter(spec, actions, {{}});
         const before = i.getState().scene.interfaceHtml;
-        i.tick({{ uiButtons: { begin: ["swap_ui"] } }});
+        i.tick({{ uiButtons: {{ begin: ["swap_ui"] }} }});
         const after = i.getState().scene.interfaceHtml;
         console.log(JSON.stringify({{ before, after }}));
         """
@@ -1088,7 +1088,7 @@ def test_runtime_scene_set_interface_updates_role_scoped_state(tmp_path):
 
         const i = new NanoCaliburInterpreter(spec, actions, {{}});
         const before = i.getState().scene.interfaceByRole.human_1;
-        i.tick({{ uiButtons: { begin: ["swap_ui"] } }});
+        i.tick({{ uiButtons: {{ begin: ["swap_ui"] }} }});
         const state = i.getState().scene;
         console.log(JSON.stringify({{ before, after: state.interfaceByRole.human_1, global: state.interfaceHtml }}));
         """
@@ -1104,6 +1104,148 @@ def test_runtime_scene_set_interface_updates_role_scoped_state(tmp_path):
     assert values["before"] == "<div>h1</div>"
     assert values["after"] == "<div>updated</div>"
     assert values["global"] == "<div>default</div>"
+
+
+def test_runtime_mouse_condition_scopes_by_view_and_exposes_world_info(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "hit", kind: "bool", value: false }},
+            {{ name: "view_id", kind: "str", value: "" }},
+            {{ name: "world_x", kind: "int", value: 0 }}
+          ],
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "mouse", phase: "begin", button: "left", role_id: "human_1", view_id: "mini" }}, action: "capture" }}
+          ]
+        }};
+
+        const actions = {{
+          capture: (ctx) => {{
+            const info = ctx.mouseInfo || {{}};
+            ctx.globals.hit = true;
+            ctx.globals.view_id = String(info.view_id || "");
+            ctx.globals.world_x = Math.round(Number(info.world_x || 0));
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{
+          role_id: "human_1",
+          mouse: {{ begin: ["left"] }},
+          mousePosition: {{ x: 12, y: 8 }},
+          mouseWorldPosition: {{ x: 111, y: 222 }},
+          mouseViewId: "main"
+        }});
+        i.tick({{
+          role_id: "human_1",
+          mouse: {{ begin: ["left"] }},
+          mousePosition: {{ x: 4, y: 6 }},
+          mouseWorldPosition: {{ x: 333, y: 444 }},
+          mouseViewId: "mini"
+        }});
+        console.log(JSON.stringify(i.getState().globals));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["hit"] is True
+    assert values["view_id"] == "mini"
+    assert values["world_x"] == 333
+
+
+def test_runtime_button_condition_scopes_by_view(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [{{ name: "count", kind: "int", value: 0 }}],
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "button", phase: "begin", name: "ping", view_id: "mini" }}, action: "inc" }}
+          ]
+        }};
+
+        const actions = {{
+          inc: (ctx) => {{
+            ctx.globals.count = ctx.globals.count + 1;
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+        i.tick({{ uiButtons: {{ begin: [{{ name: "ping", view_id: "main" }}] }} }});
+        i.tick({{ uiButtons: {{ begin: [{{ name: "ping", view_id: "mini" }}] }} }});
+        console.log(JSON.stringify(i.getState().globals.count));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(proc.stdout.strip()) == 1
 
 
 def test_runtime_collision_modes_distinguish_overlap_and_contact(tmp_path):

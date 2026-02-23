@@ -3,8 +3,8 @@ import { AssetStore } from "./assets";
 import { AnimationSystem } from "./animation";
 import {
   ActorState,
-  CanvasHostOptions,
   CameraState,
+  CanvasHostOptions,
   DEFAULT_TICKS_PER_FRAME,
   DEFAULT_HEIGHT,
   DEFAULT_TYPE_COLORS,
@@ -12,9 +12,40 @@ import {
   MapSpec,
   SpriteAnimationConfig,
   SpriteFrameInfo,
-  WorldCamera,
+  ViewState,
 } from "./types";
 import { actorCenterX, actorCenterY, actorHeight, actorWidth, asNumber, clamp } from "./utils";
+
+interface ViewRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface ResolvedViewCamera {
+  x: number;
+  y: number;
+  worldWidth: number;
+  worldHeight: number;
+}
+
+interface ResolvedRenderView {
+  id: string;
+  rect: ViewRect;
+  camera: ResolvedViewCamera;
+  z: number;
+  interactive: boolean;
+  symbolic: boolean;
+}
+
+export interface ScreenProjection {
+  viewId: string;
+  localX: number;
+  localY: number;
+  worldX: number;
+  worldY: number;
+}
 
 export class CanvasRenderer {
   private readonly canvas: HTMLCanvasElement;
@@ -56,65 +87,280 @@ export class CanvasRenderer {
 
   render(state: InterpreterState, mapSpec: MapSpec | null): void {
     this.frameCounter += 1;
-    const camera = this.resolveCamera(state.camera as CameraState | null, mapSpec);
     const actors = state.actors as ActorState[];
     const sortedActors = [...actors].sort(
       (a, b) => asNumber(a.z, 0) - asNumber(b.z, 0),
     );
+    const views = this.resolveRenderViews(state, mapSpec);
 
     this.ctx.fillStyle = this.options.backgroundColor || "#10151f";
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-    this.drawTiles(mapSpec, camera);
+    for (const view of views) {
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(view.rect.x, view.rect.y, view.rect.width, view.rect.height);
+      this.ctx.clip();
 
-    for (const actor of sortedActors) {
-      this.drawActor(actor, camera);
-    }
+      this.ctx.fillStyle = this.options.backgroundColor || "#10151f";
+      this.ctx.fillRect(view.rect.x, view.rect.y, view.rect.width, view.rect.height);
 
-    if (this.options.showDebugColliders) {
-      this.drawDebugColliders(actors, camera);
+      this.drawTiles(mapSpec, view);
+
+      for (const actor of sortedActors) {
+        if (!this.actorVisibleInView(actor, view.id)) {
+          continue;
+        }
+        this.drawActor(actor, view);
+      }
+
+      if (this.options.showDebugColliders) {
+        this.drawDebugColliders(actors, view);
+      }
+      this.ctx.restore();
     }
+  }
+
+  getRenderViews(state: InterpreterState, mapSpec: MapSpec | null): Array<{
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    world_width: number;
+    world_height: number;
+    camera_x: number;
+    camera_y: number;
+    z: number;
+    interactive: boolean;
+    symbolic: boolean;
+  }> {
+    return this.resolveRenderViews(state, mapSpec).map((view) => ({
+      id: view.id,
+      x: view.rect.x,
+      y: view.rect.y,
+      width: view.rect.width,
+      height: view.rect.height,
+      world_width: view.camera.worldWidth,
+      world_height: view.camera.worldHeight,
+      camera_x: view.camera.x,
+      camera_y: view.camera.y,
+      z: view.z,
+      interactive: view.interactive,
+      symbolic: view.symbolic,
+    }));
+  }
+
+  projectScreenToWorld(
+    state: InterpreterState,
+    mapSpec: MapSpec | null,
+    screenX: number,
+    screenY: number,
+  ): ScreenProjection | null {
+    const views = this.resolveRenderViews(state, mapSpec)
+      .filter((view) => view.interactive)
+      .sort((a, b) => (b.z - a.z));
+    for (const view of views) {
+      if (
+        screenX < view.rect.x
+        || screenY < view.rect.y
+        || screenX > view.rect.x + view.rect.width
+        || screenY > view.rect.y + view.rect.height
+      ) {
+        continue;
+      }
+      const localX = screenX - view.rect.x;
+      const localY = screenY - view.rect.y;
+      const worldX = this.screenToWorldX(screenX, view);
+      const worldY = this.screenToWorldY(screenY, view);
+      return {
+        viewId: view.id,
+        localX,
+        localY,
+        worldX,
+        worldY,
+      };
+    }
+    return null;
+  }
+
+  private resolveRenderViews(
+    state: InterpreterState,
+    mapSpec: MapSpec | null,
+  ): ResolvedRenderView[] {
+    const scene =
+      state && state.scene && typeof state.scene === "object"
+        ? (state.scene as Record<string, any>)
+        : null;
+    const sceneViewsRaw = Array.isArray(scene?.views) ? (scene?.views as ViewState[]) : [];
+    const byName =
+      state && state.cameras && typeof state.cameras === "object"
+        ? (state.cameras as Record<string, any>)
+        : {};
+    const fallbackCamera = this.resolveDefaultCameraState(state);
+    const resolved: ResolvedRenderView[] = [];
+    for (const rawView of sceneViewsRaw) {
+      if (!rawView || typeof rawView.id !== "string" || !rawView.id) {
+        continue;
+      }
+      const rect = this.resolveViewRect(rawView);
+      const cameraState = this.resolveCameraForView(rawView, byName, fallbackCamera);
+      if (!cameraState) {
+        continue;
+      }
+      const camera = this.resolveCamera(cameraState, mapSpec, rect);
+      resolved.push({
+        id: rawView.id,
+        rect,
+        camera,
+        z: Math.floor(asNumber(rawView.z, 0)),
+        interactive: rawView.interactive !== false,
+        symbolic: rawView.symbolic !== false,
+      });
+    }
+    if (resolved.length === 0) {
+      const camera = this.resolveCamera(fallbackCamera, mapSpec, {
+        x: 0,
+        y: 0,
+        width: this.canvas.width,
+        height: this.canvas.height,
+      });
+      return [
+        {
+          id: "__default__",
+          rect: {
+            x: 0,
+            y: 0,
+            width: this.canvas.width,
+            height: this.canvas.height,
+          },
+          camera,
+          z: 0,
+          interactive: true,
+          symbolic: true,
+        },
+      ];
+    }
+    resolved.sort((a, b) => (a.z - b.z));
+    return resolved;
+  }
+
+  private resolveDefaultCameraState(state: InterpreterState): CameraState | null {
+    const direct = state.camera as CameraState | null;
+    if (direct && typeof direct === "object") {
+      return direct;
+    }
+    const byName =
+      state && state.cameras && typeof state.cameras === "object"
+        ? (state.cameras as Record<string, any>)
+        : null;
+    if (!byName) {
+      return null;
+    }
+    for (const value of Object.values(byName)) {
+      if (value && typeof value === "object") {
+        return value as CameraState;
+      }
+    }
+    return null;
+  }
+
+  private resolveCameraForView(
+    view: ViewState,
+    camerasByName: Record<string, any>,
+    fallback: CameraState | null,
+  ): CameraState | null {
+    if (typeof view.camera_name === "string" && view.camera_name) {
+      const selected = camerasByName[view.camera_name];
+      if (selected && typeof selected === "object") {
+        return selected as CameraState;
+      }
+    }
+    return fallback;
+  }
+
+  private resolveViewRect(view: ViewState): ViewRect {
+    const xRatio = this.clamp01(asNumber(view.x, 0));
+    const yRatio = this.clamp01(asNumber(view.y, 0));
+    const widthRatio = this.clamp01Positive(asNumber(view.width, 1));
+    const heightRatio = this.clamp01Positive(asNumber(view.height, 1));
+
+    const x = clamp(Math.floor(xRatio * this.canvas.width), 0, Math.max(0, this.canvas.width - 1));
+    const y = clamp(Math.floor(yRatio * this.canvas.height), 0, Math.max(0, this.canvas.height - 1));
+    const width = Math.max(1, Math.floor(widthRatio * this.canvas.width));
+    const height = Math.max(1, Math.floor(heightRatio * this.canvas.height));
+    return {
+      x,
+      y,
+      width: Math.max(1, Math.min(width, this.canvas.width - x)),
+      height: Math.max(1, Math.min(height, this.canvas.height - y)),
+    };
   }
 
   private resolveCamera(
     cameraState: CameraState | null,
     mapSpec: MapSpec | null,
-  ): WorldCamera {
-    const fallback: WorldCamera = {
-      x: this.canvas.width / 2,
-      y: this.canvas.height / 2,
-    };
-
-    if (!cameraState) {
-      return fallback;
-    }
-
-    const resolved: WorldCamera = {
-      x: asNumber(cameraState.x, fallback.x),
-      y: asNumber(cameraState.y, fallback.y),
-    };
+    rect: ViewRect,
+  ): ResolvedViewCamera {
+    const fallbackCenterX = rect.width / 2;
+    const fallbackCenterY = rect.height / 2;
+    const tileSize = mapSpec ? Math.max(1, asNumber(mapSpec.tile_size, 1)) : 1;
+    const worldWidth = this.resolveCameraWorldSpan(
+      cameraState?.width,
+      tileSize,
+      rect.width,
+    );
+    const worldHeight = this.resolveCameraWorldSpan(
+      cameraState?.height,
+      tileSize,
+      rect.height,
+    );
+    const resolvedX = asNumber(cameraState?.x, fallbackCenterX);
+    const resolvedY = asNumber(cameraState?.y, fallbackCenterY);
 
     if (!mapSpec) {
-      return resolved;
+      return {
+        x: resolvedX,
+        y: resolvedY,
+        worldWidth,
+        worldHeight,
+      };
     }
 
-    const worldWidth = mapSpec.width * mapSpec.tile_size;
-    const worldHeight = mapSpec.height * mapSpec.tile_size;
-    const halfViewW = this.canvas.width / 2;
-    const halfViewH = this.canvas.height / 2;
+    const worldTotalWidth = mapSpec.width * mapSpec.tile_size;
+    const worldTotalHeight = mapSpec.height * mapSpec.tile_size;
+    const halfViewW = worldWidth / 2;
+    const halfViewH = worldHeight / 2;
 
     const minX = halfViewW;
-    const maxX = Math.max(halfViewW, worldWidth - halfViewW);
+    const maxX = Math.max(halfViewW, worldTotalWidth - halfViewW);
     const minY = halfViewH;
-    const maxY = Math.max(halfViewH, worldHeight - halfViewH);
+    const maxY = Math.max(halfViewH, worldTotalHeight - halfViewH);
 
     return {
-      x: clamp(resolved.x, minX, maxX),
-      y: clamp(resolved.y, minY, maxY),
+      x: clamp(resolvedX, minX, maxX),
+      y: clamp(resolvedY, minY, maxY),
+      worldWidth,
+      worldHeight,
     };
   }
 
-  private drawTiles(mapSpec: MapSpec | null, camera: WorldCamera): void {
+  private resolveCameraWorldSpan(
+    maybeTiles: number | null | undefined,
+    tileSize: number,
+    fallbackPixels: number,
+  ): number {
+    if (
+      typeof maybeTiles === "number"
+      && Number.isFinite(maybeTiles)
+      && maybeTiles > 0
+    ) {
+      return maybeTiles * tileSize;
+    }
+    return Math.max(1, fallbackPixels);
+  }
+
+  private drawTiles(mapSpec: MapSpec | null, view: ResolvedRenderView): void {
     if (!mapSpec) {
       return;
     }
@@ -140,29 +386,33 @@ export class CanvasRenderer {
           continue;
         }
 
-        const worldX = tileX * tileSize + tileSize / 2;
-        const worldY = tileY * tileSize + tileSize / 2;
-        const screenX = this.worldToScreenX(worldX, camera) - tileSize / 2;
-        const screenY = this.worldToScreenY(worldY, camera) - tileSize / 2;
+        const leftWorld = tileX * tileSize;
+        const topWorld = tileY * tileSize;
+        const rightWorld = leftWorld + tileSize;
+        const bottomWorld = topWorld + tileSize;
+        const screenX = this.worldToScreenX(leftWorld, view);
+        const screenY = this.worldToScreenY(topWorld, view);
+        const screenW = this.worldToScreenX(rightWorld, view) - screenX;
+        const screenH = this.worldToScreenY(bottomWorld, view) - screenY;
         const tileDef = mapSpec.tile_defs?.[String(tileId)];
 
         const color = tileDef ? this.resolveTileColor(tileDef.color) : null;
         if (color) {
           this.ctx.fillStyle = color;
-          this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+          this.ctx.fillRect(screenX, screenY, screenW, screenH);
           continue;
         }
 
         if (
-          tileDef &&
-          typeof tileDef.sprite === "string" &&
-          this.drawTileSprite(tileDef.sprite, screenX, screenY, tileSize)
+          tileDef
+          && typeof tileDef.sprite === "string"
+          && this.drawTileSprite(tileDef.sprite, screenX, screenY, screenW, screenH)
         ) {
           continue;
         }
 
         this.ctx.fillStyle = defaultTileColor;
-        this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+        this.ctx.fillRect(screenX, screenY, screenW, screenH);
       }
     }
   }
@@ -194,7 +444,8 @@ export class CanvasRenderer {
     spriteName: string,
     screenX: number,
     screenY: number,
-    tileSize: number,
+    screenW: number,
+    screenH: number,
   ): boolean {
     const sprite = this.options.spritesByName?.[spriteName];
     if (!sprite) {
@@ -206,7 +457,7 @@ export class CanvasRenderer {
         return false;
       }
       this.ctx.fillStyle = fallbackColor;
-      this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+      this.ctx.fillRect(screenX, screenY, screenW, screenH);
       return true;
     }
     const image = this.assets.getImage(sprite.image);
@@ -216,7 +467,7 @@ export class CanvasRenderer {
         return false;
       }
       this.ctx.fillStyle = fallbackColor;
-      this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+      this.ctx.fillRect(screenX, screenY, screenW, screenH);
       return true;
     }
 
@@ -231,7 +482,7 @@ export class CanvasRenderer {
         return false;
       }
       this.ctx.fillStyle = fallbackColor;
-      this.ctx.fillRect(screenX, screenY, tileSize, tileSize);
+      this.ctx.fillRect(screenX, screenY, screenW, screenH);
       return true;
     }
 
@@ -255,10 +506,10 @@ export class CanvasRenderer {
     const sourceX = sourceColumn * frameWidth;
     const sourceY = sourceRow * frameHeight;
     if (
-      sourceX < 0 ||
-      sourceY < 0 ||
-      sourceX + frameWidth > image.width ||
-      sourceY + frameHeight > image.height
+      sourceX < 0
+      || sourceY < 0
+      || sourceX + frameWidth > image.width
+      || sourceY + frameHeight > image.height
     ) {
       return false;
     }
@@ -271,36 +522,42 @@ export class CanvasRenderer {
       frameHeight,
       screenX,
       screenY,
-      tileSize,
-      tileSize,
+      screenW,
+      screenH,
     );
     return true;
   }
 
-  private drawActor(actor: ActorState, camera: WorldCamera): void {
+  private drawActor(actor: ActorState, view: ResolvedRenderView): void {
     if (actor.active === false) {
       return;
     }
 
     const spriteConfig = this.resolveSpriteConfig(actor);
     const frameInfo = this.animation.getFrameInfo(actor);
-    if (frameInfo && this.drawSprite(actor, frameInfo, camera)) {
+    if (frameInfo && this.drawSprite(actor, frameInfo, view)) {
       return;
     }
 
     const w = actorWidth(actor);
     const h = actorHeight(actor);
-    const x = this.worldToScreenX(actorCenterX(actor), camera) - w / 2;
-    const y = this.worldToScreenY(actorCenterY(actor), camera) - h / 2;
+    const leftWorld = actorCenterX(actor) - w / 2;
+    const topWorld = actorCenterY(actor) - h / 2;
+    const rightWorld = leftWorld + w;
+    const bottomWorld = topWorld + h;
+    const x = this.worldToScreenX(leftWorld, view);
+    const y = this.worldToScreenY(topWorld, view);
+    const drawW = this.worldToScreenX(rightWorld, view) - x;
+    const drawH = this.worldToScreenY(bottomWorld, view) - y;
     this.ctx.fillStyle =
       this.resolveSpriteColor(spriteConfig) || this.resolveActorColor(actor);
-    this.ctx.fillRect(x, y, w, h);
+    this.ctx.fillRect(x, y, drawW, drawH);
   }
 
   private drawSprite(
     actor: ActorState,
     frameInfo: SpriteFrameInfo | null,
-    camera: WorldCamera,
+    view: ResolvedRenderView,
   ): boolean {
     if (!frameInfo) {
       return false;
@@ -325,29 +582,38 @@ export class CanvasRenderer {
     const sourceX = sourceColumn * frameWidth;
     const sourceY = sourceRow * frameHeight;
     if (
-      sourceX < 0 ||
-      sourceY < 0 ||
-      sourceX + frameWidth > image.width ||
-      sourceY + frameHeight > image.height
+      sourceX < 0
+      || sourceY < 0
+      || sourceX + frameWidth > image.width
+      || sourceY + frameHeight > image.height
     ) {
       return false;
     }
 
     const useActorSize = typeof actor.w === "number" && typeof actor.h === "number";
-    const drawW = useActorSize
+    const drawWorldW = useActorSize
       ? Math.max(1, actorWidth(actor))
       : frameWidth * Math.max(0.1, asNumber(sprite.scale, 1));
-    const drawH = useActorSize
+    const drawWorldH = useActorSize
       ? Math.max(1, actorHeight(actor))
       : frameHeight * Math.max(0.1, asNumber(sprite.scale, 1));
 
     const offsetX = asNumber(sprite.offsetX, 0);
     const offsetY = asNumber(sprite.offsetY, 0);
 
-    const centerX = this.worldToScreenX(actorCenterX(actor), camera) + offsetX;
-    const centerY = this.worldToScreenY(actorCenterY(actor), camera) + offsetY;
-    const drawX = centerX - drawW / 2;
-    const drawY = centerY - drawH / 2;
+    const centerWorldX = actorCenterX(actor) + offsetX;
+    const centerWorldY = actorCenterY(actor) + offsetY;
+    const leftWorld = centerWorldX - drawWorldW / 2;
+    const topWorld = centerWorldY - drawWorldH / 2;
+    const rightWorld = leftWorld + drawWorldW;
+    const bottomWorld = topWorld + drawWorldH;
+
+    const drawX = this.worldToScreenX(leftWorld, view);
+    const drawY = this.worldToScreenY(topWorld, view);
+    const drawW = this.worldToScreenX(rightWorld, view) - drawX;
+    const drawH = this.worldToScreenY(bottomWorld, view) - drawY;
+    const centerX = drawX + (drawW / 2);
+    const centerY = drawY + (drawH / 2);
 
     if ((sprite.flipX !== false) && facing < 0) {
       this.ctx.save();
@@ -382,7 +648,7 @@ export class CanvasRenderer {
     return true;
   }
 
-  private drawDebugColliders(actors: ActorState[], camera: WorldCamera): void {
+  private drawDebugColliders(actors: ActorState[], view: ResolvedRenderView): void {
     this.ctx.save();
     this.ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
     this.ctx.lineWidth = 1;
@@ -393,12 +659,45 @@ export class CanvasRenderer {
       }
       const w = actorWidth(actor);
       const h = actorHeight(actor);
-      const x = this.worldToScreenX(actorCenterX(actor), camera) - w / 2;
-      const y = this.worldToScreenY(actorCenterY(actor), camera) - h / 2;
-      this.ctx.strokeRect(x, y, w, h);
+      const leftWorld = actorCenterX(actor) - w / 2;
+      const topWorld = actorCenterY(actor) - h / 2;
+      const rightWorld = leftWorld + w;
+      const bottomWorld = topWorld + h;
+      const x = this.worldToScreenX(leftWorld, view);
+      const y = this.worldToScreenY(topWorld, view);
+      const drawW = this.worldToScreenX(rightWorld, view) - x;
+      const drawH = this.worldToScreenY(bottomWorld, view) - y;
+      this.ctx.strokeRect(x, y, drawW, drawH);
     }
 
     this.ctx.restore();
+  }
+
+  private actorVisibleInView(actor: ActorState, viewId: string): boolean {
+    const actorRecord = actor as Record<string, unknown>;
+    const actorViewId = typeof actorRecord.view_id === "string"
+      ? actorRecord.view_id
+      : "";
+    if (actorViewId) {
+      return actorViewId === viewId;
+    }
+    const actorViewIds = actorRecord.view_ids;
+    if (Array.isArray(actorViewIds)) {
+      let sawAny = false;
+      for (const entry of actorViewIds) {
+        if (typeof entry !== "string" || !entry) {
+          continue;
+        }
+        sawAny = true;
+        if (entry === viewId) {
+          return true;
+        }
+      }
+      if (sawAny) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private resolveActorColor(actor: ActorState): string {
@@ -460,11 +759,48 @@ export class CanvasRenderer {
     return `rgba(${r}, ${g}, ${b}, ${a})`;
   }
 
-  private worldToScreenX(worldX: number, camera: WorldCamera): number {
-    return worldX - camera.x + this.canvas.width / 2;
+  private worldToScreenX(worldX: number, view: ResolvedRenderView): number {
+    const leftWorld = view.camera.x - (view.camera.worldWidth / 2);
+    return view.rect.x + ((worldX - leftWorld) / view.camera.worldWidth) * view.rect.width;
   }
 
-  private worldToScreenY(worldY: number, camera: WorldCamera): number {
-    return worldY - camera.y + this.canvas.height / 2;
+  private worldToScreenY(worldY: number, view: ResolvedRenderView): number {
+    const topWorld = view.camera.y - (view.camera.worldHeight / 2);
+    return view.rect.y + ((worldY - topWorld) / view.camera.worldHeight) * view.rect.height;
+  }
+
+  private screenToWorldX(screenX: number, view: ResolvedRenderView): number {
+    const leftWorld = view.camera.x - (view.camera.worldWidth / 2);
+    const ratio = (screenX - view.rect.x) / view.rect.width;
+    return leftWorld + (ratio * view.camera.worldWidth);
+  }
+
+  private screenToWorldY(screenY: number, view: ResolvedRenderView): number {
+    const topWorld = view.camera.y - (view.camera.worldHeight / 2);
+    const ratio = (screenY - view.rect.y) / view.rect.height;
+    return topWorld + (ratio * view.camera.worldHeight);
+  }
+
+  private clamp01(value: number): number {
+    if (!Number.isFinite(value)) {
+      return 0;
+    }
+    if (value < 0) {
+      return 0;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
+  }
+
+  private clamp01Positive(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) {
+      return 1;
+    }
+    if (value > 1) {
+      return 1;
+    }
+    return value;
   }
 }

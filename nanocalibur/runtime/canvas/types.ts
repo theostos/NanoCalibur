@@ -51,12 +51,46 @@ export interface CameraState {
 
 export interface SceneState {
   gravityEnabled?: boolean;
+  interfaceHtml?: string;
+  interfaceByRole?: Record<string, string>;
+  interfaces?: SceneInterfaceBinding[];
+  views?: ViewState[];
 }
 
 export interface PhasePayload {
   begin?: string[];
   on?: string[];
   end?: string[];
+}
+
+export interface UIButtonEventPayload {
+  name: string;
+  view_id?: string;
+}
+
+export interface UIButtonPhasePayload {
+  begin?: Array<string | UIButtonEventPayload>;
+  on?: Array<string | UIButtonEventPayload>;
+  end?: Array<string | UIButtonEventPayload>;
+}
+
+export interface SceneInterfaceBinding {
+  html: string;
+  role_id?: string | null;
+  view_id?: string | null;
+}
+
+export interface ViewState {
+  id: string;
+  role_id?: string | null;
+  camera_name?: string | null;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  z?: number;
+  interactive?: boolean;
+  symbolic?: boolean;
 }
 
 export interface CollisionPair {
@@ -236,6 +270,16 @@ export interface SymbolicFrame {
   rows: string[];
   legend: SymbolicLegendItem[];
   stacks: SymbolicStackCell[];
+  views?: Record<
+    string,
+    {
+      width: number;
+      height: number;
+      rows: string[];
+      legend: SymbolicLegendItem[];
+      stacks: SymbolicStackCell[];
+    }
+  >;
 }
 
 export const EPSILON = 0.001;

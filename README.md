@@ -10,7 +10,7 @@ NanoCalibur is a tiny deterministic 2D game engine pipeline built around a Pytho
 4. Runtime supports browser canvas and headless HTTP/session mode.
 5. Multiplayer is role-based (`Role`, `HumanRole`, AI/hybrid slots).
 6. Conditions are split into `safe` (authoritative) and `unsafe` (client/tool).
-7. Camera is explicit and role-scoped.
+7. Camera and View are explicit and role-scoped.
 8. Symbolic rendering supports LLM/RL agents.
 9. Local role state (`Local[...]`) is client-owned (not server authoritative).
 10. Build with `nanocalibur-build-game` and run in any web project.
@@ -155,12 +155,14 @@ Role bindings are id-scoped only (no index selectors).
 - `MouseCondition.begin_click("left", id="human_1")`
 - `MouseCondition.on_click("left", id="human_1")`
 - `MouseCondition.end_click("left", id="human_1")`
+- `MouseCondition.begin_click("left", id="human_1", view=View["main"])`
 - `OnOverlap(selector_a, selector_b)`
 - `OnContact(selector_a, selector_b)`
 - `OnLogicalCondition(predicate_fn, selector)`
 - `OnToolCall("tool_name", id="human_1")`
 - `OnToolCall("tool_name", id="ai_1")`
 - `ButtonCondition.begin("button_name")`
+- `ButtonCondition.begin("button_name", id="human_1", view=View["main"])`
 
 `id` is mandatory for `KeyboardCondition`, `MouseCondition`, and `OnToolCall`.
 The `id` value must match a role declared with `game.add_role(Role(...))`.
@@ -281,6 +283,11 @@ scene.set_interface("<div>Score: {{score}}</div><div>Actors: {{__actors_count}}<
 # File-backed and role-scoped
 hud_h1 = Interface("ui/hud_human.html", Role["human_1"])
 scene.set_interface(hud_h1)
+
+# View-scoped HUD (for example minimap panel)
+scene.set_interface(
+    Interface("ui/minimap_overlay.html", Role["human_1"], View["minimap"])
+)
 ```
 
 Use `ButtonCondition.begin("spawn_bonus")` conditions only when your interface includes a matching `data-button` entry.
@@ -292,6 +299,40 @@ Built-in dynamic placeholders available in interface HTML:
 - `{{local.<field>}}` for client-local role values (for example `{{local.keybinds.move_up}}`)
 
 Placeholders can also be used inside HTML attributes. For boolean attributes like `hidden` and `disabled`, rendered values are coerced to boolean so UI buttons can be shown/hidden or enabled/disabled directly from role/global/local state.
+
+### Views and Minimap
+
+Use views to split rendering into independently camera-scoped regions (for example main world + minimap):
+
+```python
+main_cam = Camera("main_cam", Role["human_1"], width=30, height=20)
+mini_cam = Camera("mini_cam", Role["human_1"], width=96, height=72)
+scene.add_camera(main_cam)
+scene.add_camera(mini_cam)
+
+scene.add_view(View("main", Role["human_1"], camera=Camera["main_cam"]))
+scene.add_view(
+    View(
+        "minimap",
+        Role["human_1"],
+        camera=Camera["mini_cam"],
+        x=0.78,
+        y=0.72,
+        width=0.20,
+        height=0.24,
+        z=5,
+    )
+)
+```
+
+Input can be scoped to a specific view:
+
+```python
+@unsafe_condition(MouseCondition.begin_click("left", id="human_1", view=View["minimap"]))
+def minimap_click(main_cam: Camera["main_cam"], mouse: MouseInfo):
+    main_cam.x = mouse.world_x
+    main_cam.y = mouse.world_y
+```
 
 ### Code Blocks (Vibe Coding Workflow)
 

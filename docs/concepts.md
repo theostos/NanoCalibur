@@ -61,6 +61,9 @@ Local role values are not trusted server state.
 
 - Roles are explicit multiplayer slots.
 - Cameras are explicit objects, bound to roles.
+- Views are explicit render regions that select a camera and a normalized screen rectangle.
+- Interfaces can be bound to role + view pairs (for example minimap HUD).
+- Mouse/button conditions can be scoped to a view with `view=View["..."]`.
 - Human roles without cameras trigger compile warnings.
 - AI roles without cameras receive empty symbolic grids.
 

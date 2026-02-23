@@ -3,7 +3,7 @@
 ## Core Objects
 
 - `Game`: globals, resources, sprites, roles, multiplayer config, active `Scene`.
-- `Scene`: actors, rules, map, cameras, interface, turn progression (`next_turn`).
+- `Scene`: actors, rules, map, cameras, views, interface, turn progression (`next_turn`).
 - `Actor` subclasses: gameplay entities.
 - `Role` / `HumanRole` subclasses: player/agent identities and role-owned fields.
 
@@ -22,6 +22,7 @@ Use:
 - `OnLogicalCondition(...)`
 
 `KeyboardCondition`, `MouseCondition`, and `OnToolCall` require a declared role id.
+`MouseCondition` and `ButtonCondition` also accept optional `view=View["..."]` scoping.
 
 Collision note:
 - Actor/tile blocking uses `block_mask`.
@@ -86,6 +87,7 @@ Scene-managed and role-scoped:
 
 ```python
 scene.set_interface(Interface("ui/hud_h1.html", Role["human_1"]))
+scene.set_interface(Interface("ui/minimap.html", Role["human_1"], View["minimap"]))
 ```
 
 Placeholders:
@@ -101,7 +103,7 @@ Nested local access works for dict-like values, for example:
 
 Placeholders also work in HTML attributes. Boolean attributes such as `hidden` and `disabled` are interpreted as booleans from rendered values, enabling direct UI state wiring.
 
-## Camera Model
+## Camera and View Model
 
 Camera is explicit and role-bound:
 
@@ -109,6 +111,24 @@ Camera is explicit and role-bound:
 cam = Camera("cam_h1", Role["human_1"], width=30, height=18)
 cam.follow("hero_1")
 scene.add_camera(cam)
+```
+
+Views map render regions to cameras:
+
+```python
+scene.add_view(View("main", Role["human_1"], camera=Camera["cam_h1"]))
+scene.add_view(
+    View(
+        "minimap",
+        Role["human_1"],
+        camera=Camera["mini_cam"],
+        x=0.78,
+        y=0.72,
+        width=0.20,
+        height=0.24,
+        z=5,
+    )
+)
 ```
 
 Runtime camera controls available from actions/callables:

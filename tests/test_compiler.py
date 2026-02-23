@@ -439,6 +439,8 @@ def test_accept_scene_set_interface_calls():
             scene.set_interface("<div>p1</div>", Role["human_1"])
             scene.set_interface(Interface("<div>p2</div>", Role["human_2"], from_file=False))
             Scene.set_interface(scene, Interface("<div>p3</div>", Role["human_3"], from_file=False))
+            scene.set_interface("<div>mini</div>", View["mini"])
+            scene.set_interface("<div>mini2</div>", Role["human_4"], View["mini"])
         """
     )
 
@@ -448,14 +450,20 @@ def test_accept_scene_set_interface_calls():
     assert isinstance(set_ui.body[2], CallStmt)
     assert isinstance(set_ui.body[3], CallStmt)
     assert isinstance(set_ui.body[4], CallStmt)
+    assert isinstance(set_ui.body[5], CallStmt)
+    assert isinstance(set_ui.body[6], CallStmt)
     assert set_ui.body[0].name == "scene_set_interface"
     assert set_ui.body[1].name == "scene_set_interface"
     assert set_ui.body[2].name == "scene_set_interface"
     assert set_ui.body[3].name == "scene_set_interface"
     assert set_ui.body[4].name == "scene_set_interface"
+    assert set_ui.body[5].name == "scene_set_interface"
+    assert set_ui.body[6].name == "scene_set_interface"
     assert len(set_ui.body[2].args) == 2
     assert len(set_ui.body[3].args) == 2
     assert len(set_ui.body[4].args) == 2
+    assert len(set_ui.body[5].args) == 3
+    assert len(set_ui.body[6].args) == 3
 
 
 def test_reject_scene_set_interface_interface_from_file_in_action():

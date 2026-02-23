@@ -38,10 +38,15 @@ interface RoleWebSocketInputState {
   pendingMouseButtonsDown: Set<string>;
   lastAppliedMouseButtonsDown: Set<string>;
   pendingMousePosition: { x: number; y: number } | null;
+  pendingMouseWorldPosition: { x: number; y: number } | null;
+  pendingMouseViewId: string;
   pendingCommands: SessionCommand[];
 }
 
 export class HeadlessHttpServer {
+  private static readonly MAX_SYMBOLIC_STACKS_PER_PRIMARY_FRAME = 256;
+  private static readonly MAX_WEBSOCKET_SNAPSHOT_BACKLOG_BYTES = 256 * 1024;
+
   private readonly host: HeadlessHost;
   private readonly sessionManager: SessionManager | null;
   private readonly hostFactory: (() => HeadlessHost) | null;
@@ -547,6 +552,16 @@ export class HeadlessHttpServer {
       if (mousePosition) {
         state.pendingMousePosition = mousePosition;
       }
+      const mouseWorldPosition = this.normalizeMousePosition(
+        payload.mouse_world_position ?? payload.mouseWorldPosition,
+      );
+      if (mouseWorldPosition) {
+        state.pendingMouseWorldPosition = mouseWorldPosition;
+      }
+      const mouseViewId = this.normalizeOptionalString(
+        payload.mouse_view_id ?? payload.mouseViewId,
+      );
+      state.pendingMouseViewId = mouseViewId || "";
 
       const inlineCommands = this.normalizeSessionCommands(payload.commands);
       if (inlineCommands.length > 0) {
@@ -604,6 +619,18 @@ export class HeadlessHttpServer {
       event: "snapshot",
       data: payload,
     });
+  }
+
+  private canSendWebSocketSnapshot(subscriber: SessionWebSocketSubscriber): boolean {
+    const socket = subscriber.socket as { writableLength?: unknown; destroyed?: unknown };
+    if (socket && socket.destroyed === true) {
+      return false;
+    }
+    const writableLength =
+      socket && typeof socket.writableLength === "number" && Number.isFinite(socket.writableLength)
+        ? socket.writableLength
+        : 0;
+    return writableLength <= HeadlessHttpServer.MAX_WEBSOCKET_SNAPSHOT_BACKLOG_BYTES;
   }
 
   private sendWebSocketClose(socket: any): void {
@@ -786,6 +813,8 @@ export class HeadlessHttpServer {
         pendingMouseButtonsDown: new Set<string>(),
         lastAppliedMouseButtonsDown: new Set<string>(),
         pendingMousePosition: null,
+        pendingMouseWorldPosition: null,
+        pendingMouseViewId: "",
         pendingCommands: [],
       };
       byRole.set(roleId, state);
@@ -818,6 +847,8 @@ export class HeadlessHttpServer {
     state.pendingMouseButtonsDown = new Set<string>();
     state.lastAppliedMouseButtonsDown = new Set<string>();
     state.pendingMousePosition = null;
+    state.pendingMouseWorldPosition = null;
+    state.pendingMouseViewId = "";
     state.pendingCommands = [];
   }
 
@@ -852,6 +883,14 @@ export class HeadlessHttpServer {
       return null;
     }
     return { x: payload.x, y: payload.y };
+  }
+
+  private normalizeOptionalString(value: unknown): string | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
   private normalizeSequence(value: unknown): number | null {
@@ -938,6 +977,8 @@ export class HeadlessHttpServer {
           mouse: mousePayload,
           uiButtons: uiButtonsPayload,
           mousePosition: state.pendingMousePosition || undefined,
+          mouseWorldPosition: state.pendingMouseWorldPosition || undefined,
+          mouseViewId: state.pendingMouseViewId || undefined,
         };
         try {
           this.sessionManager.enqueueCommand(sessionId, roleId, command);
@@ -1308,6 +1349,14 @@ export class HeadlessHttpServer {
             (item as { mousePosition?: unknown }).mousePosition
               ?? (item as { mouse_position?: unknown }).mouse_position,
           ) || undefined,
+          mouseWorldPosition: this.normalizeMousePosition(
+            (item as { mouseWorldPosition?: unknown }).mouseWorldPosition
+              ?? (item as { mouse_world_position?: unknown }).mouse_world_position,
+          ) || undefined,
+          mouseViewId: this.normalizeOptionalString(
+            (item as { mouseViewId?: unknown }).mouseViewId
+              ?? (item as { mouse_view_id?: unknown }).mouse_view_id,
+          ) || undefined,
         });
         continue;
       }
@@ -1390,9 +1439,17 @@ export class HeadlessHttpServer {
           : {};
       const fallbackHtml =
         typeof scene.interfaceHtml === "string" ? scene.interfaceHtml : "";
+      const rawInterfaces = Array.isArray(scene.interfaces)
+        ? (scene.interfaces as Array<Record<string, any>>)
+        : [];
+      const rawViews = Array.isArray(scene.views)
+        ? (scene.views as Array<Record<string, any>>)
+        : [];
       if (viewer.isAdmin) {
         scene.interfaceByRole = {};
         scene.interfaceHtml = fallbackHtml;
+        scene.interfaces = rawInterfaces;
+        scene.views = rawViews;
         return scene;
       }
       const roleId = viewer.roleId;
@@ -1401,14 +1458,48 @@ export class HeadlessHttpServer {
         typeof roleScoped[roleId] === "string"
           ? (roleScoped[roleId] as string)
           : fallbackHtml;
+      const scopedViews = rawViews.filter((entry) => {
+        const entryRole =
+          entry && typeof entry.role_id === "string" && entry.role_id
+            ? (entry.role_id as string)
+            : null;
+        return entryRole === null || entryRole === roleId;
+      });
+      const scopedViewIds = new Set<string>();
+      for (const entry of scopedViews) {
+        if (entry && typeof entry.id === "string" && entry.id) {
+          scopedViewIds.add(entry.id);
+        }
+      }
+      const scopedInterfaces = rawInterfaces.filter((entry) => {
+        const entryRole =
+          entry && typeof entry.role_id === "string" && entry.role_id
+            ? (entry.role_id as string)
+            : null;
+        if (!(entryRole === null || entryRole === roleId)) {
+          return false;
+        }
+        const viewId =
+          entry && typeof entry.view_id === "string" && entry.view_id
+            ? (entry.view_id as string)
+            : null;
+        if (!viewId) {
+          return true;
+        }
+        return scopedViewIds.has(viewId);
+      });
       scene.interfaceHtml = scopedHtml;
       scene.interfaceByRole =
         roleId &&
         typeof roleScoped[roleId] === "string"
           ? { [roleId]: roleScoped[roleId] }
           : {};
+      scene.interfaces = scopedInterfaces;
+      scene.views = scopedViews;
       return scene;
     })();
+
+    const scopedViewIds = this.collectSceneViewIds(scopedScene);
 
     if (viewer.isAdmin) {
       return {
@@ -1427,13 +1518,193 @@ export class HeadlessHttpServer {
       typeof roles[roleId] === "object"
         ? roles[roleId]
         : null;
+    const scopedActors = this.scopeActorsForViewer(state.actors, scopedViewIds);
     return {
       ...state,
       scene: scopedScene,
+      actors: scopedActors,
       roles: selfRole && roleId ? { [roleId]: selfRole } : {},
       camera: resolveCameraForRole(roleId) || null,
       self: selfRole,
     };
+  }
+
+  private collectSceneViewIds(scene: Record<string, any> | null): Set<string> {
+    const out = new Set<string>();
+    if (!scene || !Array.isArray(scene.views)) {
+      return out;
+    }
+    for (const entry of scene.views as Array<Record<string, any>>) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      if (typeof entry.id !== "string" || !entry.id) {
+        continue;
+      }
+      out.add(entry.id);
+    }
+    return out;
+  }
+
+  private actorVisibleInScopedViews(
+    actor: Record<string, any>,
+    scopedViewIds: Set<string>,
+  ): boolean {
+    if (scopedViewIds.size <= 0) {
+      return true;
+    }
+    const actorViewId =
+      typeof actor.view_id === "string"
+        ? actor.view_id
+        : typeof actor.viewId === "string"
+          ? actor.viewId
+          : "";
+    if (actorViewId) {
+      return scopedViewIds.has(actorViewId);
+    }
+    const actorViewIds =
+      Array.isArray(actor.view_ids)
+        ? actor.view_ids
+        : Array.isArray(actor.viewIds)
+          ? actor.viewIds
+          : null;
+    if (!actorViewIds) {
+      return true;
+    }
+    let sawAny = false;
+    for (const entry of actorViewIds) {
+      if (typeof entry !== "string" || !entry) {
+        continue;
+      }
+      sawAny = true;
+      if (scopedViewIds.has(entry)) {
+        return true;
+      }
+    }
+    return sawAny ? false : true;
+  }
+
+  private scopeActorsForViewer(
+    rawActors: unknown,
+    scopedViewIds: Set<string>,
+  ): Array<Record<string, any>> {
+    if (!Array.isArray(rawActors)) {
+      return [];
+    }
+    const out: Array<Record<string, any>> = [];
+    for (const actor of rawActors) {
+      if (!actor || typeof actor !== "object") {
+        continue;
+      }
+      const actorRecord = actor as Record<string, any>;
+      if (actorRecord.active === false) {
+        continue;
+      }
+      if (!this.actorVisibleInScopedViews(actorRecord, scopedViewIds)) {
+        continue;
+      }
+      out.push(actorRecord);
+    }
+    return out;
+  }
+
+  private compactSymbolicSubframe(
+    rawFrame: Record<string, any>,
+    keepStacks: boolean,
+  ): Record<string, any> {
+    return {
+      width:
+        typeof rawFrame.width === "number" && Number.isFinite(rawFrame.width)
+          ? Math.max(0, Math.floor(rawFrame.width))
+          : 0,
+      height:
+        typeof rawFrame.height === "number" && Number.isFinite(rawFrame.height)
+          ? Math.max(0, Math.floor(rawFrame.height))
+          : 0,
+      rows: Array.isArray(rawFrame.rows) ? rawFrame.rows : [],
+      legend: Array.isArray(rawFrame.legend) ? rawFrame.legend : [],
+      stacks: keepStacks
+        ? this.truncateSymbolicStacks(
+            rawFrame.stacks,
+            HeadlessHttpServer.MAX_SYMBOLIC_STACKS_PER_PRIMARY_FRAME,
+          )
+        : [],
+    };
+  }
+
+  private truncateSymbolicStacks(
+    rawStacks: unknown,
+    maxStacks: number,
+  ): Array<Record<string, any>> {
+    if (!Array.isArray(rawStacks) || maxStacks <= 0) {
+      return [];
+    }
+    const out: Array<Record<string, any>> = [];
+    for (const entry of rawStacks) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      out.push(entry as Record<string, any>);
+      if (out.length >= maxStacks) {
+        break;
+      }
+    }
+    return out;
+  }
+
+  private scopeFrameForViewer(
+    frame: Record<string, any>,
+    scopedState: Record<string, any>,
+    viewer: SessionViewer,
+  ): Record<string, any> {
+    if (viewer.isAdmin || !frame || typeof frame !== "object") {
+      return frame;
+    }
+
+    const rawViews =
+      frame.views && typeof frame.views === "object" && !Array.isArray(frame.views)
+        ? (frame.views as Record<string, any>)
+        : null;
+    if (!rawViews) {
+      return this.compactSymbolicSubframe(frame, true);
+    }
+
+    const scopedScene =
+      scopedState && scopedState.scene && typeof scopedState.scene === "object"
+        ? (scopedState.scene as Record<string, any>)
+        : null;
+    const allowedViewIds = this.collectSceneViewIds(scopedScene);
+    const candidateViewIds = Object.keys(rawViews).filter((viewId) =>
+      allowedViewIds.size > 0 ? allowedViewIds.has(viewId) : true,
+    );
+    if (candidateViewIds.length <= 0) {
+      return this.compactSymbolicSubframe(frame, true);
+    }
+
+    const primaryViewId = candidateViewIds.includes("main")
+      ? "main"
+      : candidateViewIds[0];
+    const scopedViews: Record<string, any> = {};
+    for (const viewId of candidateViewIds) {
+      const viewFrame = rawViews[viewId];
+      if (!viewFrame || typeof viewFrame !== "object") {
+        continue;
+      }
+      scopedViews[viewId] = this.compactSymbolicSubframe(
+        viewFrame as Record<string, any>,
+        viewId === primaryViewId,
+      );
+    }
+    if (Object.keys(scopedViews).length <= 0) {
+      return this.compactSymbolicSubframe(frame, true);
+    }
+
+    const root = this.compactSymbolicSubframe(
+      scopedViews[primaryViewId] as Record<string, any>,
+      true,
+    );
+    root.views = scopedViews;
+    return root;
   }
 
   private resolveAdminToken(
@@ -1532,10 +1803,12 @@ export class HeadlessHttpServer {
         ? Math.max(0, Math.floor(serverTickOverride))
         : this.getSessionServerTick(sessionId);
     const ackSeq = this.getRoleAckSeq(sessionId, viewer.roleId);
+    const scopedState = this.scopeStateForViewer(state, viewer);
+    const frame = this.sessionManager.getSessionFrameForRole(sessionId, viewer.roleId);
     return {
       session_id: sessionId,
-      frame: this.sessionManager.getSessionFrameForRole(sessionId, viewer.roleId),
-      state: this.scopeStateForViewer(state, viewer),
+      frame: this.scopeFrameForViewer(frame as Record<string, any>, scopedState, viewer),
+      state: scopedState,
       server_tick: serverTick,
       ack_seq: ackSeq,
     };
@@ -1763,6 +2036,9 @@ export class HeadlessHttpServer {
 
     if (webSocketSubscribers) {
       for (const subscriber of Array.from(webSocketSubscribers)) {
+        if (!this.canSendWebSocketSnapshot(subscriber)) {
+          continue;
+        }
         try {
           this.sendSnapshotToWebSocketSubscriber(sessionId, subscriber, state, serverTick);
         } catch (_error) {

@@ -237,7 +237,7 @@ def test_ts_emits_scene_set_interface_call():
         """
     )
 
-    assert "setInterfaceHtml?: (html: string, role?: any) => void;" in ts
+    assert "setInterfaceHtml?: (html: string, role?: any, view?: any) => void;" in ts
     assert "if (ctx.scene && ctx.scene.setInterfaceHtml) {" in ts
     assert "ctx.scene.setInterfaceHtml(String(\"<button data-button='win'>Win</button>\"));" in ts
 
@@ -251,6 +251,17 @@ def test_ts_emits_role_scoped_scene_set_interface_call():
     )
 
     assert 'ctx.scene.setInterfaceHtml(String("<div>P1</div>"), "human_1");' in ts
+
+
+def test_ts_emits_view_scoped_scene_set_interface_call():
+    ts = compile_to_ts(
+        """
+        def open_panel(scene: Scene):
+            scene.set_interface("<div>Mini</div>", View["mini"])
+        """
+    )
+
+    assert 'ctx.scene.setInterfaceHtml(String("<div>Mini</div>"), null, "mini");' in ts
 
 
 def test_ts_emits_negative_index_lookup_for_typed_actor_binding():
@@ -344,6 +355,34 @@ def test_ts_emits_predicate_with_context_bindings():
     assert "let wait_tick = ctx.tick;" in ts
     assert "__nanocalibur_logical_target__" in ts
     assert "(scene?.elapsed ?? ctx.elapsed ?? ctx.tick)" in ts
+
+
+def test_ts_emits_logical_action_binding_using_logical_target_uid():
+    ts = compile_project_to_ts(
+        """
+        class Player(Actor):
+            life: int
+
+        def mark_dead(player: Player, flag: Global["is_dead"]):
+            if player.life <= 0:
+                flag = True
+
+        def should_mark(player: Player) -> bool:
+            return player.life <= 0
+
+        game = Game()
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        game.add_global("is_dead", False)
+        scene.add_actor(Player(uid="hero", life=1))
+        scene.add_rule(OnLogicalCondition(should_mark, Player), mark_dead)
+        """
+    )
+
+    assert (
+        'let player = (ctx.getActorByUid ? ctx.getActorByUid("__nanocalibur_logical_target__")'
+        in ts
+    )
 
 
 def test_ts_emits_tick_elapsed_expression():

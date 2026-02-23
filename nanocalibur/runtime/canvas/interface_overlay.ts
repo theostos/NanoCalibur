@@ -16,26 +16,42 @@ interface AttributeBinding {
   template: string;
 }
 
+export interface InterfaceOverlayRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface InterfaceButtonEvent {
+  name: string;
+  view_id?: string;
+}
+
 export class InterfaceOverlay {
   private readonly root: HTMLDivElement;
   private readonly panel: HTMLDivElement;
   private readonly textBindings: TextBinding[] = [];
   private readonly attributeBindings: AttributeBinding[] = [];
-  private readonly buttonBeginEvents: string[] = [];
-  private readonly buttonEndEvents: string[] = [];
+  private readonly buttonBeginEvents: InterfaceButtonEvent[] = [];
+  private readonly buttonEndEvents: InterfaceButtonEvent[] = [];
   private readonly buttonsDown = new Set<string>();
   private readonly pointerButtonById = new Map<number, string>();
+  private readonly viewId: string | null;
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
     const buttonName = this.resolveButtonName(event.target);
     if (!buttonName) {
       return;
     }
-    this.pointerButtonById.set(event.pointerId, buttonName);
-    if (!this.buttonsDown.has(buttonName)) {
-      this.buttonsDown.add(buttonName);
-      this.buttonBeginEvents.push(buttonName);
-    }
+      this.pointerButtonById.set(event.pointerId, buttonName);
+      if (!this.buttonsDown.has(buttonName)) {
+        this.buttonsDown.add(buttonName);
+        this.buttonBeginEvents.push({
+          name: buttonName,
+          view_id: this.viewId || undefined,
+        });
+      }
     event.preventDefault();
   };
 
@@ -50,7 +66,10 @@ export class InterfaceOverlay {
     }
     if (this.buttonsDown.has(buttonName)) {
       this.buttonsDown.delete(buttonName);
-      this.buttonEndEvents.push(buttonName);
+      this.buttonEndEvents.push({
+        name: buttonName,
+        view_id: this.viewId || undefined,
+      });
     }
     event.preventDefault();
   };
@@ -65,31 +84,39 @@ export class InterfaceOverlay {
       return;
     }
     if (!this.buttonsDown.has(buttonName)) {
-      this.buttonBeginEvents.push(buttonName);
-      this.buttonEndEvents.push(buttonName);
+      this.buttonBeginEvents.push({
+        name: buttonName,
+        view_id: this.viewId || undefined,
+      });
+      this.buttonEndEvents.push({
+        name: buttonName,
+        view_id: this.viewId || undefined,
+      });
     }
     event.preventDefault();
   };
 
-  constructor(canvas: HTMLCanvasElement, html: string) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    html: string,
+    viewId: string | null = null,
+    rect: InterfaceOverlayRect | null = null,
+  ) {
     const parent = this.resolveHostParent(canvas);
     this.root = document.createElement("div");
     this.panel = document.createElement("div");
+    this.viewId = viewId;
 
     this.root.style.position = "absolute";
-    this.root.style.left = "0";
-    this.root.style.top = "0";
-    this.root.style.width = "100%";
-    this.root.style.height = "100%";
     this.root.style.zIndex = "40";
     this.root.style.pointerEvents = "none";
 
     this.panel.style.position = "absolute";
-    this.panel.style.left = "0";
-    this.panel.style.top = "0";
     this.panel.style.width = "100%";
     this.panel.style.height = "100%";
     this.panel.style.pointerEvents = "none";
+
+    this.setRect(rect);
 
     this.root.appendChild(this.panel);
     parent.appendChild(this.root);
@@ -99,6 +126,24 @@ export class InterfaceOverlay {
     window.addEventListener("pointerup", this.handlePointerUp);
     window.addEventListener("pointercancel", this.handlePointerCancel);
     this.panel.addEventListener("click", this.handleClick);
+  }
+
+  setRect(rect: InterfaceOverlayRect | null): void {
+    if (!rect) {
+      this.root.style.left = "0";
+      this.root.style.top = "0";
+      this.root.style.width = "100%";
+      this.root.style.height = "100%";
+      this.panel.style.left = "0";
+      this.panel.style.top = "0";
+      return;
+    }
+    this.root.style.left = `${rect.x}px`;
+    this.root.style.top = `${rect.y}px`;
+    this.root.style.width = `${rect.width}px`;
+    this.root.style.height = `${rect.height}px`;
+    this.panel.style.left = "0";
+    this.panel.style.top = "0";
   }
 
   setHtml(html: string): void {
@@ -139,10 +184,17 @@ export class InterfaceOverlay {
     }
   }
 
-  consumeButtonPhases(): { begin: string[]; on: string[]; end: string[] } {
-    const begin = Array.from(new Set(this.buttonBeginEvents));
-    const on = Array.from(this.buttonsDown.values());
-    const end = Array.from(new Set(this.buttonEndEvents));
+  consumeButtonPhases(): {
+    begin: InterfaceButtonEvent[];
+    on: InterfaceButtonEvent[];
+    end: InterfaceButtonEvent[];
+  } {
+    const begin = this.uniqueButtonEvents(this.buttonBeginEvents);
+    const on = Array.from(this.buttonsDown.values()).map((name) => ({
+      name,
+      view_id: this.viewId || undefined,
+    }));
+    const end = this.uniqueButtonEvents(this.buttonEndEvents);
     this.buttonBeginEvents.length = 0;
     this.buttonEndEvents.length = 0;
     return { begin, on, end };
@@ -228,6 +280,20 @@ export class InterfaceOverlay {
         });
       }
     }
+  }
+
+  private uniqueButtonEvents(events: InterfaceButtonEvent[]): InterfaceButtonEvent[] {
+    const out: InterfaceButtonEvent[] = [];
+    const seen = new Set<string>();
+    for (const event of events) {
+      const key = `${event.name}@@${event.view_id || ""}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(event);
+    }
+    return out;
   }
 
   private renderTemplate(template: string, globals: Record<string, any>): string {

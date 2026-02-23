@@ -25,6 +25,14 @@ interface TileSymbolInfo {
   description: string;
 }
 
+type SymbolicSubFrame = {
+  width: number;
+  height: number;
+  rows: string[];
+  legend: SymbolicLegendItem[];
+  stacks: SymbolicStackCell[];
+};
+
 export interface SymbolicViewer {
   roleId?: string | null;
   roleKind?: string | null;
@@ -44,8 +52,62 @@ export class SymbolicRenderer {
   ): SymbolicFrame {
     const actors = (state.actors || []) as ActorState[];
     const tileSize = mapSpec ? Math.max(1, asNumber(mapSpec.tile_size, 32)) : 32;
-    const cameraState = this.resolveViewerCamera(state, viewer.roleId || null);
     const roleKind = typeof viewer.roleKind === "string" ? viewer.roleKind.toLowerCase() : null;
+    const scene =
+      state && state.scene && typeof state.scene === "object"
+        ? (state.scene as Record<string, any>)
+        : null;
+    const rawViews = Array.isArray(scene?.views)
+      ? (scene?.views as Array<Record<string, any>>)
+      : [];
+
+    const scopedViews = rawViews.filter((entry) => {
+      if (!entry || typeof entry.id !== "string" || !entry.id) {
+        return false;
+      }
+      if (entry.symbolic === false) {
+        return false;
+      }
+      const roleId =
+        typeof entry.role_id === "string" && entry.role_id ? entry.role_id : null;
+      if (!viewer.roleId) {
+        return roleId === null;
+      }
+      return roleId === null || roleId === viewer.roleId;
+    });
+
+    const viewFrames: Record<string, SymbolicSubFrame> = {};
+    if (scopedViews.length > 0) {
+      for (const view of scopedViews) {
+        const cameraState = this.resolveCameraForView(
+          state,
+          view,
+          viewer.roleId || null,
+        );
+        if (!cameraState) {
+          continue;
+        }
+        const subframe = this.renderForCameraState(
+          state,
+          actors,
+          mapSpec,
+          tileSize,
+          cameraState,
+          view.id as string,
+        );
+        viewFrames[view.id as string] = subframe;
+      }
+      const viewIds = Object.keys(viewFrames);
+      if (viewIds.length > 0) {
+        const primaryId = viewFrames.main ? "main" : viewIds[0];
+        return {
+          ...viewFrames[primaryId],
+          views: viewFrames,
+        };
+      }
+    }
+
+    const cameraState = this.resolveViewerCamera(state, viewer.roleId || null);
     if (roleKind === "ai" && viewer.roleId && !cameraState) {
       return {
         width: 0,
@@ -55,6 +117,25 @@ export class SymbolicRenderer {
         stacks: [],
       };
     }
+    const single = this.renderForCameraState(
+      state,
+      actors,
+      mapSpec,
+      tileSize,
+      cameraState,
+      null,
+    );
+    return single;
+  }
+
+  private renderForCameraState(
+    state: InterpreterState,
+    actors: ActorState[],
+    mapSpec: MapSpec | null,
+    tileSize: number,
+    cameraState: Record<string, any> | null,
+    viewId: string | null,
+  ): SymbolicSubFrame {
     const viewport = this.resolveViewport(state, actors, mapSpec, tileSize, cameraState);
     const { width, height, originX, originY } = viewport;
 
@@ -71,7 +152,7 @@ export class SymbolicRenderer {
     }
 
     const sortedActors = [...actors]
-      .filter((actor) => actor.active !== false)
+      .filter((actor) => actor.active !== false && this.actorVisibleInView(actor, viewId))
       .sort((a, b) => asNumber(a.z, 0) - asNumber(b.z, 0));
     const stackByCell = new Map<string, SymbolicStackActorItem[]>();
 
@@ -92,6 +173,9 @@ export class SymbolicRenderer {
           if (!legendBySymbol.has(symbol)) {
             legendBySymbol.set(symbol, description);
           }
+          if (!this.actorIncludedInStacks(actor)) {
+            continue;
+          }
           const cellKey = `${tileX},${tileY}`;
           const actorStack = stackByCell.get(cellKey) || [];
           actorStack.push({
@@ -110,7 +194,6 @@ export class SymbolicRenderer {
       ([symbol, description]) => ({ symbol, description }),
     );
     const stacks = this.buildStacks(stackByCell, grid);
-
     return {
       width,
       height,
@@ -204,6 +287,47 @@ export class SymbolicRenderer {
     }
     stacks.sort((a, b) => (a.y - b.y) || (a.x - b.x));
     return stacks;
+  }
+
+  private actorVisibleInView(actor: ActorState, viewId: string | null): boolean {
+    if (!viewId) {
+      return true;
+    }
+    const actorRecord = actor as Record<string, unknown>;
+    const actorViewId = typeof actorRecord.view_id === "string"
+      ? actorRecord.view_id
+      : "";
+    if (actorViewId) {
+      return actorViewId === viewId;
+    }
+    const actorViewIds = actorRecord.view_ids;
+    if (Array.isArray(actorViewIds)) {
+      let sawAny = false;
+      for (const entry of actorViewIds) {
+        if (typeof entry !== "string" || !entry) {
+          continue;
+        }
+        sawAny = true;
+        if (entry === viewId) {
+          return true;
+        }
+      }
+      if (sawAny) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private actorIncludedInStacks(actor: ActorState): boolean {
+    const actorRecord = actor as Record<string, unknown>;
+    if (actorRecord.symbolic_stack === false) {
+      return false;
+    }
+    if (actorRecord.symbolicStack === false) {
+      return false;
+    }
+    return true;
   }
 
   private resolveViewport(
@@ -421,6 +545,31 @@ export class SymbolicRenderer {
       }
     }
     return null;
+  }
+
+  private resolveCameraForView(
+    state: InterpreterState,
+    view: Record<string, any>,
+    viewerRoleId: string | null,
+  ): Record<string, any> | null {
+    const byName =
+      state && state.cameras && typeof state.cameras === "object"
+        ? (state.cameras as Record<string, any>)
+        : null;
+    if (
+      typeof view.camera_name === "string"
+      && view.camera_name
+      && byName
+      && byName[view.camera_name]
+      && typeof byName[view.camera_name] === "object"
+    ) {
+      return byName[view.camera_name] as Record<string, any>;
+    }
+    const roleHint =
+      typeof view.role_id === "string" && view.role_id
+        ? view.role_id
+        : viewerRoleId;
+    return this.resolveViewerCamera(state, roleHint || null);
   }
 
   private drawTiles(

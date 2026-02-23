@@ -69,7 +69,7 @@ DSL authoring symbols (`nanocalibur.dsl_markers`):
 - Core: `Game`, `Scene`, `Actor`, `Role`, `HumanRole`, `RoleKind`
 - State bindings: `Global`, `GlobalVariable`, `Local`, `local`
 - Assets/map: `Resource`, `Sprite`, `TileMap`, `Tile`, `Color`
-- View/UI: `Camera`, `Interface`
+- View/UI: `Camera`, `View`, `Interface`
 - Multiplayer: `Multiplayer`
 - Conditions: `KeyboardCondition`, `MouseCondition`, `ButtonCondition`, `OnOverlap`, `OnContact`, `OnLogicalCondition`, `OnToolCall`
 - Rule decorators: `safe_condition`, `unsafe_condition`
@@ -241,6 +241,8 @@ Rules are `condition -> action`.
 - `MouseCondition.end_click(...)`
 - `OnToolCall(...)`
 - `ButtonCondition.begin(...)` / `ButtonCondition.on(...)` / `ButtonCondition.end(...)`
+- `MouseCondition.*(..., view=View["..."])` for view-scoped pointer input
+- `ButtonCondition.*(..., view=View["..."])` for view-scoped UI button input
 
 Use `@unsafe_condition(...)`.
 
@@ -380,7 +382,7 @@ scene.set_map(
 )
 ```
 
-## 13) Cameras (Role-Scoped by Design)
+## 13) Cameras and Views (Role-Scoped by Design)
 
 Camera is explicit and bound to a role.
 
@@ -403,6 +405,23 @@ Notes:
 
 - Human role without camera triggers compile warning.
 - AI role requesting frame without camera receives empty grid.
+- Views map screen regions to cameras (for example main viewport + minimap).
+
+```python
+scene.add_view(View("main", Role["human_1"], camera=Camera["camera_h1"]))
+scene.add_view(
+    View(
+        "minimap",
+        Role["human_1"],
+        camera=Camera["camera_h1_minimap"],
+        x=0.78,
+        y=0.72,
+        width=0.20,
+        height=0.24,
+        z=5,
+    )
+)
+```
 
 ## 14) Interfaces (Role-Scoped + Dynamic)
 
@@ -412,6 +431,7 @@ Interface is scene-managed and can be changed at runtime.
 
 ```python
 scene.set_interface(Interface("ui/hud_h1.html", Role["human_1"]))
+scene.set_interface(Interface("ui/minimap_overlay.html", Role["human_1"], View["minimap"]))
 ```
 
 Inline HTML:
@@ -440,6 +460,7 @@ You can call `scene.set_interface(...)` inside an action to swap UI state during
 ### 14.3 UI button events
 
 `ButtonCondition.begin("name")` fires when UI emits matching button event (`data-button="name"`).
+For view-specific panels, scope conditions with `view=View["..."]`.
 
 ### 14.4 Attribute placeholders
 

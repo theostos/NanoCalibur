@@ -186,16 +186,23 @@ class Scene:
         """Attach a camera instance to this scene."""
         return None
 
+    def add_view(self, _view: "View") -> None:
+        """Attach a view instance to this scene."""
+        return None
+
     def set_interface(
         self,
         _html_or_interface: "str | Interface",
-        _role: "str | Role | type[Role] | None" = None,
+        _selector: "str | Role | type[Role] | View | type[View] | None" = None,
+        _view: "str | View | type[View] | None" = None,
     ) -> None:
-        """Configure an HTML overlay for one role.
+        """Configure an HTML overlay.
 
         Accepted forms:
         - ``scene.set_interface("<div>...</div>")``
         - ``scene.set_interface("<div>...</div>", Role["human_1"])``
+        - ``scene.set_interface("<div>...</div>", View["minimap"])``
+        - ``scene.set_interface("<div>...</div>", Role["human_1"], View["minimap"])``
         - ``scene.set_interface(Interface("ui/hud.html", Role["human_1"]))``
         """
         return None
@@ -348,8 +355,11 @@ class Interface:
         self,
         _source: str,
         _role: "str | type[Role] | None" = None,
+        _view: "str | type[View] | None" = None,
         *,
         from_file: bool = True,
+        role: "str | type[Role] | None" = None,
+        view: "str | type[View] | None" = None,
     ) -> None:
         return None
 
@@ -610,11 +620,13 @@ class MouseCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
+        view: "str | type[View] | None" = None,
     ) -> None:
         """Trigger when a mouse button is pressed this frame.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
-        for compatibility with existing code.
+        for compatibility with existing code. ``view=View["..."]`` scopes to
+        one scene view.
         """
         return None
 
@@ -624,11 +636,13 @@ class MouseCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
+        view: "str | type[View] | None" = None,
     ) -> None:
         """Trigger while a mouse button is held.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
-        for compatibility with existing code.
+        for compatibility with existing code. ``view=View["..."]`` scopes to
+        one scene view.
         """
         return None
 
@@ -638,11 +652,13 @@ class MouseCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
+        view: "str | type[View] | None" = None,
     ) -> None:
         """Trigger when a mouse button is released this frame.
 
         Prefer ``Role["..."]`` as the role selector. ``id="..."`` is accepted
-        for compatibility with existing code.
+        for compatibility with existing code. ``view=View["..."]`` scopes to
+        one scene view.
         """
         return None
 
@@ -655,6 +671,9 @@ class MouseInfo:
     - ``current_tick``: tick when the condition was evaluated
     - ``pressed_x`` / ``pressed_y``: mouse position at press start
     - ``x`` / ``y``: mouse position for current tick
+    - ``pressed_world_x`` / ``pressed_world_y``: world position at press start
+    - ``world_x`` / ``world_y``: world position for current tick
+    - ``view_id``: id of the view that emitted this mouse event
     """
 
     pressed_tick: int
@@ -663,6 +682,11 @@ class MouseInfo:
     pressed_y: float
     x: float
     y: float
+    pressed_world_x: float
+    pressed_world_y: float
+    world_x: float
+    world_y: float
+    view_id: str
 
 
 class ButtonCondition:
@@ -674,6 +698,7 @@ class ButtonCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
+        view: "str | type[View] | None" = None,
     ) -> None:
         """Trigger when a UI button is pressed this frame."""
         return None
@@ -684,6 +709,7 @@ class ButtonCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
+        view: "str | type[View] | None" = None,
     ) -> None:
         """Trigger while a UI button is held."""
         return None
@@ -694,6 +720,7 @@ class ButtonCondition:
         _role: "str | type[Role] | None" = None,
         *,
         id: str | None = None,
+        view: "str | type[View] | None" = None,
     ) -> None:
         """Trigger when a UI button is released this frame."""
         return None
@@ -705,10 +732,12 @@ class ButtonInfo:
     Available fields:
     - ``pressed_tick``: tick when the matching button entered ``begin``
     - ``current_tick``: tick when the condition was evaluated
+    - ``view_id``: id of the view that emitted this button event
     """
 
     pressed_tick: int
     current_tick: int
+    view_id: str
 
 
 class Camera:
@@ -749,6 +778,46 @@ class Camera:
 
     def translate(self, _dx: float, _dy: float) -> None:
         """Translate camera position (or follow offset if attached)."""
+        return None
+
+
+class View:
+    """View declaration used by :meth:`Scene.add_view`.
+
+    ``x``, ``y``, ``width``, and ``height`` are normalized screen-space values
+    in the ``[0.0, 1.0]`` range.
+    """
+
+    id: str
+    role_id: str | None
+    camera_name: str | None
+    x: float
+    y: float
+    width: float
+    height: float
+    z: int
+    interactive: bool
+    symbolic: bool
+
+    def __class_getitem__(cls, item: Any):
+        """Allow ``View["view_id"]`` selector syntax."""
+        return cls
+
+    def __init__(
+        self,
+        _id: str,
+        _role: "str | type[Role] | None" = None,
+        *,
+        camera: "str | type[Camera] | None" = None,
+        x: float = 0.0,
+        y: float = 0.0,
+        width: float = 1.0,
+        height: float = 1.0,
+        z: int = 0,
+        interactive: bool = True,
+        symbolic: bool = True,
+    ) -> None:
+        """Declare a named role-scoped viewport."""
         return None
 
 
@@ -924,6 +993,7 @@ __all__ = [
     "Tick",
     "Tile",
     "TileMap",
+    "View",
     "callable",
     "local",
     "safe_condition",

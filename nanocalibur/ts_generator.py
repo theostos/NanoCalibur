@@ -56,7 +56,7 @@ export interface RuntimeSceneContext {
   elapsed?: number;
   tickRate?: number;
   setGravityEnabled?: (enabled: boolean) => void;
-  setInterfaceHtml?: (html: string, role?: any) => void;
+  setInterfaceHtml?: (html: string, role?: any, view?: any) => void;
   spawnActor?: (actorType: string, uid: string, fields?: Record<string, any>) => any;
   followCamera?: (camera: any, targetUid: string) => void;
   detachCamera?: (camera: any) => void;
@@ -684,18 +684,23 @@ function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
                     pad + "}",
                 ]
             if stmt.name == "scene_set_interface":
-                if len(stmt.args) not in {1, 2}:
+                if len(stmt.args) < 1 or len(stmt.args) > 3:
                     raise DSLValidationError(
-                        "scene_set_interface call must have 1 or 2 arguments."
+                        "scene_set_interface call must have 1 to 3 arguments."
                     )
                 html_expr = self._emit_expr(stmt.args[0])
-                role_expr = self._emit_expr(stmt.args[1]) if len(stmt.args) == 2 else None
+                role_expr = self._emit_expr(stmt.args[1]) if len(stmt.args) >= 2 else None
+                view_expr = self._emit_expr(stmt.args[2]) if len(stmt.args) == 3 else None
                 return [
                     pad + "if (ctx.scene && ctx.scene.setInterfaceHtml) {",
                     (
-                        pad + f"  ctx.scene.setInterfaceHtml(String({html_expr}), {role_expr});"
-                        if role_expr is not None
-                        else pad + f"  ctx.scene.setInterfaceHtml(String({html_expr}));"
+                        pad + f"  ctx.scene.setInterfaceHtml(String({html_expr}), {role_expr}, {view_expr});"
+                        if view_expr is not None
+                        else (
+                            pad + f"  ctx.scene.setInterfaceHtml(String({html_expr}), {role_expr});"
+                            if role_expr is not None
+                            else pad + f"  ctx.scene.setInterfaceHtml(String({html_expr}));"
+                        )
                     ),
                     pad + "}",
                 ]
