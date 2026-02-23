@@ -15,6 +15,9 @@ from nanocalibur.dsl_markers import (
 )
 
 from .data import (
+    HEALTH_BAR_POOL_SIZE,
+    HealthBarBackground,
+    HealthBarFill,
     PLAYER_1_ROLE_ID,
     PLAYER_2_ROLE_ID,
     DragSelectionRect,
@@ -44,6 +47,9 @@ DIAGONAL_SPEED_FACTOR = 0.70710678
 RESOURCE_INTERACT_RANGE = 42
 RESOURCE_HARVEST_MINERAL = 8
 RESOURCE_HARVEST_GAS = 6
+RESOURCE_SPOT_MARGIN_PX = 2
+RESOURCE_SPOT_COUNT = 4
+RESOURCE_SPOT_REACHED_DISTANCE_SQ = 9
 PATH_BLOCK_SHRINK_STATIC_PX = 8
 PATH_BLOCK_SHRINK_RESOURCE_PX = 8
 PROGRESS_BAR_SEGMENTS = 20
@@ -84,6 +90,7 @@ UPGRADE_COST_ATTACK_GAS = 100
 UPGRADE_COST_ARMOR_MINERALS = 100
 UPGRADE_COST_ARMOR_GAS = 100
 MAX_UPGRADE_LEVEL = 3
+CONSTRUCTION_CANCEL_REFUND_PERCENT = 75
 
 
 @callable
@@ -484,6 +491,44 @@ def clamp_world_y_for_size(world_y: float, object_h: float) -> float:
 
 
 @callable
+def snap_world_x_to_tiles_for_size(world_x: float, object_w: float) -> float:
+    half_w = object_w / 2
+    left = world_x - half_w
+    min_left = 0
+    max_left = WORLD_WIDTH_PX - object_w
+    if left < min_left:
+        left = min_left
+    if left > max_left:
+        left = max_left
+    snap_probe = left + (TILE_SIZE / 2)
+    snapped_left = world_to_tile_x(snap_probe) * TILE_SIZE
+    if snapped_left < min_left:
+        snapped_left = min_left
+    if snapped_left > max_left:
+        snapped_left = max_left
+    return snapped_left + half_w
+
+
+@callable
+def snap_world_y_to_tiles_for_size(world_y: float, object_h: float) -> float:
+    half_h = object_h / 2
+    top = world_y - half_h
+    min_top = 0
+    max_top = WORLD_HEIGHT_PX - object_h
+    if top < min_top:
+        top = min_top
+    if top > max_top:
+        top = max_top
+    snap_probe = top + (TILE_SIZE / 2)
+    snapped_top = world_to_tile_y(snap_probe) * TILE_SIZE
+    if snapped_top < min_top:
+        snapped_top = min_top
+    if snapped_top > max_top:
+        snapped_top = max_top
+    return snapped_top + half_h
+
+
+@callable
 def clear_object_task(obj: RTSObject):
     obj.task_active = False
     obj.task_kind = ""
@@ -598,13 +643,13 @@ def object_kind_w(object_kind: str) -> int:
     if object_kind == "hq":
         return 64
     if object_kind == "supply_depot":
-        return 48
+        return 32
     if object_kind == "barracks":
-        return 56
+        return 64
     if object_kind == "academy":
-        return 54
+        return 64
     if object_kind == "starport":
-        return 60
+        return 64
     return 48
 
 
@@ -756,6 +801,18 @@ def can_afford(role: RTSRole, mineral_cost: int, gas_cost: int) -> bool:
 
 
 @callable
+def compute_refund_amount(cost: int) -> int:
+    if cost <= 0:
+        return 0
+    scaled = cost * CONSTRUCTION_CANCEL_REFUND_PERCENT
+    refund = 0
+    while scaled >= 100:
+        scaled = scaled - 100
+        refund = refund + 1
+    return refund
+
+
+@callable
 def start_hq_worker_training(hq: RTSObject):
     start_object_task(hq, "train_worker", "Training Worker", WORKER_TRAIN_TIME_TICKS)
 
@@ -849,6 +906,9 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             gather_phase="",
             gather_resource_uid="",
             gather_hq_uid="",
+            gather_spot_index=-1,
+            gather_spot_x=0,
+            gather_spot_y=0,
             carrying_kind="",
             carrying_amount=0,
             task_active=False,
@@ -908,6 +968,9 @@ def spawn_construction_site(
             gather_phase="",
             gather_resource_uid="",
             gather_hq_uid="",
+            gather_spot_index=-1,
+            gather_spot_x=0,
+            gather_spot_y=0,
             carrying_kind="",
             carrying_amount=0,
             task_active=True,
@@ -998,6 +1061,9 @@ def clear_worker_gather_loop(worker: RTSObject):
     worker.gather_phase = ""
     worker.gather_resource_uid = ""
     worker.gather_hq_uid = ""
+    worker.gather_spot_index = -1
+    worker.gather_spot_x = 0
+    worker.gather_spot_y = 0
     worker.carrying_kind = ""
     worker.carrying_amount = 0
     if is_worker_gather_task(worker.task_kind):
@@ -1189,6 +1255,314 @@ def assign_worker_to_construction_site(
 
 
 @callable
+def reset_worker_gather_spot(worker: RTSObject):
+    worker.gather_spot_index = -1
+    worker.gather_spot_x = 0
+    worker.gather_spot_y = 0
+
+
+@callable
+def resource_spot_target_x(
+    resource_x: float,
+    resource_w: float,
+    worker_w: float,
+    spot_index: int,
+) -> float:
+    resource_half = resource_w / 2
+    worker_half = worker_w / 2
+    if spot_index == 0:
+        return clamp_world_x_for_size(
+            resource_x + resource_half + worker_half + RESOURCE_SPOT_MARGIN_PX,
+            worker_w,
+        )
+    if spot_index == 1:
+        return clamp_world_x_for_size(
+            resource_x - resource_half - worker_half - RESOURCE_SPOT_MARGIN_PX,
+            worker_w,
+        )
+    return clamp_world_x_for_size(resource_x, worker_w)
+
+
+@callable
+def resource_spot_target_y(
+    resource_y: float,
+    resource_h: float,
+    worker_h: float,
+    spot_index: int,
+) -> float:
+    resource_half = resource_h / 2
+    worker_half = worker_h / 2
+    if spot_index == 2:
+        return clamp_world_y_for_size(
+            resource_y + resource_half + worker_half + RESOURCE_SPOT_MARGIN_PX,
+            worker_h,
+        )
+    if spot_index == 3:
+        return clamp_world_y_for_size(
+            resource_y - resource_half - worker_half - RESOURCE_SPOT_MARGIN_PX,
+            worker_h,
+        )
+    return clamp_world_y_for_size(resource_y, worker_h)
+
+
+@callable
+def resource_spot_tile_x(
+    resource_x: float,
+    resource_w: float,
+    worker_w: float,
+    spot_index: int,
+) -> int:
+    return world_to_tile_x(resource_spot_target_x(resource_x, resource_w, worker_w, spot_index))
+
+
+@callable
+def resource_spot_tile_y(
+    resource_y: float,
+    resource_h: float,
+    worker_h: float,
+    spot_index: int,
+) -> int:
+    return world_to_tile_y(resource_spot_target_y(resource_y, resource_h, worker_h, spot_index))
+
+
+@callable
+def resource_spot_reserved_by_other_worker(
+    worker: RTSObject,
+    resource_uid: str,
+    spot_index: int,
+    objects: List[RTSObject],
+) -> bool:
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid == worker.uid:
+            continue
+        if obj.object_kind != "worker":
+            continue
+        if obj.gather_active == False:
+            continue
+        if obj.gather_resource_uid != resource_uid:
+            continue
+        if obj.gather_phase == "to_hq":
+            continue
+        if obj.gather_spot_index != spot_index:
+            continue
+        return True
+    return False
+
+
+@callable
+def resource_spot_hits_non_moving_object(
+    worker: RTSObject,
+    spot_x: float,
+    spot_y: float,
+    objects: List[RTSObject],
+) -> bool:
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid == worker.uid:
+            continue
+        if obj.can_move:
+            continue
+        if boxes_overlap(spot_x, spot_y, worker.w, worker.h, obj.x, obj.y, obj.w, obj.h):
+            return True
+    return False
+
+
+@callable
+def resource_spot_hits_other_resource(
+    target_resource_uid: str,
+    spot_x: float,
+    spot_y: float,
+    worker_w: float,
+    worker_h: float,
+    resources: List[ResourceNode],
+) -> bool:
+    for resource in resources:
+        if resource.active == False:
+            continue
+        if resource.uid == target_resource_uid:
+            continue
+        if boxes_overlap(
+            spot_x,
+            spot_y,
+            worker_w,
+            worker_h,
+            resource.x,
+            resource.y,
+            resource.w,
+            resource.h,
+        ):
+            return True
+    return False
+
+
+@callable
+def is_resource_spot_available(
+    worker: RTSObject,
+    resource_uid: str,
+    resource_x: float,
+    resource_y: float,
+    resource_w: float,
+    resource_h: float,
+    spot_index: int,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+) -> bool:
+    if spot_index < 0 or spot_index >= RESOURCE_SPOT_COUNT:
+        return False
+
+    spot_tile_x = resource_spot_tile_x(resource_x, resource_w, worker.w, spot_index)
+    spot_tile_y = resource_spot_tile_y(resource_y, resource_h, worker.h, spot_index)
+    if spot_tile_x < 0 or spot_tile_x >= MAP_WIDTH_TILES:
+        return False
+    if spot_tile_y < 0 or spot_tile_y >= MAP_HEIGHT_TILES:
+        return False
+
+    spot_x = resource_spot_target_x(resource_x, resource_w, worker.w, spot_index)
+    spot_y = resource_spot_target_y(resource_y, resource_h, worker.h, spot_index)
+
+    if placement_hits_blocked_tiles(spot_x, spot_y, worker.w, worker.h):
+        return False
+    if boxes_overlap(spot_x, spot_y, worker.w, worker.h, resource_x, resource_y, resource_w, resource_h):
+        return False
+    if resource_spot_hits_non_moving_object(worker, spot_x, spot_y, objects):
+        return False
+    if resource_spot_hits_other_resource(resource_uid, spot_x, spot_y, worker.w, worker.h, resources):
+        return False
+    if resource_spot_reserved_by_other_worker(worker, resource_uid, spot_index, objects):
+        return False
+    return True
+
+
+@callable
+def find_best_resource_spot_index(
+    worker: RTSObject,
+    resource_uid: str,
+    resource_x: float,
+    resource_y: float,
+    resource_w: float,
+    resource_h: float,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+) -> int:
+    best_index = -1
+    best_dist_sq = 999999999999.0
+    for spot_index in range(RESOURCE_SPOT_COUNT):
+        if is_resource_spot_available(
+            worker,
+            resource_uid,
+            resource_x,
+            resource_y,
+            resource_w,
+            resource_h,
+            spot_index,
+            objects,
+            resources,
+        ) == False:
+            continue
+        spot_x = resource_spot_target_x(resource_x, resource_w, worker.w, spot_index)
+        spot_y = resource_spot_target_y(resource_y, resource_h, worker.h, spot_index)
+        dist_sq = squared_distance(worker.x, worker.y, spot_x, spot_y)
+        if best_index < 0 or dist_sq < best_dist_sq:
+            best_index = spot_index
+            best_dist_sq = dist_sq
+    return best_index
+
+
+@callable
+def update_worker_resource_spot_assignment(
+    worker: RTSObject,
+    resource_uid: str,
+    resource_x: float,
+    resource_y: float,
+    resource_w: float,
+    resource_h: float,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+) -> bool:
+    current_index = worker.gather_spot_index
+    if (
+        current_index >= 0
+        and is_resource_spot_available(
+            worker,
+            resource_uid,
+            resource_x,
+            resource_y,
+            resource_w,
+            resource_h,
+            current_index,
+            objects,
+            resources,
+        )
+    ):
+        worker.gather_spot_x = resource_spot_target_x(resource_x, resource_w, worker.w, current_index)
+        worker.gather_spot_y = resource_spot_target_y(resource_y, resource_h, worker.h, current_index)
+        return True
+
+    best_index = find_best_resource_spot_index(
+        worker,
+        resource_uid,
+        resource_x,
+        resource_y,
+        resource_w,
+        resource_h,
+        objects,
+        resources,
+    )
+    if best_index < 0:
+        reset_worker_gather_spot(worker)
+        return False
+
+    worker.gather_spot_index = best_index
+    worker.gather_spot_x = resource_spot_target_x(resource_x, resource_w, worker.w, best_index)
+    worker.gather_spot_y = resource_spot_target_y(resource_y, resource_h, worker.h, best_index)
+    return True
+
+
+@callable
+def worker_is_at_assigned_resource_spot(worker: RTSObject) -> bool:
+    if worker.gather_spot_index < 0:
+        return False
+    return (
+        squared_distance(worker.x, worker.y, worker.gather_spot_x, worker.gather_spot_y)
+        <= RESOURCE_SPOT_REACHED_DISTANCE_SQ
+    )
+
+
+@callable
+def worker_shares_tile_with_assigned_resource_spot(worker: RTSObject) -> bool:
+    return (
+        world_to_tile_x(worker.x) == world_to_tile_x(worker.gather_spot_x)
+        and world_to_tile_y(worker.y) == world_to_tile_y(worker.gather_spot_y)
+    )
+
+
+@callable
+def worker_can_snap_to_assigned_resource_spot(
+    worker: RTSObject,
+    resource_uid: str,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+) -> bool:
+    if placement_hits_blocked_tiles(worker.gather_spot_x, worker.gather_spot_y, worker.w, worker.h):
+        return False
+    if resource_spot_hits_non_moving_object(worker, worker.gather_spot_x, worker.gather_spot_y, objects):
+        return False
+    if resource_spot_hits_other_resource(
+        resource_uid,
+        worker.gather_spot_x,
+        worker.gather_spot_y,
+        worker.w,
+        worker.h,
+        resources,
+    ):
+        return False
+    return True
+
+
+@callable
 def start_worker_gather_loop(
     worker: RTSObject,
     objects: List[RTSObject],
@@ -1202,6 +1576,8 @@ def start_worker_gather_loop(
 
     target_resource_x = 0
     target_resource_y = 0
+    target_resource_w = 0
+    target_resource_h = 0
     found_resource = False
 
     for resource in resources:
@@ -1213,6 +1589,8 @@ def start_worker_gather_loop(
             continue
         target_resource_x = resource.x
         target_resource_y = resource.y
+        target_resource_w = resource.w
+        target_resource_h = resource.h
         found_resource = True
 
     if not found_resource:
@@ -1233,9 +1611,22 @@ def start_worker_gather_loop(
     worker.gather_phase = "to_resource"
     worker.gather_resource_uid = resource_uid
     worker.gather_hq_uid = nearest_hq_uid
+    reset_worker_gather_spot(worker)
     worker.carrying_kind = ""
     worker.carrying_amount = 0
-    build_worker_path(worker, objects, resources, target_resource_x, target_resource_y)
+    if update_worker_resource_spot_assignment(
+        worker,
+        resource_uid,
+        target_resource_x,
+        target_resource_y,
+        target_resource_w,
+        target_resource_h,
+        objects,
+        resources,
+    ):
+        build_worker_path(worker, objects, resources, worker.gather_spot_x, worker.gather_spot_y)
+    elif worker.path_active:
+        clear_move_path(worker)
 
 
 @callable
@@ -1786,93 +2177,97 @@ def process_worker_gather(
         hq_w,
         hq_h,
     )
-    resource_contact_x = project_point_to_box_x(
-        hq_x,
-        hq_y,
-        target_resource_x,
-        target_resource_y,
-        target_resource_w,
-        target_resource_h,
-    )
-    resource_contact_y = project_point_to_box_y(
-        hq_x,
-        hq_y,
-        target_resource_x,
-        target_resource_y,
-        target_resource_w,
-        target_resource_h,
-    )
 
     if worker.gather_phase == "to_resource":
-        if worker.path_active:
-            return
-
-        if squared_distance_to_box(
-            worker.x,
-            worker.y,
+        previous_spot_index = worker.gather_spot_index
+        if update_worker_resource_spot_assignment(
+            worker,
+            resource_uid,
             target_resource_x,
             target_resource_y,
             target_resource_w,
             target_resource_h,
-        ) <= (
-            RESOURCE_INTERACT_RANGE * RESOURCE_INTERACT_RANGE
-        ):
-            if worker.task_active == False:
-                harvest_amount = RESOURCE_HARVEST_MINERAL
-                harvest_ticks = RESOURCE_MINE_DURATION_MINERAL_TICKS
-                harvest_label = "Mining Minerals"
-                if target_resource_kind == "gas":
-                    harvest_amount = RESOURCE_HARVEST_GAS
-                    harvest_ticks = RESOURCE_MINE_DURATION_GAS_TICKS
-                    harvest_label = "Extracting Gas"
-                if target_resource_amount < harvest_amount:
-                    harvest_amount = target_resource_amount
-                if harvest_amount <= 0:
-                    clear_worker_gather_loop(worker)
-                    return
-                start_object_task(worker, "gather_harvest", harvest_label, harvest_ticks)
-                worker.task_resource_kind = target_resource_kind
-                worker.task_resource_amount = harvest_amount
-                return
-
-            if worker.task_kind != "gather_harvest":
-                clear_object_task(worker)
-                return
-
-            worker.task_elapsed_ticks = worker.task_elapsed_ticks + 1
-            if worker.task_elapsed_ticks < worker.task_total_ticks:
-                return
-
-            harvest_amount = worker.task_resource_amount
-            actual_harvest = 0
-            for resource in resources:
-                if resource.uid != resource_uid:
-                    continue
-                if resource.amount <= 0:
-                    continue
-                actual_harvest = harvest_amount
-                if resource.amount < actual_harvest:
-                    actual_harvest = resource.amount
-                resource.amount = resource.amount - actual_harvest
-            if actual_harvest <= 0:
-                clear_worker_gather_loop(worker)
-                return
-
-            worker.carrying_kind = target_resource_kind
-            worker.carrying_amount = actual_harvest
-            clear_object_task(worker)
-            worker.gather_phase = "to_hq"
-            build_worker_path(worker, objects, resources, hq_contact_x, hq_contact_y)
-        else:
+            objects,
+            resources,
+        ) == False:
             if is_worker_gather_task(worker.task_kind):
                 clear_object_task(worker)
-            build_worker_path(
-                worker,
-                objects,
-                resources,
-                resource_contact_x,
-                resource_contact_y,
-            )
+            if worker.path_active:
+                clear_move_path(worker)
+            return
+        if worker.path_active and previous_spot_index != worker.gather_spot_index:
+            clear_move_path(worker)
+        if worker.path_active:
+            return
+
+        if worker_is_at_assigned_resource_spot(worker) == False:
+            if is_worker_gather_task(worker.task_kind):
+                clear_object_task(worker)
+            if (
+                worker_shares_tile_with_assigned_resource_spot(worker)
+                and worker_can_snap_to_assigned_resource_spot(worker, resource_uid, objects, resources)
+            ):
+                worker.x = worker.gather_spot_x
+                worker.y = worker.gather_spot_y
+                worker.vx = 0
+                worker.vy = 0
+            else:
+                build_worker_path(
+                    worker,
+                    objects,
+                    resources,
+                    worker.gather_spot_x,
+                    worker.gather_spot_y,
+                )
+                return
+
+        if worker.task_active == False:
+            harvest_amount = RESOURCE_HARVEST_MINERAL
+            harvest_ticks = RESOURCE_MINE_DURATION_MINERAL_TICKS
+            harvest_label = "Mining Minerals"
+            if target_resource_kind == "gas":
+                harvest_amount = RESOURCE_HARVEST_GAS
+                harvest_ticks = RESOURCE_MINE_DURATION_GAS_TICKS
+                harvest_label = "Extracting Gas"
+            if target_resource_amount < harvest_amount:
+                harvest_amount = target_resource_amount
+            if harvest_amount <= 0:
+                clear_worker_gather_loop(worker)
+                return
+            start_object_task(worker, "gather_harvest", harvest_label, harvest_ticks)
+            worker.task_resource_kind = target_resource_kind
+            worker.task_resource_amount = harvest_amount
+            return
+
+        if worker.task_kind != "gather_harvest":
+            clear_object_task(worker)
+            return
+
+        worker.task_elapsed_ticks = worker.task_elapsed_ticks + 1
+        if worker.task_elapsed_ticks < worker.task_total_ticks:
+            return
+
+        harvest_amount = worker.task_resource_amount
+        actual_harvest = 0
+        for resource in resources:
+            if resource.uid != resource_uid:
+                continue
+            if resource.amount <= 0:
+                continue
+            actual_harvest = harvest_amount
+            if resource.amount < actual_harvest:
+                actual_harvest = resource.amount
+            resource.amount = resource.amount - actual_harvest
+        if actual_harvest <= 0:
+            clear_worker_gather_loop(worker)
+            return
+
+        worker.carrying_kind = target_resource_kind
+        worker.carrying_amount = actual_harvest
+        clear_object_task(worker)
+        reset_worker_gather_spot(worker)
+        worker.gather_phase = "to_hq"
+        build_worker_path(worker, objects, resources, hq_contact_x, hq_contact_y)
         return
 
     if worker.gather_phase == "to_hq":
@@ -1892,13 +2287,7 @@ def process_worker_gather(
             if worker.carrying_amount <= 0:
                 clear_object_task(worker)
                 worker.gather_phase = "to_resource"
-                build_worker_path(
-                    worker,
-                    objects,
-                    resources,
-                    resource_contact_x,
-                    resource_contact_y,
-                )
+                reset_worker_gather_spot(worker)
                 return
 
             if worker.task_active == False:
@@ -1940,13 +2329,7 @@ def process_worker_gather(
                 return
 
             worker.gather_phase = "to_resource"
-            build_worker_path(
-                worker,
-                objects,
-                resources,
-                resource_contact_x,
-                resource_contact_y,
-            )
+            reset_worker_gather_spot(worker)
         else:
             if is_worker_gather_task(worker.task_kind):
                 clear_object_task(worker)
@@ -1956,13 +2339,7 @@ def process_worker_gather(
     if is_worker_gather_task(worker.task_kind):
         clear_object_task(worker)
     worker.gather_phase = "to_resource"
-    build_worker_path(
-        worker,
-        objects,
-        resources,
-        resource_contact_x,
-        resource_contact_y,
-    )
+    reset_worker_gather_spot(worker)
 
 
 @safe_condition(OnLogicalCondition(should_process_gather, RTSObject))
@@ -2129,6 +2506,116 @@ def validate_worker_construction_task(worker: RTSObject, objects: List[RTSObject
         clear_object_task(worker)
 
 
+@callable
+def health_percent(obj: RTSObject) -> int:
+    if obj.max_hp <= 0:
+        return 0
+    if obj.hp <= 0:
+        return 0
+    if obj.hp >= obj.max_hp:
+        return 100
+    scaled = obj.hp * 100
+    value = 0
+    while scaled >= obj.max_hp and value < 100:
+        scaled = scaled - obj.max_hp
+        value = value + 1
+    return value
+
+
+@callable
+def health_bar_width(obj: RTSObject) -> int:
+    width = obj.w
+    if width < 16:
+        width = 16
+    if width > 56:
+        width = 56
+    return width
+
+
+@callable
+def health_bar_fill_width(obj: RTSObject, bar_width: int) -> int:
+    if bar_width <= 0:
+        return 0
+    if obj.max_hp <= 0:
+        return 0
+    if obj.hp <= 0:
+        return 0
+    if obj.hp >= obj.max_hp:
+        return bar_width
+    scaled = bar_width * obj.hp
+    value = 0
+    while scaled >= obj.max_hp and value < bar_width:
+        scaled = scaled - obj.max_hp
+        value = value + 1
+    return value
+
+
+@callable
+def health_fill_sprite_name(percent: int) -> str:
+    if percent < 30:
+        return "health_bar_fill_low"
+    if percent < 60:
+        return "health_bar_fill_mid"
+    return "health_bar_fill_ok"
+
+
+def should_sync_world_health_bars(drag_rect: DragSelectionRect) -> bool:
+    return drag_rect.owner_role_id == PLAYER_1_ROLE_ID
+
+
+@safe_condition(OnLogicalCondition(should_sync_world_health_bars, DragSelectionRect))
+def sync_world_health_bars(
+    _drag_rect: DragSelectionRect,
+    bars_bg: List[HealthBarBackground],
+    bars_fill: List[HealthBarFill],
+    objects: List[RTSObject],
+):
+    for bg in bars_bg:
+        bg.active = False
+    for fill in bars_fill:
+        fill.active = False
+
+    slot = 0
+    for obj in objects:
+        if slot >= HEALTH_BAR_POOL_SIZE:
+            return
+        if obj.active == False:
+            continue
+        if obj.max_hp <= 0:
+            continue
+
+        bar_width = health_bar_width(obj)
+        bar_height = 4
+        bar_x = obj.x
+        bar_y = obj.y - (obj.h / 2) - 8
+
+        for bg in bars_bg:
+            if bg.slot_index != slot:
+                continue
+            bg.active = True
+            bg.x = bar_x
+            bg.y = bar_y
+            bg.w = bar_width + 2
+            bg.h = bar_height + 2
+            bg.sprite = "health_bar_bg"
+
+        fill_width = health_bar_fill_width(obj, bar_width)
+        if fill_width > 0:
+            percent = health_percent(obj)
+            fill_left = bar_x - (bar_width / 2)
+            for fill in bars_fill:
+                if fill.slot_index != slot:
+                    continue
+                fill.active = True
+                fill.w = fill_width
+                fill.h = bar_height
+                fill.y = bar_y
+                fill.x = fill_left + (fill_width / 2)
+                fill.sprite = health_fill_sprite_name(percent)
+
+        slot = slot + 1
+
+
 @safe_condition(OnLogicalCondition(should_validate_worker_construction_task, RTSObject))
 def validate_worker_construction_task_human_1(
     worker: RTSObject,
@@ -2256,6 +2743,7 @@ def clear_role_action_flags(self_role: RTSRole):
     self_role.can_build_starport = False
     self_role.can_upgrade_attack = False
     self_role.can_upgrade_armor = False
+    self_role.can_cancel_construction = False
     self_role.hide_train_worker = True
     self_role.hide_build_hq = True
     self_role.hide_build_supply_depot = True
@@ -2264,6 +2752,7 @@ def clear_role_action_flags(self_role: RTSRole):
     self_role.hide_build_starport = True
     self_role.hide_upgrade_attack = True
     self_role.hide_upgrade_armor = True
+    self_role.hide_cancel_construction = True
     self_role.disable_train_worker = True
     self_role.disable_build_hq = True
     self_role.disable_build_supply_depot = True
@@ -2272,6 +2761,7 @@ def clear_role_action_flags(self_role: RTSRole):
     self_role.disable_build_starport = True
     self_role.disable_upgrade_attack = True
     self_role.disable_upgrade_armor = True
+    self_role.disable_cancel_construction = True
 
 
 @callable
@@ -2368,6 +2858,11 @@ def refresh_role_interface_state(
                 seconds_left = seconds_left + 1
                 ticks_left = ticks_left - PHYSICS_STEP_HZ
             self_role.selected_task_seconds_left = seconds_left
+
+        if is_under_construction_site(obj):
+            self_role.can_cancel_construction = True
+            self_role.hide_cancel_construction = False
+            self_role.disable_cancel_construction = False
 
         if obj.object_kind == "hq" and obj.usable != False:
             can_train_worker = (
@@ -2706,8 +3201,8 @@ def place_pending_build_for_role(
 
     build_w = object_kind_w(build_kind)
     build_h = object_kind_h(build_kind)
-    place_x = clamp_world_x_for_size(target_world_x, build_w)
-    place_y = clamp_world_y_for_size(target_world_y, build_h)
+    place_x = snap_world_x_to_tiles_for_size(target_world_x, build_w)
+    place_y = snap_world_y_to_tiles_for_size(target_world_y, build_h)
 
     if placement_hits_blocked_tiles(place_x, place_y, build_w, build_h):
         self_role.ui_status = "Cannot place there: blocked terrain."
@@ -2815,6 +3310,53 @@ def issue_upgrade_command_for_role(
         return
 
     self_role.ui_status = "Select one Academy."
+
+
+@callable
+def issue_cancel_construction_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    if self_role.selected_count != 1:
+        self_role.ui_status = "Select one construction site."
+        return
+
+    selected_uid = self_role.selected_uid
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != selected_uid:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if is_under_construction_site(obj) == False:
+            self_role.ui_status = "Select one construction site."
+            return
+
+        refund_minerals = compute_refund_amount(obj.mineral_cost)
+        refund_gas = compute_refund_amount(obj.gas_cost)
+        self_role.minerals = self_role.minerals + refund_minerals
+        self_role.gas = self_role.gas + refund_gas
+        obj.destroy()
+
+        for worker in objects:
+            if worker.active == False:
+                continue
+            if worker.owner_role_id != owner_role_id:
+                continue
+            if worker.object_kind != "worker":
+                continue
+            if is_worker_construction_task(worker.task_kind) == False:
+                continue
+            if worker_targets_site(worker, obj) == False:
+                continue
+            clear_worker_construction_task(worker)
+
+        self_role.ui_status = "Construction canceled. 75% resources refunded."
+        return
+
+    self_role.ui_status = "Select one construction site."
 
 
 @safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
@@ -3110,6 +3652,14 @@ def ui_upgrade_armor_human_1(
     issue_upgrade_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "armor")
 
 
+@unsafe_condition(ButtonCondition.begin("cancel_construction", id="human_1"))
+def ui_cancel_construction_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_cancel_construction_for_role(self_role, PLAYER_1_ROLE_ID, objects)
+
+
 @unsafe_condition(ButtonCondition.begin("train_worker", id="human_2"))
 def ui_train_worker_human_2(
     self_role: RTSRole["human_2"],
@@ -3172,6 +3722,14 @@ def ui_upgrade_armor_human_2(
     objects: List[RTSObject],
 ):
     issue_upgrade_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "armor")
+
+
+@unsafe_condition(ButtonCondition.begin("cancel_construction", id="human_2"))
+def ui_cancel_construction_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_cancel_construction_for_role(self_role, PLAYER_2_ROLE_ID, objects)
 
 
 @unsafe_condition(KeyboardCondition.on_press("d", id="human_1"))

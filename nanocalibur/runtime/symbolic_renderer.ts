@@ -7,6 +7,8 @@ import {
   MapSpec,
   SpriteAnimationConfig,
   SymbolicFrame,
+  SymbolicStackActorItem,
+  SymbolicStackCell,
   SymbolicLegendItem,
 } from "./canvas/types";
 import { actorCenterX, actorCenterY, asNumber } from "./canvas/utils";
@@ -50,6 +52,7 @@ export class SymbolicRenderer {
         height: 0,
         rows: [],
         legend: [],
+        stacks: [],
       };
     }
     const viewport = this.resolveViewport(state, actors, mapSpec, tileSize, cameraState);
@@ -70,31 +73,137 @@ export class SymbolicRenderer {
     const sortedActors = [...actors]
       .filter((actor) => actor.active !== false)
       .sort((a, b) => asNumber(a.z, 0) - asNumber(b.z, 0));
+    const stackByCell = new Map<string, SymbolicStackActorItem[]>();
 
     for (const actor of sortedActors) {
-      const tileX = Math.floor(actorCenterX(actor) / tileSize) - originX;
-      const tileY = Math.floor(actorCenterY(actor) / tileSize) - originY;
-      if (tileX < 0 || tileY < 0 || tileX >= viewport.width || tileY >= viewport.height) {
-        continue;
-      }
-
       const { symbol, description } = this.resolveActorSymbol(actor);
-      grid[tileY][tileX] = symbol;
-      if (!legendBySymbol.has(symbol)) {
-        legendBySymbol.set(symbol, description);
+      const bounds = this.resolveActorTileBounds(actor, tileSize);
+      for (let worldTileY = bounds.minTileY; worldTileY <= bounds.maxTileY; worldTileY += 1) {
+        const tileY = worldTileY - originY;
+        if (tileY < 0 || tileY >= viewport.height) {
+          continue;
+        }
+        for (let worldTileX = bounds.minTileX; worldTileX <= bounds.maxTileX; worldTileX += 1) {
+          const tileX = worldTileX - originX;
+          if (tileX < 0 || tileX >= viewport.width) {
+            continue;
+          }
+          grid[tileY][tileX] = symbol;
+          if (!legendBySymbol.has(symbol)) {
+            legendBySymbol.set(symbol, description);
+          }
+          const cellKey = `${tileX},${tileY}`;
+          const actorStack = stackByCell.get(cellKey) || [];
+          actorStack.push({
+            uid: typeof actor.uid === "string" ? actor.uid : "",
+            type: typeof actor.type === "string" ? actor.type : "",
+            symbol,
+            description,
+            z: asNumber(actor.z, 0),
+          });
+          stackByCell.set(cellKey, actorStack);
+        }
       }
     }
 
     const legend: SymbolicLegendItem[] = Array.from(legendBySymbol.entries()).map(
       ([symbol, description]) => ({ symbol, description }),
     );
+    const stacks = this.buildStacks(stackByCell, grid);
 
     return {
       width,
       height,
       rows: grid.map((row) => row.join("")),
       legend,
+      stacks,
     };
+  }
+
+  private resolveActorTileBounds(
+    actor: ActorState,
+    tileSize: number,
+  ): { minTileX: number; maxTileX: number; minTileY: number; maxTileY: number } {
+    const width = this.resolveActorDrawWidth(actor, tileSize);
+    const height = this.resolveActorDrawHeight(actor, tileSize);
+    const centerTileX = Math.floor(actorCenterX(actor) / tileSize);
+    const centerTileY = Math.floor(actorCenterY(actor) / tileSize);
+    if (width <= tileSize && height <= tileSize) {
+      return {
+        minTileX: centerTileX,
+        maxTileX: centerTileX,
+        minTileY: centerTileY,
+        maxTileY: centerTileY,
+      };
+    }
+    const halfW = width / 2;
+    const halfH = height / 2;
+    const minTileX = Math.floor((actorCenterX(actor) - halfW) / tileSize);
+    const maxTileX = Math.floor((actorCenterX(actor) + halfW - 0.001) / tileSize);
+    const minTileY = Math.floor((actorCenterY(actor) - halfH) / tileSize);
+    const maxTileY = Math.floor((actorCenterY(actor) + halfH - 0.001) / tileSize);
+    return {
+      minTileX,
+      maxTileX: Math.max(minTileX, maxTileX),
+      minTileY,
+      maxTileY: Math.max(minTileY, maxTileY),
+    };
+  }
+
+  private resolveActorDrawWidth(actor: ActorState, tileSize: number): number {
+    if (typeof actor.w === "number" && Number.isFinite(actor.w) && actor.w > 0) {
+      return actor.w;
+    }
+    const sprite = this.resolveSpriteConfig(actor);
+    if (sprite) {
+      const scale = Math.max(0.1, asNumber(sprite.scale, 1));
+      return Math.max(1, asNumber(sprite.frameWidth, tileSize) * scale);
+    }
+    return tileSize;
+  }
+
+  private resolveActorDrawHeight(actor: ActorState, tileSize: number): number {
+    if (typeof actor.h === "number" && Number.isFinite(actor.h) && actor.h > 0) {
+      return actor.h;
+    }
+    const sprite = this.resolveSpriteConfig(actor);
+    if (sprite) {
+      const scale = Math.max(0.1, asNumber(sprite.scale, 1));
+      return Math.max(1, asNumber(sprite.frameHeight, tileSize) * scale);
+    }
+    return tileSize;
+  }
+
+  private buildStacks(
+    stackByCell: Map<string, SymbolicStackActorItem[]>,
+    grid: string[][],
+  ): SymbolicStackCell[] {
+    const stacks: SymbolicStackCell[] = [];
+    for (const [cellKey, actors] of stackByCell.entries()) {
+      if (!Array.isArray(actors) || actors.length <= 1) {
+        continue;
+      }
+      const parts = cellKey.split(",");
+      if (parts.length !== 2) {
+        continue;
+      }
+      const x = Number(parts[0]);
+      const y = Number(parts[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        continue;
+      }
+      if (y < 0 || y >= grid.length || x < 0 || x >= grid[y].length) {
+        continue;
+      }
+      stacks.push({
+        x,
+        y,
+        symbol: grid[y][x],
+        actors,
+      });
+    }
+    stacks.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+    return stacks;
   }
 
   private resolveViewport(

@@ -214,5 +214,45 @@ game.add_sprite(
         description="player 2 starport",
     )
 )
+game.add_sprite(
+    ColorSprite(
+        name="health_bar_bg",
+        frame_width=2,
+        frame_height=2,
+        color=Color(18, 18, 18, a=0.92, symbol="-", description="health bar background"),
+        symbol="-",
+        description="health bar background",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="health_bar_fill_ok",
+        frame_width=2,
+        frame_height=2,
+        color=Color(88, 226, 104, a=0.95, symbol="-", description="health bar high"),
+        symbol="-",
+        description="health bar high",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="health_bar_fill_mid",
+        frame_width=2,
+        frame_height=2,
+        color=Color(226, 198, 90, a=0.95, symbol="-", description="health bar medium"),
+        symbol="-",
+        description="health bar medium",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="health_bar_fill_low",
+        frame_width=2,
+        frame_height=2,
+        color=Color(225, 85, 85, a=0.95, symbol="-", description="health bar low"),
+        symbol="-",
+        description="health bar low",
+    )
+)
 
 CodeBlock.end("resources_and_sprites")

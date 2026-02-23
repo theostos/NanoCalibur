@@ -49,6 +49,7 @@
       <button data-button="build_starport" hidden="{{role.hide_build_starport}}" disabled="{{role.disable_build_starport}}">Build Starport</button>
       <button data-button="upgrade_attack" hidden="{{role.hide_upgrade_attack}}" disabled="{{role.disable_upgrade_attack}}">Upgrade Attack</button>
       <button data-button="upgrade_armor" hidden="{{role.hide_upgrade_armor}}" disabled="{{role.disable_upgrade_armor}}">Upgrade Armor</button>
+      <button data-button="cancel_construction" hidden="{{role.hide_cancel_construction}}" disabled="{{role.disable_cancel_construction}}">Cancel Construction</button>
     </div>
     <div>Build Placement: {{role.pending_build_name}}</div>
     <div>Placement Active: {{role.build_placement_active}}</div>
@@ -60,6 +61,7 @@
     <div>Build Starport Ready: {{role.can_build_starport}}</div>
     <div>Upgrade Attack Ready: {{role.can_upgrade_attack}}</div>
     <div>Upgrade Armor Ready: {{role.can_upgrade_armor}}</div>
+    <div>Cancel Construction Ready: {{role.can_cancel_construction}}</div>
     <div>Elapsed: {{__scene_elapsed}}</div>
   </div>
 </div>

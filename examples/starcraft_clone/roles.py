@@ -32,6 +32,7 @@ class RTSRole(HumanRole):
     can_build_starport: bool
     can_upgrade_attack: bool
     can_upgrade_armor: bool
+    can_cancel_construction: bool
     attack_upgrade_level: int
     armor_upgrade_level: int
     has_hq: bool
@@ -51,6 +52,7 @@ class RTSRole(HumanRole):
     hide_build_starport: bool
     hide_upgrade_attack: bool
     hide_upgrade_armor: bool
+    hide_cancel_construction: bool
     disable_train_worker: bool
     disable_build_hq: bool
     disable_build_supply_depot: bool
@@ -59,6 +61,7 @@ class RTSRole(HumanRole):
     disable_build_starport: bool
     disable_upgrade_attack: bool
     disable_upgrade_armor: bool
+    disable_cancel_construction: bool
     ui_status: str
 
 
@@ -91,6 +94,7 @@ game.add_role(
         can_build_starport=False,
         can_upgrade_attack=False,
         can_upgrade_armor=False,
+        can_cancel_construction=False,
         attack_upgrade_level=0,
         armor_upgrade_level=0,
         has_hq=True,
@@ -110,6 +114,7 @@ game.add_role(
         hide_build_starport=True,
         hide_upgrade_attack=True,
         hide_upgrade_armor=True,
+        hide_cancel_construction=True,
         disable_train_worker=True,
         disable_build_hq=True,
         disable_build_supply_depot=True,
@@ -118,6 +123,7 @@ game.add_role(
         disable_build_starport=True,
         disable_upgrade_attack=True,
         disable_upgrade_armor=True,
+        disable_cancel_construction=True,
         ui_status="Ready",
     )
 )
@@ -150,6 +156,7 @@ game.add_role(
         can_build_starport=False,
         can_upgrade_attack=False,
         can_upgrade_armor=False,
+        can_cancel_construction=False,
         attack_upgrade_level=0,
         armor_upgrade_level=0,
         has_hq=True,
@@ -169,6 +176,7 @@ game.add_role(
         hide_build_starport=True,
         hide_upgrade_attack=True,
         hide_upgrade_armor=True,
+        hide_cancel_construction=True,
         disable_train_worker=True,
         disable_build_hq=True,
         disable_build_supply_depot=True,
@@ -177,6 +185,7 @@ game.add_role(
         disable_build_starport=True,
         disable_upgrade_attack=True,
         disable_upgrade_armor=True,
+        disable_cancel_construction=True,
         ui_status="Ready",
     )
 )

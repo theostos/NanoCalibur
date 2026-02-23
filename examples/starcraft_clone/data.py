@@ -26,6 +26,7 @@ P2_MINERAL_NODE_1_UID = "p2_mineral_node_1"
 P2_MINERAL_NODE_2_UID = "p2_mineral_node_2"
 P2_GAS_NODE_1_UID = "p2_gas_node_1"
 SELECTION_MARKER_POOL_SIZE = 12
+HEALTH_BAR_POOL_SIZE = 256
 
 
 class RTSObject(Actor):
@@ -51,6 +52,9 @@ class RTSObject(Actor):
     gather_phase: str
     gather_resource_uid: str
     gather_hq_uid: str
+    gather_spot_index: int
+    gather_spot_x: float
+    gather_spot_y: float
     carrying_kind: str
     carrying_amount: int
     task_active: bool
@@ -80,6 +84,14 @@ class ResourceNode(Actor):
     amount: int
     max_amount: int
     selection_name: str
+
+
+class HealthBarBackground(Actor):
+    slot_index: int
+
+
+class HealthBarFill(Actor):
+    slot_index: int
 
 
 scene.add_actor(
@@ -113,6 +125,9 @@ scene.add_actor(
         gather_phase="",
         gather_resource_uid="",
         gather_hq_uid="",
+        gather_spot_index=-1,
+        gather_spot_x=0,
+        gather_spot_y=0,
         carrying_kind="",
         carrying_amount=0,
         task_active=False,
@@ -133,7 +148,7 @@ scene.add_actor(
     RTSObject(
         uid=P1_HQ_UID,
         x=256,
-        y=336,
+        y=352,
         w=64,
         h=64,
         z=2,
@@ -160,6 +175,9 @@ scene.add_actor(
         gather_phase="",
         gather_resource_uid="",
         gather_hq_uid="",
+        gather_spot_index=-1,
+        gather_spot_x=0,
+        gather_spot_y=0,
         carrying_kind="",
         carrying_amount=0,
         task_active=False,
@@ -208,6 +226,9 @@ scene.add_actor(
         gather_phase="",
         gather_resource_uid="",
         gather_hq_uid="",
+        gather_spot_index=-1,
+        gather_spot_x=0,
+        gather_spot_y=0,
         carrying_kind="",
         carrying_amount=0,
         task_active=False,
@@ -228,7 +249,7 @@ scene.add_actor(
     RTSObject(
         uid=P2_HQ_UID,
         x=WORLD_WIDTH_PX - 256,
-        y=WORLD_HEIGHT_PX - 336,
+        y=WORLD_HEIGHT_PX - 352,
         w=64,
         h=64,
         z=2,
@@ -255,6 +276,9 @@ scene.add_actor(
         gather_phase="",
         gather_resource_uid="",
         gather_hq_uid="",
+        gather_spot_index=-1,
+        gather_spot_x=0,
+        gather_spot_y=0,
         carrying_kind="",
         carrying_amount=0,
         task_active=False,
@@ -277,8 +301,8 @@ scene.add_actor(
         uid=MINERAL_NODE_1_UID,
         x=1392,
         y=928,
-        w=48,
-        h=48,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="mineral",
@@ -293,8 +317,8 @@ scene.add_actor(
         uid=MINERAL_NODE_2_UID,
         x=1664,
         y=992,
-        w=48,
-        h=48,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="mineral",
@@ -309,8 +333,8 @@ scene.add_actor(
         uid=GAS_NODE_1_UID,
         x=1600,
         y=864,
-        w=44,
-        h=44,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="gas",
@@ -325,8 +349,8 @@ scene.add_actor(
         uid=GAS_NODE_2_UID,
         x=1536,
         y=1088,
-        w=44,
-        h=44,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="gas",
@@ -341,8 +365,8 @@ scene.add_actor(
         uid=P1_MINERAL_NODE_1_UID,
         x=368,
         y=336,
-        w=48,
-        h=48,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="mineral",
@@ -357,8 +381,8 @@ scene.add_actor(
         uid=P1_MINERAL_NODE_2_UID,
         x=272,
         y=432,
-        w=48,
-        h=48,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="mineral",
@@ -373,8 +397,8 @@ scene.add_actor(
         uid=P1_GAS_NODE_1_UID,
         x=368,
         y=432,
-        w=44,
-        h=44,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="gas",
@@ -389,8 +413,8 @@ scene.add_actor(
         uid=P2_MINERAL_NODE_1_UID,
         x=2704,
         y=1968,
-        w=48,
-        h=48,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="mineral",
@@ -405,8 +429,8 @@ scene.add_actor(
         uid=P2_MINERAL_NODE_2_UID,
         x=2800,
         y=1872,
-        w=48,
-        h=48,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="mineral",
@@ -421,8 +445,8 @@ scene.add_actor(
         uid=P2_GAS_NODE_1_UID,
         x=2704,
         y=1872,
-        w=44,
-        h=44,
+        w=32,
+        h=32,
         z=2,
         block_mask=1,
         resource_kind="gas",
@@ -460,6 +484,36 @@ for marker_idx in range(SELECTION_MARKER_POOL_SIZE):
             owner_role_id=PLAYER_2_ROLE_ID,
             slot_index=marker_idx,
             sprite="selection_marker_p2",
+        )
+    )
+
+for bar_idx in range(HEALTH_BAR_POOL_SIZE):
+    scene.add_actor(
+        HealthBarBackground(
+            uid=f"hp_bg_{bar_idx}",
+            x=0,
+            y=0,
+            w=2,
+            h=2,
+            z=35,
+            active=False,
+            block_mask=None,
+            slot_index=bar_idx,
+            sprite="health_bar_bg",
+        )
+    )
+    scene.add_actor(
+        HealthBarFill(
+            uid=f"hp_fill_{bar_idx}",
+            x=0,
+            y=0,
+            w=2,
+            h=2,
+            z=36,
+            active=False,
+            block_mask=None,
+            slot_index=bar_idx,
+            sprite="health_bar_fill_ok",
         )
     )
 

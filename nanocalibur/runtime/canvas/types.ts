@@ -215,11 +215,27 @@ export interface SymbolicLegendItem {
   description: string;
 }
 
+export interface SymbolicStackActorItem {
+  uid: string;
+  type: string;
+  symbol: string;
+  description: string;
+  z: number;
+}
+
+export interface SymbolicStackCell {
+  x: number;
+  y: number;
+  symbol: string;
+  actors: SymbolicStackActorItem[];
+}
+
 export interface SymbolicFrame {
   width: number;
   height: number;
   rows: string[];
   legend: SymbolicLegendItem[];
+  stacks: SymbolicStackCell[];
 }
 
 export const EPSILON = 0.001;
