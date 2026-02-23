@@ -244,6 +244,26 @@ def squared_distance(x1: float, y1: float, x2: float, y2: float) -> float:
 
 
 @callable
+def squared_distance_to_box(
+    point_x: float,
+    point_y: float,
+    box_center_x: float,
+    box_center_y: float,
+    box_w: float,
+    box_h: float,
+) -> float:
+    dx = abs_value(point_x - box_center_x) - (box_w / 2)
+    dy = abs_value(point_y - box_center_y) - (box_h / 2)
+
+    if dx < 0:
+        dx = 0
+    if dy < 0:
+        dy = 0
+
+    return (dx * dx) + (dy * dy)
+
+
+@callable
 def clear_worker_gather_loop(worker: RTSObject):
     worker.gather_active = False
     worker.gather_phase = ""
@@ -411,7 +431,15 @@ def build_worker_path(
 
     if blocked_by_objects.get(goal_node, 0) == 1:
         found_open_goal = False
+        best_goal_tile_x = goal_tile_x
+        best_goal_tile_y = goal_tile_y
+        best_goal_node = goal_node
         for search_radius in range(1, 10):
+            if found_open_goal:
+                continue
+            found_candidate_in_ring = False
+            best_ring_goal_dist_sq = 999999999
+            best_ring_start_dist_sq = 999999999
             min_search_x = goal_tile_x - search_radius
             max_search_x = goal_tile_x + search_radius
             min_search_y = goal_tile_y - search_radius
@@ -419,8 +447,6 @@ def build_worker_path(
 
             for candidate_tile_y in range(min_search_y, max_search_y + 1):
                 for candidate_tile_x in range(min_search_x, max_search_x + 1):
-                    if found_open_goal:
-                        continue
                     if (
                         candidate_tile_x < 0
                         or candidate_tile_y < 0
@@ -444,10 +470,38 @@ def build_worker_path(
                     if blocked_by_objects.get(candidate_node, 0) == 1:
                         continue
 
-                    goal_tile_x = candidate_tile_x
-                    goal_tile_y = candidate_tile_y
-                    goal_node = candidate_node
-                    found_open_goal = True
+                    goal_dx = candidate_tile_x - goal_tile_x
+                    goal_dy = candidate_tile_y - goal_tile_y
+                    goal_dist_sq = (goal_dx * goal_dx) + (goal_dy * goal_dy)
+
+                    start_dx = candidate_tile_x - start_tile_x
+                    start_dy = candidate_tile_y - start_tile_y
+                    start_dist_sq = (start_dx * start_dx) + (start_dy * start_dy)
+
+                    better_candidate = False
+                    if not found_candidate_in_ring:
+                        better_candidate = True
+                    elif goal_dist_sq < best_ring_goal_dist_sq:
+                        better_candidate = True
+                    elif (
+                        goal_dist_sq == best_ring_goal_dist_sq
+                        and start_dist_sq < best_ring_start_dist_sq
+                    ):
+                        better_candidate = True
+
+                    if better_candidate:
+                        found_candidate_in_ring = True
+                        best_ring_goal_dist_sq = goal_dist_sq
+                        best_ring_start_dist_sq = start_dist_sq
+                        best_goal_tile_x = candidate_tile_x
+                        best_goal_tile_y = candidate_tile_y
+                        best_goal_node = candidate_node
+
+            if found_candidate_in_ring:
+                found_open_goal = True
+                goal_tile_x = best_goal_tile_x
+                goal_tile_y = best_goal_tile_y
+                goal_node = best_goal_node
 
         if not found_open_goal:
             return
@@ -771,6 +825,8 @@ def process_worker_gather(
     resource_uid = worker.gather_resource_uid
     target_resource_x = 0
     target_resource_y = 0
+    target_resource_w = 0
+    target_resource_h = 0
     target_resource_kind = ""
     target_resource_amount = 0
     resource_found = False
@@ -784,6 +840,8 @@ def process_worker_gather(
             continue
         target_resource_x = resource.x
         target_resource_y = resource.y
+        target_resource_w = resource.w
+        target_resource_h = resource.h
         target_resource_kind = resource.resource_kind
         target_resource_amount = resource.amount
         resource_found = True
@@ -796,6 +854,8 @@ def process_worker_gather(
     hq_found = False
     hq_x = 0
     hq_y = 0
+    hq_w = 0
+    hq_h = 0
     for obj in objects:
         if obj.active == False:
             continue
@@ -807,6 +867,8 @@ def process_worker_gather(
             continue
         hq_x = obj.x
         hq_y = obj.y
+        hq_w = obj.w
+        hq_h = obj.h
         hq_found = True
 
     if not hq_found:
@@ -826,6 +888,8 @@ def process_worker_gather(
                 continue
             hq_x = obj.x
             hq_y = obj.y
+            hq_w = obj.w
+            hq_h = obj.h
             hq_found = True
 
     if not hq_found:
@@ -836,7 +900,14 @@ def process_worker_gather(
         if worker.path_active:
             return
 
-        if squared_distance(worker.x, worker.y, target_resource_x, target_resource_y) <= (
+        if squared_distance_to_box(
+            worker.x,
+            worker.y,
+            target_resource_x,
+            target_resource_y,
+            target_resource_w,
+            target_resource_h,
+        ) <= (
             RESOURCE_INTERACT_RANGE * RESOURCE_INTERACT_RANGE
         ):
             harvest_amount = RESOURCE_HARVEST_MINERAL
@@ -864,7 +935,14 @@ def process_worker_gather(
         if worker.path_active:
             return
 
-        if squared_distance(worker.x, worker.y, hq_x, hq_y) <= (
+        if squared_distance_to_box(
+            worker.x,
+            worker.y,
+            hq_x,
+            hq_y,
+            hq_w,
+            hq_h,
+        ) <= (
             RESOURCE_INTERACT_RANGE * RESOURCE_INTERACT_RANGE
         ):
             if worker.carrying_amount > 0:
@@ -1220,6 +1298,11 @@ def update_drag_rect_human_1(
     drag_rect.active = True
 
 
+@unsafe_condition(MouseCondition.begin_click("left", id="human_1"))
+def arm_selection_for_human_1(self_role: RTSRole["human_1"]):
+    self_role.left_select_armed = True
+
+
 @unsafe_condition(MouseCondition.end_click("left", id="human_1"))
 def select_for_human_1(
     self_role: RTSRole["human_1"],
@@ -1229,6 +1312,11 @@ def select_for_human_1(
     markers: List[SelectionMarker],
     mouse: MouseInfo,
 ):
+    if not self_role.left_select_armed:
+        drag_rect.active = False
+        return
+
+    self_role.left_select_armed = False
     drag_select = is_drag_select(mouse.pressed_x, mouse.pressed_y, mouse.x, mouse.y)
     start_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
     start_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
@@ -1263,8 +1351,8 @@ def command_selected_units_for_human_1(
     resources: List[ResourceNode],
     mouse: MouseInfo,
 ):
-    target_world_x = camera_screen_to_world_x(camera.x, mouse.x)
-    target_world_y = camera_screen_to_world_y(camera.y, mouse.y)
+    target_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
+    target_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
     command_selected_units_for_role(
         self_role,
         PLAYER_1_ROLE_ID,
@@ -1300,6 +1388,11 @@ def update_drag_rect_human_2(
     drag_rect.active = True
 
 
+@unsafe_condition(MouseCondition.begin_click("left", id="human_2"))
+def arm_selection_for_human_2(self_role: RTSRole["human_2"]):
+    self_role.left_select_armed = True
+
+
 @unsafe_condition(MouseCondition.end_click("left", id="human_2"))
 def select_for_human_2(
     self_role: RTSRole["human_2"],
@@ -1309,6 +1402,11 @@ def select_for_human_2(
     markers: List[SelectionMarker],
     mouse: MouseInfo,
 ):
+    if not self_role.left_select_armed:
+        drag_rect.active = False
+        return
+
+    self_role.left_select_armed = False
     drag_select = is_drag_select(mouse.pressed_x, mouse.pressed_y, mouse.x, mouse.y)
     start_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
     start_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
@@ -1343,8 +1441,8 @@ def command_selected_units_for_human_2(
     resources: List[ResourceNode],
     mouse: MouseInfo,
 ):
-    target_world_x = camera_screen_to_world_x(camera.x, mouse.x)
-    target_world_y = camera_screen_to_world_y(camera.y, mouse.y)
+    target_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
+    target_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
     command_selected_units_for_role(
         self_role,
         PLAYER_2_ROLE_ID,
