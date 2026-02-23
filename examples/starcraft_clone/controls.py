@@ -42,6 +42,8 @@ DIAGONAL_SPEED_FACTOR = 0.70710678
 RESOURCE_INTERACT_RANGE = 42
 RESOURCE_HARVEST_MINERAL = 8
 RESOURCE_HARVEST_GAS = 6
+PATH_BLOCK_SHRINK_STATIC_PX = 8
+PATH_BLOCK_SHRINK_RESOURCE_PX = 8
 
 
 @callable
@@ -135,6 +137,38 @@ def tile_center_y(tile_y: int) -> float:
 @callable
 def tile_node(tile_x: int, tile_y: int) -> int:
     return (tile_y * MAP_WIDTH_TILES) + tile_x
+
+
+@callable
+def mark_path_block_for_box(
+    blocked_by_objects: dict,
+    center_x: float,
+    center_y: float,
+    box_w: float,
+    box_h: float,
+    shrink_px: int,
+):
+    half_w = (box_w / 2) - shrink_px
+    half_h = (box_h / 2) - shrink_px
+    if half_w < 1:
+        half_w = 1
+    if half_h < 1:
+        half_h = 1
+
+    left_world = center_x - half_w + 1
+    right_world = center_x + half_w - 1
+    top_world = center_y - half_h + 1
+    bottom_world = center_y + half_h - 1
+
+    min_tile_x = world_to_tile_x(left_world)
+    max_tile_x = world_to_tile_x(right_world)
+    min_tile_y = world_to_tile_y(top_world)
+    max_tile_y = world_to_tile_y(bottom_world)
+
+    for block_tile_y in range(min_tile_y, max_tile_y + 1):
+        for block_tile_x in range(min_tile_x, max_tile_x + 1):
+            blocked_node = tile_node(block_tile_x, block_tile_y)
+            blocked_by_objects[blocked_node] = 1
 
 
 @callable
@@ -261,6 +295,126 @@ def squared_distance_to_box(
         dy = 0
 
     return (dx * dx) + (dy * dy)
+
+
+@callable
+def project_point_to_box_x(
+    point_x: float,
+    point_y: float,
+    box_center_x: float,
+    box_center_y: float,
+    box_w: float,
+    box_h: float,
+) -> float:
+    left = box_center_x - (box_w / 2)
+    right = box_center_x + (box_w / 2)
+    top = box_center_y - (box_h / 2)
+    bottom = box_center_y + (box_h / 2)
+
+    projected_x = point_x
+    if projected_x < left:
+        projected_x = left
+    if projected_x > right:
+        projected_x = right
+
+    projected_y = point_y
+    if projected_y < top:
+        projected_y = top
+    if projected_y > bottom:
+        projected_y = bottom
+
+    if (
+        point_x >= left
+        and point_x <= right
+        and point_y >= top
+        and point_y <= bottom
+    ):
+        dist_left = abs_value(point_x - left)
+        dist_right = abs_value(right - point_x)
+        dist_top = abs_value(point_y - top)
+        dist_bottom = abs_value(bottom - point_y)
+        best = dist_left
+        projected_x = left
+        if dist_right < best:
+            best = dist_right
+            projected_x = right
+        if dist_top < best:
+            best = dist_top
+            projected_x = point_x
+        if dist_bottom < best:
+            projected_x = point_x
+    elif point_x < left and point_y >= top and point_y <= bottom:
+        projected_x = left
+    elif point_x > right and point_y >= top and point_y <= bottom:
+        projected_x = right
+    elif point_y < top and point_x >= left and point_x <= right:
+        projected_x = point_x
+    elif point_y > bottom and point_x >= left and point_x <= right:
+        projected_x = point_x
+    else:
+        projected_x = projected_x
+
+    return projected_x
+
+
+@callable
+def project_point_to_box_y(
+    point_x: float,
+    point_y: float,
+    box_center_x: float,
+    box_center_y: float,
+    box_w: float,
+    box_h: float,
+) -> float:
+    left = box_center_x - (box_w / 2)
+    right = box_center_x + (box_w / 2)
+    top = box_center_y - (box_h / 2)
+    bottom = box_center_y + (box_h / 2)
+
+    projected_x = point_x
+    if projected_x < left:
+        projected_x = left
+    if projected_x > right:
+        projected_x = right
+
+    projected_y = point_y
+    if projected_y < top:
+        projected_y = top
+    if projected_y > bottom:
+        projected_y = bottom
+
+    if (
+        point_x >= left
+        and point_x <= right
+        and point_y >= top
+        and point_y <= bottom
+    ):
+        dist_left = abs_value(point_x - left)
+        dist_right = abs_value(right - point_x)
+        dist_top = abs_value(point_y - top)
+        dist_bottom = abs_value(bottom - point_y)
+        best = dist_left
+        projected_y = point_y
+        if dist_right < best:
+            best = dist_right
+            projected_y = point_y
+        if dist_top < best:
+            best = dist_top
+            projected_y = top
+        if dist_bottom < best:
+            projected_y = bottom
+    elif point_x < left and point_y >= top and point_y <= bottom:
+        projected_y = point_y
+    elif point_x > right and point_y >= top and point_y <= bottom:
+        projected_y = point_y
+    elif point_y < top and point_x >= left and point_x <= right:
+        projected_y = top
+    elif point_y > bottom and point_x >= left and point_x <= right:
+        projected_y = bottom
+    else:
+        projected_y = projected_y
+
+    return projected_y
 
 
 @callable
@@ -395,39 +549,31 @@ def build_worker_path(
         if obj.uid == unit.uid:
             continue
 
-        left_world = obj.x - (obj.w / 2) + 1
-        right_world = obj.x + (obj.w / 2) - 1
-        top_world = obj.y - (obj.h / 2) + 1
-        bottom_world = obj.y + (obj.h / 2) - 1
+        block_shrink_px = 0
+        if obj.can_move == False:
+            block_shrink_px = PATH_BLOCK_SHRINK_STATIC_PX
 
-        min_tile_x = world_to_tile_x(left_world)
-        max_tile_x = world_to_tile_x(right_world)
-        min_tile_y = world_to_tile_y(top_world)
-        max_tile_y = world_to_tile_y(bottom_world)
-
-        for block_tile_y in range(min_tile_y, max_tile_y + 1):
-            for block_tile_x in range(min_tile_x, max_tile_x + 1):
-                blocked_node = tile_node(block_tile_x, block_tile_y)
-                blocked_by_objects[blocked_node] = 1
+        mark_path_block_for_box(
+            blocked_by_objects,
+            obj.x,
+            obj.y,
+            obj.w,
+            obj.h,
+            block_shrink_px,
+        )
 
     for resource in resources:
         if resource.active == False:
             continue
 
-        left_world = resource.x - (resource.w / 2) + 1
-        right_world = resource.x + (resource.w / 2) - 1
-        top_world = resource.y - (resource.h / 2) + 1
-        bottom_world = resource.y + (resource.h / 2) - 1
-
-        min_tile_x = world_to_tile_x(left_world)
-        max_tile_x = world_to_tile_x(right_world)
-        min_tile_y = world_to_tile_y(top_world)
-        max_tile_y = world_to_tile_y(bottom_world)
-
-        for block_tile_y in range(min_tile_y, max_tile_y + 1):
-            for block_tile_x in range(min_tile_x, max_tile_x + 1):
-                blocked_node = tile_node(block_tile_x, block_tile_y)
-                blocked_by_objects[blocked_node] = 1
+        mark_path_block_for_box(
+            blocked_by_objects,
+            resource.x,
+            resource.y,
+            resource.w,
+            resource.h,
+            PATH_BLOCK_SHRINK_RESOURCE_PX,
+        )
 
     if blocked_by_objects.get(goal_node, 0) == 1:
         found_open_goal = False
@@ -896,6 +1042,39 @@ def process_worker_gather(
         clear_worker_gather_loop(worker)
         return
 
+    hq_contact_x = project_point_to_box_x(
+        target_resource_x,
+        target_resource_y,
+        hq_x,
+        hq_y,
+        hq_w,
+        hq_h,
+    )
+    hq_contact_y = project_point_to_box_y(
+        target_resource_x,
+        target_resource_y,
+        hq_x,
+        hq_y,
+        hq_w,
+        hq_h,
+    )
+    resource_contact_x = project_point_to_box_x(
+        hq_x,
+        hq_y,
+        target_resource_x,
+        target_resource_y,
+        target_resource_w,
+        target_resource_h,
+    )
+    resource_contact_y = project_point_to_box_y(
+        hq_x,
+        hq_y,
+        target_resource_x,
+        target_resource_y,
+        target_resource_w,
+        target_resource_h,
+    )
+
     if worker.gather_phase == "to_resource":
         if worker.path_active:
             return
@@ -926,9 +1105,15 @@ def process_worker_gather(
             worker.carrying_kind = target_resource_kind
             worker.carrying_amount = harvest_amount
             worker.gather_phase = "to_hq"
-            build_worker_path(worker, objects, resources, hq_x, hq_y)
+            build_worker_path(worker, objects, resources, hq_contact_x, hq_contact_y)
         else:
-            build_worker_path(worker, objects, resources, target_resource_x, target_resource_y)
+            build_worker_path(
+                worker,
+                objects,
+                resources,
+                resource_contact_x,
+                resource_contact_y,
+            )
         return
 
     if worker.gather_phase == "to_hq":
@@ -958,13 +1143,25 @@ def process_worker_gather(
                 return
 
             worker.gather_phase = "to_resource"
-            build_worker_path(worker, objects, resources, target_resource_x, target_resource_y)
+            build_worker_path(
+                worker,
+                objects,
+                resources,
+                resource_contact_x,
+                resource_contact_y,
+            )
         else:
-            build_worker_path(worker, objects, resources, hq_x, hq_y)
+            build_worker_path(worker, objects, resources, hq_contact_x, hq_contact_y)
         return
 
     worker.gather_phase = "to_resource"
-    build_worker_path(worker, objects, resources, target_resource_x, target_resource_y)
+    build_worker_path(
+        worker,
+        objects,
+        resources,
+        resource_contact_x,
+        resource_contact_y,
+    )
 
 
 @safe_condition(OnLogicalCondition(should_process_gather, RTSObject))
@@ -1029,11 +1226,51 @@ def refresh_selection_markers(
             if marker.slot_index != slot_idx:
                 continue
             marker.active = True
-            marker.parent = target_uid
+            marker.parent = ""
             marker.x = target_x
             marker.y = target_y
             marker.w = target_w + 10
             marker.h = target_h + 10
+
+
+def should_refresh_marker_slots(_drag_rect: DragSelectionRect) -> bool:
+    return True
+
+
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_selection_markers_human_1(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_1"],
+    markers: List[SelectionMarker],
+    objects: List[RTSObject],
+):
+    if drag_rect.owner_role_id != PLAYER_1_ROLE_ID:
+        return
+    refresh_selection_markers(
+        PLAYER_1_ROLE_ID,
+        markers,
+        objects,
+        self_role.selected_uids,
+        self_role.selected_count,
+    )
+
+
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_selection_markers_human_2(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_2"],
+    markers: List[SelectionMarker],
+    objects: List[RTSObject],
+):
+    if drag_rect.owner_role_id != PLAYER_2_ROLE_ID:
+        return
+    refresh_selection_markers(
+        PLAYER_2_ROLE_ID,
+        markers,
+        objects,
+        self_role.selected_uids,
+        self_role.selected_count,
+    )
 
 
 @callable
