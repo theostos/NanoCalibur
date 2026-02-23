@@ -84,8 +84,14 @@ export class PhysicsSystem {
     for (const actor of actors) {
       alive.add(actor.uid);
 
-      const body = this.ensureBody(actor);
-      body.config = this.resolveBodyConfig(actor);
+      const resolvedConfig = this.resolveBodyConfig(actor);
+      if (!resolvedConfig.enabled) {
+        this.bodies.delete(actor.uid);
+        continue;
+      }
+
+      const body = this.ensureBody(actor, resolvedConfig);
+      body.config = resolvedConfig;
       body.w = actorWidth(actor);
       body.h = actorHeight(actor);
       body.blockMask = this.resolveActorMask(actor);
@@ -358,13 +364,16 @@ export class PhysicsSystem {
     return overlaps;
   }
 
-  private ensureBody(actor: ActorState): PhysicsBodyRuntime {
+  private ensureBody(
+    actor: ActorState,
+    configOverride?: ResolvedBodyConfig,
+  ): PhysicsBodyRuntime {
     const existing = this.bodies.get(actor.uid);
     if (existing) {
       return existing;
     }
 
-    const config = this.resolveBodyConfig(actor);
+    const config = configOverride || this.resolveBodyConfig(actor);
     const body: PhysicsBodyRuntime = {
       uid: actor.uid,
       parentUid:
@@ -405,11 +414,25 @@ export class PhysicsSystem {
     const defaultBody = this.options.physics?.defaultBody || {};
     const byType = this.options.physics?.bodiesByType?.[actor.type] || {};
     const byUid = this.options.physics?.bodiesByUid?.[actor.uid] || {};
+    const actorRecord = actor as Record<string, unknown>;
+    const actorBody: PhysicsBodyConfig = {};
+    if (typeof actorRecord.physics_enabled === "boolean") {
+      actorBody.enabled = actorRecord.physics_enabled;
+    }
+    if (typeof actorRecord.physics_dynamic === "boolean") {
+      actorBody.dynamic = actorRecord.physics_dynamic;
+    }
+    if (typeof actorRecord.physics_collidable === "boolean") {
+      actorBody.collidable = actorRecord.physics_collidable;
+    } else if (typeof actorRecord.collidable === "boolean") {
+      actorBody.collidable = actorRecord.collidable;
+    }
     const merged: PhysicsBodyConfig = {
       ...inferredDefault,
       ...defaultBody,
       ...byType,
       ...byUid,
+      ...actorBody,
     };
 
     return {
@@ -579,7 +602,20 @@ export class PhysicsSystem {
     if (actor.active === false) {
       return false;
     }
+    const actorRecord = actor as Record<string, unknown>;
+    if (actorRecord.physics_enabled === false) {
+      return false;
+    }
+    if (actorRecord.physics_collidable === false || actorRecord.collidable === false) {
+      return false;
+    }
     const body = this.bodies.get(actor.uid);
+    if (!body) {
+      return this.resolveActorMask(actor) !== null;
+    }
+    if (!body.config.enabled) {
+      return false;
+    }
     if (body && !body.config.collidable) {
       return false;
     }
