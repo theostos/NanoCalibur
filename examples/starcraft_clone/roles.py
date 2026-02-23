@@ -16,7 +16,6 @@ class RTSRole(HumanRole):
     selected_name: str
     selected_count: int
     selected_uids: list[str]
-    left_select_armed: bool
 
 
 game.add_role(
@@ -32,7 +31,6 @@ game.add_role(
         selected_name="None",
         selected_count=0,
         selected_uids=[],
-        left_select_armed=False,
     )
 )
 game.add_role(
@@ -48,7 +46,6 @@ game.add_role(
         selected_name="None",
         selected_count=0,
         selected_uids=[],
-        left_select_armed=False,
     )
 )
 

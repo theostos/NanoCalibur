@@ -1298,11 +1298,6 @@ def update_drag_rect_human_1(
     drag_rect.active = True
 
 
-@unsafe_condition(MouseCondition.begin_click("left", id="human_1"))
-def arm_selection_for_human_1(self_role: RTSRole["human_1"]):
-    self_role.left_select_armed = True
-
-
 @unsafe_condition(MouseCondition.end_click("left", id="human_1"))
 def select_for_human_1(
     self_role: RTSRole["human_1"],
@@ -1312,11 +1307,6 @@ def select_for_human_1(
     markers: List[SelectionMarker],
     mouse: MouseInfo,
 ):
-    if not self_role.left_select_armed:
-        drag_rect.active = False
-        return
-
-    self_role.left_select_armed = False
     drag_select = is_drag_select(mouse.pressed_x, mouse.pressed_y, mouse.x, mouse.y)
     start_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
     start_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
@@ -1388,11 +1378,6 @@ def update_drag_rect_human_2(
     drag_rect.active = True
 
 
-@unsafe_condition(MouseCondition.begin_click("left", id="human_2"))
-def arm_selection_for_human_2(self_role: RTSRole["human_2"]):
-    self_role.left_select_armed = True
-
-
 @unsafe_condition(MouseCondition.end_click("left", id="human_2"))
 def select_for_human_2(
     self_role: RTSRole["human_2"],
@@ -1402,11 +1387,6 @@ def select_for_human_2(
     markers: List[SelectionMarker],
     mouse: MouseInfo,
 ):
-    if not self_role.left_select_armed:
-        drag_rect.active = False
-        return
-
-    self_role.left_select_armed = False
     drag_select = is_drag_select(mouse.pressed_x, mouse.pressed_y, mouse.x, mouse.y)
     start_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
     start_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
