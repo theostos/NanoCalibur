@@ -1,12 +1,14 @@
 from typing import List
 
 from nanocalibur.dsl_markers import (
+    ButtonCondition,
     Camera,
     CodeBlock,
     KeyboardCondition,
     MouseCondition,
     MouseInfo,
     OnLogicalCondition,
+    Scene,
     callable,
     safe_condition,
     unsafe_condition,
@@ -33,7 +35,7 @@ from .shared import (
 
 
 CodeBlock.begin("selection_and_move_rules")
-"""Sandbox feature #1: ownership-based selection + pathfinding worker movement."""
+"""RTS controls: selection/pathing + timed gather/production/building/research."""
 
 CAMERA_PAN_SPEED = 4
 DRAG_SELECT_THRESHOLD_PX = 8
@@ -44,6 +46,43 @@ RESOURCE_HARVEST_MINERAL = 8
 RESOURCE_HARVEST_GAS = 6
 PATH_BLOCK_SHRINK_STATIC_PX = 8
 PATH_BLOCK_SHRINK_RESOURCE_PX = 8
+PROGRESS_BAR_SEGMENTS = 20
+BUILD_PLACEMENT_STEP_PX = 72
+
+RESOURCE_MINE_DURATION_MINERAL_TICKS = PHYSICS_STEP_HZ * 3
+RESOURCE_MINE_DURATION_GAS_TICKS = PHYSICS_STEP_HZ * 4
+RESOURCE_UNLOAD_DURATION_TICKS = PHYSICS_STEP_HZ
+
+WORKER_TRAIN_TIME_TICKS = PHYSICS_STEP_HZ * 4
+WORKER_TRAIN_MINERAL_COST = 50
+WORKER_TRAIN_GAS_COST = 0
+WORKER_TRAIN_SUPPLY_COST = 1
+
+BUILD_TIME_HQ_TICKS = PHYSICS_STEP_HZ * 10
+BUILD_TIME_SUPPLY_DEPOT_TICKS = PHYSICS_STEP_HZ * 5
+BUILD_TIME_BARRACKS_TICKS = PHYSICS_STEP_HZ * 7
+BUILD_TIME_ACADEMY_TICKS = PHYSICS_STEP_HZ * 8
+BUILD_TIME_STARPORT_TICKS = PHYSICS_STEP_HZ * 9
+
+COST_HQ_MINERALS = 400
+COST_HQ_GAS = 0
+COST_SUPPLY_DEPOT_MINERALS = 100
+COST_SUPPLY_DEPOT_GAS = 0
+COST_BARRACKS_MINERALS = 150
+COST_BARRACKS_GAS = 0
+COST_ACADEMY_MINERALS = 150
+COST_ACADEMY_GAS = 100
+COST_STARPORT_MINERALS = 200
+COST_STARPORT_GAS = 150
+SUPPLY_DEPOT_SUPPLY_BONUS = 8
+
+UPGRADE_TIME_ATTACK_TICKS = PHYSICS_STEP_HZ * 6
+UPGRADE_TIME_ARMOR_TICKS = PHYSICS_STEP_HZ * 6
+UPGRADE_COST_ATTACK_MINERALS = 100
+UPGRADE_COST_ATTACK_GAS = 100
+UPGRADE_COST_ARMOR_MINERALS = 100
+UPGRADE_COST_ARMOR_GAS = 100
+MAX_UPGRADE_LEVEL = 3
 
 
 @callable
@@ -418,6 +457,574 @@ def project_point_to_box_y(
 
 
 @callable
+def clamp_world_x_for_size(world_x: float, object_w: float) -> float:
+    half_w = object_w / 2
+    min_x = half_w
+    max_x = WORLD_WIDTH_PX - half_w
+    clamped = world_x
+    if clamped < min_x:
+        clamped = min_x
+    if clamped > max_x:
+        clamped = max_x
+    return clamped
+
+
+@callable
+def clamp_world_y_for_size(world_y: float, object_h: float) -> float:
+    half_h = object_h / 2
+    min_y = half_h
+    max_y = WORLD_HEIGHT_PX - half_h
+    clamped = world_y
+    if clamped < min_y:
+        clamped = min_y
+    if clamped > max_y:
+        clamped = max_y
+    return clamped
+
+
+@callable
+def clear_object_task(obj: RTSObject):
+    obj.task_active = False
+    obj.task_kind = ""
+    obj.task_label = ""
+    obj.task_elapsed_ticks = 0
+    obj.task_total_ticks = 0
+    obj.task_build_kind = ""
+    obj.task_build_x = 0
+    obj.task_build_y = 0
+    obj.task_resource_kind = ""
+    obj.task_resource_amount = 0
+
+
+@callable
+def start_object_task(obj: RTSObject, task_kind: str, task_label: str, total_ticks: int):
+    if total_ticks <= 0:
+        total_ticks = 1
+    obj.task_active = True
+    obj.task_kind = task_kind
+    obj.task_label = task_label
+    obj.task_elapsed_ticks = 0
+    obj.task_total_ticks = total_ticks
+    obj.task_build_kind = ""
+    obj.task_build_x = 0
+    obj.task_build_y = 0
+    obj.task_resource_kind = ""
+    obj.task_resource_amount = 0
+
+
+@callable
+def is_worker_gather_task(task_kind: str) -> bool:
+    return task_kind == "gather_harvest" or task_kind == "gather_unload"
+
+
+@callable
+def task_progress_percent(obj: RTSObject) -> float:
+    if obj.task_active == False:
+        return 0
+    if obj.task_total_ticks <= 0:
+        return 0
+    value = (obj.task_elapsed_ticks * 100.0) / obj.task_total_ticks
+    if value < 0:
+        return 0
+    if value > 100:
+        return 100
+    return value
+
+
+@callable
+def build_progress_bar(percent: float) -> str:
+    if percent < 0:
+        percent = 0
+    if percent > 100:
+        percent = 100
+    threshold = 100.0 / PROGRESS_BAR_SEGMENTS
+    filled = 0
+    while filled < PROGRESS_BAR_SEGMENTS:
+        if ((filled + 1) * threshold) <= percent:
+            filled = filled + 1
+        else:
+            break
+
+    bar = "["
+    idx = 0
+    while idx < PROGRESS_BAR_SEGMENTS:
+        if idx < filled:
+            bar = bar + "#"
+        else:
+            bar = bar + "."
+        idx = idx + 1
+    bar = bar + "]"
+    return bar
+
+
+@callable
+def object_kind_name(object_kind: str) -> str:
+    if object_kind == "hq":
+        return "HQ"
+    if object_kind == "worker":
+        return "Worker"
+    if object_kind == "supply_depot":
+        return "Supply Depot"
+    if object_kind == "barracks":
+        return "Barracks"
+    if object_kind == "academy":
+        return "Academy"
+    if object_kind == "starport":
+        return "Starport"
+    return object_kind
+
+
+@callable
+def object_kind_w(object_kind: str) -> int:
+    if object_kind == "worker":
+        return 20
+    if object_kind == "hq":
+        return 64
+    if object_kind == "supply_depot":
+        return 48
+    if object_kind == "barracks":
+        return 56
+    if object_kind == "academy":
+        return 54
+    if object_kind == "starport":
+        return 60
+    return 48
+
+
+@callable
+def object_kind_h(object_kind: str) -> int:
+    return object_kind_w(object_kind)
+
+
+@callable
+def object_kind_hp(object_kind: str) -> int:
+    if object_kind == "worker":
+        return 45
+    if object_kind == "hq":
+        return 1500
+    if object_kind == "supply_depot":
+        return 500
+    if object_kind == "barracks":
+        return 1000
+    if object_kind == "academy":
+        return 700
+    if object_kind == "starport":
+        return 1100
+    return 500
+
+
+@callable
+def object_kind_mineral_cost(object_kind: str) -> int:
+    if object_kind == "worker":
+        return WORKER_TRAIN_MINERAL_COST
+    if object_kind == "hq":
+        return COST_HQ_MINERALS
+    if object_kind == "supply_depot":
+        return COST_SUPPLY_DEPOT_MINERALS
+    if object_kind == "barracks":
+        return COST_BARRACKS_MINERALS
+    if object_kind == "academy":
+        return COST_ACADEMY_MINERALS
+    if object_kind == "starport":
+        return COST_STARPORT_MINERALS
+    return 0
+
+
+@callable
+def object_kind_gas_cost(object_kind: str) -> int:
+    if object_kind == "worker":
+        return WORKER_TRAIN_GAS_COST
+    if object_kind == "hq":
+        return COST_HQ_GAS
+    if object_kind == "supply_depot":
+        return COST_SUPPLY_DEPOT_GAS
+    if object_kind == "barracks":
+        return COST_BARRACKS_GAS
+    if object_kind == "academy":
+        return COST_ACADEMY_GAS
+    if object_kind == "starport":
+        return COST_STARPORT_GAS
+    return 0
+
+
+@callable
+def object_kind_sprite(object_kind: str, team_id: int) -> str:
+    if object_kind == "worker":
+        if team_id == 1:
+            return "worker_p1"
+        return "worker_p2"
+    if object_kind == "hq":
+        if team_id == 1:
+            return "hq_p1"
+        return "hq_p2"
+    if object_kind == "supply_depot":
+        if team_id == 1:
+            return "supply_depot_p1"
+        return "supply_depot_p2"
+    if object_kind == "barracks":
+        if team_id == 1:
+            return "barracks_p1"
+        return "barracks_p2"
+    if object_kind == "academy":
+        if team_id == 1:
+            return "academy_p1"
+        return "academy_p2"
+    if object_kind == "starport":
+        if team_id == 1:
+            return "starport_p1"
+        return "starport_p2"
+    if team_id == 1:
+        return "worker_p1"
+    return "worker_p2"
+
+
+@callable
+def build_kind_time_ticks(build_kind: str) -> int:
+    if build_kind == "hq":
+        return BUILD_TIME_HQ_TICKS
+    if build_kind == "supply_depot":
+        return BUILD_TIME_SUPPLY_DEPOT_TICKS
+    if build_kind == "barracks":
+        return BUILD_TIME_BARRACKS_TICKS
+    if build_kind == "academy":
+        return BUILD_TIME_ACADEMY_TICKS
+    if build_kind == "starport":
+        return BUILD_TIME_STARPORT_TICKS
+    return PHYSICS_STEP_HZ * 5
+
+
+@callable
+def has_owned_object_kind(owner_role_id: str, objects: List[RTSObject], object_kind: str) -> bool:
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.object_kind != object_kind:
+            continue
+        return True
+    return False
+
+
+@callable
+def count_owned_object_kind(owner_role_id: str, objects: List[RTSObject], object_kind: str) -> int:
+    count = 0
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.object_kind != object_kind:
+            continue
+        count = count + 1
+    return count
+
+
+@callable
+def build_requirement_text(build_kind: str) -> str:
+    if build_kind == "barracks":
+        return "Supply Depot required."
+    if build_kind == "academy":
+        return "Barracks required."
+    if build_kind == "starport":
+        return "Barracks and Academy required."
+    return ""
+
+
+@callable
+def has_build_requirements(owner_role_id: str, objects: List[RTSObject], build_kind: str) -> bool:
+    if build_kind == "barracks":
+        return has_owned_object_kind(owner_role_id, objects, "supply_depot")
+    if build_kind == "academy":
+        return has_owned_object_kind(owner_role_id, objects, "barracks")
+    if build_kind == "starport":
+        return (
+            has_owned_object_kind(owner_role_id, objects, "barracks")
+            and has_owned_object_kind(owner_role_id, objects, "academy")
+        )
+    return True
+
+
+@callable
+def can_afford(role: RTSRole, mineral_cost: int, gas_cost: int) -> bool:
+    return role.minerals >= mineral_cost and role.gas >= gas_cost
+
+
+@callable
+def compute_build_target_x(
+    worker: RTSObject,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    build_kind: str,
+) -> float:
+    base_offset_x = 96
+    if build_kind == "hq":
+        base_offset_x = 128
+    if build_kind == "starport":
+        base_offset_x = 160
+
+    existing_count = count_owned_object_kind(owner_role_id, objects, build_kind)
+    column = existing_count
+    while column >= 4:
+        column = column - 4
+    target_x = worker.x + base_offset_x + (column * BUILD_PLACEMENT_STEP_PX)
+    return clamp_world_x_for_size(target_x, object_kind_w(build_kind))
+
+
+@callable
+def compute_build_target_y(
+    worker: RTSObject,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    build_kind: str,
+) -> float:
+    base_offset_y = 0
+    if build_kind == "hq":
+        base_offset_y = 128
+    if build_kind == "supply_depot":
+        base_offset_y = -72
+    if build_kind == "barracks":
+        base_offset_y = 72
+    if build_kind == "academy":
+        base_offset_y = 144
+    if build_kind == "starport":
+        base_offset_y = -144
+
+    existing_count = count_owned_object_kind(owner_role_id, objects, build_kind)
+    row = 0
+    while existing_count >= 4:
+        existing_count = existing_count - 4
+        row = row + 1
+    target_y = worker.y + base_offset_y + (row * BUILD_PLACEMENT_STEP_PX)
+    return clamp_world_y_for_size(target_y, object_kind_h(build_kind))
+
+
+@callable
+def start_hq_worker_training(hq: RTSObject):
+    start_object_task(hq, "train_worker", "Training Worker", WORKER_TRAIN_TIME_TICKS)
+
+
+@callable
+def start_worker_build_task(
+    worker: RTSObject,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    build_kind: str,
+):
+    task_label = "Building " + object_kind_name(build_kind)
+    start_object_task(worker, "build_structure", task_label, build_kind_time_ticks(build_kind))
+    worker.task_build_kind = build_kind
+    worker.task_build_x = compute_build_target_x(worker, owner_role_id, objects, build_kind)
+    worker.task_build_y = compute_build_target_y(worker, owner_role_id, objects, build_kind)
+
+
+@callable
+def start_academy_research_task(academy: RTSObject, research_kind: str):
+    if research_kind == "attack":
+        start_object_task(
+            academy,
+            "research_attack",
+            "Researching Attack Upgrade",
+            UPGRADE_TIME_ATTACK_TICKS,
+        )
+    else:
+        start_object_task(
+            academy,
+            "research_armor",
+            "Researching Armor Upgrade",
+            UPGRADE_TIME_ARMOR_TICKS,
+        )
+
+
+@callable
+def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
+    spawn_x = clamp_world_x_for_size(hq.x + (hq.w / 2) + 24, object_kind_w("worker"))
+    spawn_y = clamp_world_y_for_size(hq.y + (hq.h / 2) + 24, object_kind_h("worker"))
+    sprite_name = object_kind_sprite("worker", hq.team_id)
+    scene.spawn(
+        RTSObject(
+            x=spawn_x,
+            y=spawn_y,
+            w=object_kind_w("worker"),
+            h=object_kind_h("worker"),
+            z=3,
+            block_mask=1,
+            owner_role_id=hq.owner_role_id,
+            team_id=hq.team_id,
+            object_kind="worker",
+            can_move=True,
+            max_hp=object_kind_hp("worker"),
+            hp=object_kind_hp("worker"),
+            mineral_cost=object_kind_mineral_cost("worker"),
+            gas_cost=object_kind_gas_cost("worker"),
+            supply_cost=1,
+            selection_name=object_kind_name("worker"),
+            move_speed=220,
+            path_tiles_x=[],
+            path_tiles_y=[],
+            path_cursor=0,
+            path_len=0,
+            path_active=False,
+            gather_active=False,
+            gather_phase="",
+            gather_resource_uid="",
+            gather_hq_uid="",
+            carrying_kind="",
+            carrying_amount=0,
+            task_active=False,
+            task_kind="",
+            task_label="",
+            task_elapsed_ticks=0,
+            task_total_ticks=0,
+            task_build_kind="",
+            task_build_x=0,
+            task_build_y=0,
+            task_resource_kind="",
+            task_resource_amount=0,
+            sprite=sprite_name,
+        )
+    )
+
+
+@callable
+def spawn_completed_structure(
+    scene: Scene,
+    owner_role_id: str,
+    team_id: int,
+    build_kind: str,
+    spawn_x: float,
+    spawn_y: float,
+):
+    scene.spawn(
+        RTSObject(
+            x=spawn_x,
+            y=spawn_y,
+            w=object_kind_w(build_kind),
+            h=object_kind_h(build_kind),
+            z=2,
+            block_mask=1,
+            owner_role_id=owner_role_id,
+            team_id=team_id,
+            object_kind=build_kind,
+            can_move=False,
+            max_hp=object_kind_hp(build_kind),
+            hp=object_kind_hp(build_kind),
+            mineral_cost=object_kind_mineral_cost(build_kind),
+            gas_cost=object_kind_gas_cost(build_kind),
+            supply_cost=0,
+            selection_name=object_kind_name(build_kind),
+            move_speed=0,
+            path_tiles_x=[],
+            path_tiles_y=[],
+            path_cursor=0,
+            path_len=0,
+            path_active=False,
+            gather_active=False,
+            gather_phase="",
+            gather_resource_uid="",
+            gather_hq_uid="",
+            carrying_kind="",
+            carrying_amount=0,
+            task_active=False,
+            task_kind="",
+            task_label="",
+            task_elapsed_ticks=0,
+            task_total_ticks=0,
+            task_build_kind="",
+            task_build_x=0,
+            task_build_y=0,
+            task_resource_kind="",
+            task_resource_amount=0,
+            sprite=object_kind_sprite(build_kind, team_id),
+        )
+    )
+
+
+def should_process_timed_object_tasks(obj: RTSObject) -> bool:
+    return (
+        obj.active
+        and obj.task_active
+        and (
+            obj.task_kind == "train_worker"
+            or obj.task_kind == "build_structure"
+            or obj.task_kind == "research_attack"
+            or obj.task_kind == "research_armor"
+        )
+    )
+
+
+@callable
+def process_timed_object_task(
+    obj: RTSObject,
+    role: RTSRole,
+    owner_role_id: str,
+    scene: Scene,
+):
+    if obj.owner_role_id != owner_role_id:
+        return
+    if obj.task_active == False:
+        return
+
+    obj.task_elapsed_ticks = obj.task_elapsed_ticks + 1
+    if obj.task_elapsed_ticks < obj.task_total_ticks:
+        return
+
+    finished_task = obj.task_kind
+    finished_build_kind = obj.task_build_kind
+    finished_build_x = obj.task_build_x
+    finished_build_y = obj.task_build_y
+    clear_object_task(obj)
+
+    if finished_task == "train_worker":
+        spawn_worker_from_hq(scene, obj)
+        role.supply_used = role.supply_used + WORKER_TRAIN_SUPPLY_COST
+        role.ui_status = "Worker ready."
+        return
+
+    if finished_task == "build_structure":
+        spawn_completed_structure(
+            scene,
+            obj.owner_role_id,
+            obj.team_id,
+            finished_build_kind,
+            finished_build_x,
+            finished_build_y,
+        )
+        role.ui_status = object_kind_name(finished_build_kind) + " complete."
+        if finished_build_kind == "supply_depot":
+            role.supply_cap = role.supply_cap + SUPPLY_DEPOT_SUPPLY_BONUS
+        return
+
+    if finished_task == "research_attack":
+        role.attack_upgrade_level = role.attack_upgrade_level + 1
+        role.ui_status = "Attack upgrade complete."
+        return
+
+    if finished_task == "research_armor":
+        role.armor_upgrade_level = role.armor_upgrade_level + 1
+        role.ui_status = "Armor upgrade complete."
+        return
+
+
+@safe_condition(OnLogicalCondition(should_process_timed_object_tasks, RTSObject))
+def process_timed_tasks_for_human_1(
+    obj: RTSObject,
+    role: RTSRole["human_1"],
+    scene: Scene,
+):
+    process_timed_object_task(obj, role, PLAYER_1_ROLE_ID, scene)
+
+
+@safe_condition(OnLogicalCondition(should_process_timed_object_tasks, RTSObject))
+def process_timed_tasks_for_human_2(
+    obj: RTSObject,
+    role: RTSRole["human_2"],
+    scene: Scene,
+):
+    process_timed_object_task(obj, role, PLAYER_2_ROLE_ID, scene)
+
+
+@callable
 def clear_worker_gather_loop(worker: RTSObject):
     worker.gather_active = False
     worker.gather_phase = ""
@@ -425,6 +1032,8 @@ def clear_worker_gather_loop(worker: RTSObject):
     worker.gather_hq_uid = ""
     worker.carrying_kind = ""
     worker.carrying_amount = 0
+    if is_worker_gather_task(worker.task_kind):
+        clear_object_task(worker)
     clear_move_path(worker)
 
 
@@ -486,6 +1095,11 @@ def start_worker_gather_loop(
     resources: List[ResourceNode],
     resource_uid: str,
 ):
+    if worker.task_active and is_worker_gather_task(worker.task_kind) == False:
+        return
+    if is_worker_gather_task(worker.task_kind):
+        clear_object_task(worker)
+
     target_resource_x = 0
     target_resource_y = 0
     found_resource = False
@@ -1089,24 +1703,55 @@ def process_worker_gather(
         ) <= (
             RESOURCE_INTERACT_RANGE * RESOURCE_INTERACT_RANGE
         ):
-            harvest_amount = RESOURCE_HARVEST_MINERAL
-            if target_resource_kind == "gas":
-                harvest_amount = RESOURCE_HARVEST_GAS
-            if target_resource_amount < harvest_amount:
-                harvest_amount = target_resource_amount
-            if harvest_amount <= 0:
+            if worker.task_active == False:
+                harvest_amount = RESOURCE_HARVEST_MINERAL
+                harvest_ticks = RESOURCE_MINE_DURATION_MINERAL_TICKS
+                harvest_label = "Mining Minerals"
+                if target_resource_kind == "gas":
+                    harvest_amount = RESOURCE_HARVEST_GAS
+                    harvest_ticks = RESOURCE_MINE_DURATION_GAS_TICKS
+                    harvest_label = "Extracting Gas"
+                if target_resource_amount < harvest_amount:
+                    harvest_amount = target_resource_amount
+                if harvest_amount <= 0:
+                    clear_worker_gather_loop(worker)
+                    return
+                start_object_task(worker, "gather_harvest", harvest_label, harvest_ticks)
+                worker.task_resource_kind = target_resource_kind
+                worker.task_resource_amount = harvest_amount
+                return
+
+            if worker.task_kind != "gather_harvest":
+                clear_object_task(worker)
+                return
+
+            worker.task_elapsed_ticks = worker.task_elapsed_ticks + 1
+            if worker.task_elapsed_ticks < worker.task_total_ticks:
+                return
+
+            harvest_amount = worker.task_resource_amount
+            actual_harvest = 0
+            for resource in resources:
+                if resource.uid != resource_uid:
+                    continue
+                if resource.amount <= 0:
+                    continue
+                actual_harvest = harvest_amount
+                if resource.amount < actual_harvest:
+                    actual_harvest = resource.amount
+                resource.amount = resource.amount - actual_harvest
+            if actual_harvest <= 0:
                 clear_worker_gather_loop(worker)
                 return
 
-            for resource in resources:
-                if resource.uid == resource_uid and resource.amount > 0:
-                    resource.amount = resource.amount - harvest_amount
-
             worker.carrying_kind = target_resource_kind
-            worker.carrying_amount = harvest_amount
+            worker.carrying_amount = actual_harvest
+            clear_object_task(worker)
             worker.gather_phase = "to_hq"
             build_worker_path(worker, objects, resources, hq_contact_x, hq_contact_y)
         else:
+            if is_worker_gather_task(worker.task_kind):
+                clear_object_task(worker)
             build_worker_path(
                 worker,
                 objects,
@@ -1130,14 +1775,52 @@ def process_worker_gather(
         ) <= (
             RESOURCE_INTERACT_RANGE * RESOURCE_INTERACT_RANGE
         ):
-            if worker.carrying_amount > 0:
-                if worker.carrying_kind == "gas":
-                    role.gas = role.gas + worker.carrying_amount
-                else:
-                    role.minerals = role.minerals + worker.carrying_amount
+            if worker.carrying_amount <= 0:
+                clear_object_task(worker)
+                worker.gather_phase = "to_resource"
+                build_worker_path(
+                    worker,
+                    objects,
+                    resources,
+                    resource_contact_x,
+                    resource_contact_y,
+                )
+                return
 
-            worker.carrying_amount = 0
-            worker.carrying_kind = ""
+            if worker.task_active == False:
+                start_object_task(
+                    worker,
+                    "gather_unload",
+                    "Unloading Resources",
+                    RESOURCE_UNLOAD_DURATION_TICKS,
+                )
+                worker.task_resource_kind = worker.carrying_kind
+                worker.task_resource_amount = worker.carrying_amount
+                return
+
+            if worker.task_kind != "gather_unload":
+                clear_object_task(worker)
+                return
+
+            worker.task_elapsed_ticks = worker.task_elapsed_ticks + 1
+            if worker.task_elapsed_ticks < worker.task_total_ticks:
+                return
+
+            deposit_amount = worker.task_resource_amount
+            if worker.carrying_amount < deposit_amount:
+                deposit_amount = worker.carrying_amount
+            if deposit_amount > 0:
+                if worker.task_resource_kind == "gas":
+                    role.gas = role.gas + deposit_amount
+                else:
+                    role.minerals = role.minerals + deposit_amount
+
+            worker.carrying_amount = worker.carrying_amount - deposit_amount
+            if worker.carrying_amount < 0:
+                worker.carrying_amount = 0
+            if worker.carrying_amount <= 0:
+                worker.carrying_kind = ""
+            clear_object_task(worker)
             if target_resource_amount <= 0:
                 clear_worker_gather_loop(worker)
                 return
@@ -1151,9 +1834,13 @@ def process_worker_gather(
                 resource_contact_y,
             )
         else:
+            if is_worker_gather_task(worker.task_kind):
+                clear_object_task(worker)
             build_worker_path(worker, objects, resources, hq_contact_x, hq_contact_y)
         return
 
+    if is_worker_gather_task(worker.task_kind):
+        clear_object_task(worker)
     worker.gather_phase = "to_resource"
     build_worker_path(
         worker,
@@ -1271,6 +1958,341 @@ def refresh_selection_markers_human_2(
         self_role.selected_uids,
         self_role.selected_count,
     )
+
+
+@callable
+def clear_role_action_flags(self_role: RTSRole):
+    self_role.can_train_worker = False
+    self_role.can_build_hq = False
+    self_role.can_build_supply_depot = False
+    self_role.can_build_barracks = False
+    self_role.can_build_academy = False
+    self_role.can_build_starport = False
+    self_role.can_upgrade_attack = False
+    self_role.can_upgrade_armor = False
+
+
+@callable
+def refresh_role_interface_state(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    self_role.has_hq = has_owned_object_kind(owner_role_id, objects, "hq")
+    self_role.has_supply_depot = has_owned_object_kind(owner_role_id, objects, "supply_depot")
+    self_role.has_barracks = has_owned_object_kind(owner_role_id, objects, "barracks")
+    self_role.has_academy = has_owned_object_kind(owner_role_id, objects, "academy")
+    self_role.has_starport = has_owned_object_kind(owner_role_id, objects, "starport")
+    clear_role_action_flags(self_role)
+
+    valid_selected_uids = []
+    valid_selected_count = 0
+    first_selected_name = "None"
+    for selected_uid in self_role.selected_uids:
+        found_selected = False
+        selected_name = "None"
+        for obj in objects:
+            if obj.active == False:
+                continue
+            if obj.uid != selected_uid:
+                continue
+            if obj.owner_role_id != owner_role_id:
+                continue
+            found_selected = True
+            selected_name = obj.selection_name
+        if found_selected:
+            valid_selected_uids.append(selected_uid)
+            valid_selected_count = valid_selected_count + 1
+            if valid_selected_count == 1:
+                first_selected_name = selected_name
+
+    self_role.selected_uids = valid_selected_uids
+    self_role.selected_count = valid_selected_count
+    if self_role.selected_count <= 0:
+        self_role.selected_uid = ""
+        self_role.selected_name = "None"
+    elif self_role.selected_count == 1:
+        self_role.selected_uid = valid_selected_uids[0]
+        self_role.selected_name = first_selected_name
+    else:
+        self_role.selected_uid = valid_selected_uids[0]
+        self_role.selected_name = "Units"
+
+    self_role.selected_kind = "none"
+    self_role.selected_hp = 0
+    self_role.selected_max_hp = 0
+    self_role.selected_task_active = False
+    self_role.selected_task_label = "Idle"
+    self_role.selected_task_percent = 0
+    self_role.selected_task_bar = build_progress_bar(0)
+    self_role.selected_task_seconds_left = 0
+
+    if self_role.selected_count > 1:
+        self_role.selected_kind = "group"
+        self_role.selected_task_label = "Multiple units selected"
+        return
+    if self_role.selected_count <= 0:
+        return
+
+    selected_uid = self_role.selected_uid
+    found_selected_obj = False
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != selected_uid:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+
+        found_selected_obj = True
+        self_role.selected_kind = obj.object_kind
+        self_role.selected_hp = obj.hp
+        self_role.selected_max_hp = obj.max_hp
+        if obj.task_active:
+            self_role.selected_task_active = True
+            self_role.selected_task_label = obj.task_label
+            self_role.selected_task_percent = task_progress_percent(obj)
+            self_role.selected_task_bar = build_progress_bar(self_role.selected_task_percent)
+            ticks_left = obj.task_total_ticks - obj.task_elapsed_ticks
+            if ticks_left < 0:
+                ticks_left = 0
+            seconds_left = 0
+            while ticks_left > 0:
+                seconds_left = seconds_left + 1
+                ticks_left = ticks_left - PHYSICS_STEP_HZ
+            self_role.selected_task_seconds_left = seconds_left
+
+        if obj.object_kind == "hq":
+            self_role.can_train_worker = (
+                obj.task_active == False
+                and can_afford(self_role, WORKER_TRAIN_MINERAL_COST, WORKER_TRAIN_GAS_COST)
+                and (self_role.supply_used + WORKER_TRAIN_SUPPLY_COST) <= self_role.supply_cap
+            )
+
+        if obj.object_kind == "worker":
+            can_build_now = obj.task_active == False
+            self_role.can_build_hq = (
+                can_build_now
+                and has_build_requirements(owner_role_id, objects, "hq")
+                and can_afford(self_role, COST_HQ_MINERALS, COST_HQ_GAS)
+            )
+            self_role.can_build_supply_depot = (
+                can_build_now
+                and has_build_requirements(owner_role_id, objects, "supply_depot")
+                and can_afford(self_role, COST_SUPPLY_DEPOT_MINERALS, COST_SUPPLY_DEPOT_GAS)
+            )
+            self_role.can_build_barracks = (
+                can_build_now
+                and has_build_requirements(owner_role_id, objects, "barracks")
+                and can_afford(self_role, COST_BARRACKS_MINERALS, COST_BARRACKS_GAS)
+            )
+            self_role.can_build_academy = (
+                can_build_now
+                and has_build_requirements(owner_role_id, objects, "academy")
+                and can_afford(self_role, COST_ACADEMY_MINERALS, COST_ACADEMY_GAS)
+            )
+            self_role.can_build_starport = (
+                can_build_now
+                and has_build_requirements(owner_role_id, objects, "starport")
+                and can_afford(self_role, COST_STARPORT_MINERALS, COST_STARPORT_GAS)
+            )
+
+        if obj.object_kind == "academy":
+            can_research_now = obj.task_active == False
+            self_role.can_upgrade_attack = (
+                can_research_now
+                and self_role.attack_upgrade_level < MAX_UPGRADE_LEVEL
+                and can_afford(
+                    self_role,
+                    UPGRADE_COST_ATTACK_MINERALS,
+                    UPGRADE_COST_ATTACK_GAS,
+                )
+            )
+            self_role.can_upgrade_armor = (
+                can_research_now
+                and self_role.armor_upgrade_level < MAX_UPGRADE_LEVEL
+                and can_afford(
+                    self_role,
+                    UPGRADE_COST_ARMOR_MINERALS,
+                    UPGRADE_COST_ARMOR_GAS,
+                )
+            )
+
+    if not found_selected_obj:
+        self_role.selected_uid = ""
+        self_role.selected_name = "None"
+        self_role.selected_count = 0
+        self_role.selected_uids = []
+        self_role.selected_kind = "none"
+
+
+@callable
+def issue_train_worker_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    if self_role.selected_count != 1:
+        self_role.ui_status = "Select one HQ."
+        return
+
+    selected_uid = self_role.selected_uid
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != selected_uid:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.object_kind != "hq":
+            self_role.ui_status = "Select HQ to train Worker."
+            return
+        if obj.task_active:
+            self_role.ui_status = "HQ is busy."
+            return
+        if (self_role.supply_used + WORKER_TRAIN_SUPPLY_COST) > self_role.supply_cap:
+            self_role.ui_status = "Need more Supply."
+            return
+        if can_afford(self_role, WORKER_TRAIN_MINERAL_COST, WORKER_TRAIN_GAS_COST) == False:
+            self_role.ui_status = "Not enough resources for Worker."
+            return
+
+        self_role.minerals = self_role.minerals - WORKER_TRAIN_MINERAL_COST
+        self_role.gas = self_role.gas - WORKER_TRAIN_GAS_COST
+        start_hq_worker_training(obj)
+        self_role.ui_status = "Training Worker..."
+        return
+
+    self_role.ui_status = "Select one HQ."
+
+
+@callable
+def issue_build_command_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    build_kind: str,
+):
+    if self_role.selected_count != 1:
+        self_role.ui_status = "Select one Worker."
+        return
+
+    selected_uid = self_role.selected_uid
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != selected_uid:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.object_kind != "worker":
+            self_role.ui_status = "Select Worker to build structures."
+            return
+        if obj.task_active:
+            self_role.ui_status = "Worker is busy."
+            return
+        if has_build_requirements(owner_role_id, objects, build_kind) == False:
+            self_role.ui_status = build_requirement_text(build_kind)
+            return
+
+        mineral_cost = object_kind_mineral_cost(build_kind)
+        gas_cost = object_kind_gas_cost(build_kind)
+        if can_afford(self_role, mineral_cost, gas_cost) == False:
+            self_role.ui_status = "Not enough resources for " + object_kind_name(build_kind) + "."
+            return
+
+        self_role.minerals = self_role.minerals - mineral_cost
+        self_role.gas = self_role.gas - gas_cost
+        clear_worker_gather_loop(obj)
+        start_worker_build_task(obj, owner_role_id, objects, build_kind)
+        self_role.ui_status = "Constructing " + object_kind_name(build_kind) + "..."
+        return
+
+    self_role.ui_status = "Select one Worker."
+
+
+@callable
+def issue_upgrade_command_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    upgrade_kind: str,
+):
+    if self_role.selected_count != 1:
+        self_role.ui_status = "Select one Academy."
+        return
+
+    selected_uid = self_role.selected_uid
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != selected_uid:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.object_kind != "academy":
+            self_role.ui_status = "Select Academy for upgrades."
+            return
+        if obj.task_active:
+            self_role.ui_status = "Academy is busy."
+            return
+
+        if upgrade_kind == "attack":
+            if self_role.attack_upgrade_level >= MAX_UPGRADE_LEVEL:
+                self_role.ui_status = "Attack already maxed."
+                return
+            if can_afford(
+                self_role,
+                UPGRADE_COST_ATTACK_MINERALS,
+                UPGRADE_COST_ATTACK_GAS,
+            ) == False:
+                self_role.ui_status = "Not enough resources for Attack upgrade."
+                return
+            self_role.minerals = self_role.minerals - UPGRADE_COST_ATTACK_MINERALS
+            self_role.gas = self_role.gas - UPGRADE_COST_ATTACK_GAS
+            start_academy_research_task(obj, "attack")
+            self_role.ui_status = "Researching Attack..."
+            return
+
+        if self_role.armor_upgrade_level >= MAX_UPGRADE_LEVEL:
+            self_role.ui_status = "Armor already maxed."
+            return
+        if can_afford(
+            self_role,
+            UPGRADE_COST_ARMOR_MINERALS,
+            UPGRADE_COST_ARMOR_GAS,
+        ) == False:
+            self_role.ui_status = "Not enough resources for Armor upgrade."
+            return
+        self_role.minerals = self_role.minerals - UPGRADE_COST_ARMOR_MINERALS
+        self_role.gas = self_role.gas - UPGRADE_COST_ARMOR_GAS
+        start_academy_research_task(obj, "armor")
+        self_role.ui_status = "Researching Armor..."
+        return
+
+    self_role.ui_status = "Select one Academy."
+
+
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_role_interface_human_1(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    if drag_rect.owner_role_id != PLAYER_1_ROLE_ID:
+        return
+    refresh_role_interface_state(self_role, PLAYER_1_ROLE_ID, objects)
+
+
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_role_interface_human_2(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    if drag_rect.owner_role_id != PLAYER_2_ROLE_ID:
+        return
+    refresh_role_interface_state(self_role, PLAYER_2_ROLE_ID, objects)
 
 
 @callable
@@ -1413,6 +2435,8 @@ def command_selected_units_for_role(
 
         if not is_selected:
             continue
+        if obj.task_active and is_worker_gather_task(obj.task_kind) == False:
+            continue
         if clicked_resource_uid != "":
             start_worker_gather_loop(
                 obj,
@@ -1452,6 +2476,134 @@ def update_drag_rect(
         drag_rect.w = 2
     if drag_rect.h < 2:
         drag_rect.h = 2
+
+
+@unsafe_condition(ButtonCondition.begin("train_worker", id="human_1"))
+def ui_train_worker_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_train_worker_for_role(self_role, PLAYER_1_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("build_hq", id="human_1"))
+def ui_build_hq_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "hq")
+
+
+@unsafe_condition(ButtonCondition.begin("build_supply_depot", id="human_1"))
+def ui_build_supply_depot_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "supply_depot")
+
+
+@unsafe_condition(ButtonCondition.begin("build_barracks", id="human_1"))
+def ui_build_barracks_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "barracks")
+
+
+@unsafe_condition(ButtonCondition.begin("build_academy", id="human_1"))
+def ui_build_academy_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "academy")
+
+
+@unsafe_condition(ButtonCondition.begin("build_starport", id="human_1"))
+def ui_build_starport_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "starport")
+
+
+@unsafe_condition(ButtonCondition.begin("upgrade_attack", id="human_1"))
+def ui_upgrade_attack_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_upgrade_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "attack")
+
+
+@unsafe_condition(ButtonCondition.begin("upgrade_armor", id="human_1"))
+def ui_upgrade_armor_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_upgrade_command_for_role(self_role, PLAYER_1_ROLE_ID, objects, "armor")
+
+
+@unsafe_condition(ButtonCondition.begin("train_worker", id="human_2"))
+def ui_train_worker_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_train_worker_for_role(self_role, PLAYER_2_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("build_hq", id="human_2"))
+def ui_build_hq_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "hq")
+
+
+@unsafe_condition(ButtonCondition.begin("build_supply_depot", id="human_2"))
+def ui_build_supply_depot_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "supply_depot")
+
+
+@unsafe_condition(ButtonCondition.begin("build_barracks", id="human_2"))
+def ui_build_barracks_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "barracks")
+
+
+@unsafe_condition(ButtonCondition.begin("build_academy", id="human_2"))
+def ui_build_academy_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "academy")
+
+
+@unsafe_condition(ButtonCondition.begin("build_starport", id="human_2"))
+def ui_build_starport_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_build_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "starport")
+
+
+@unsafe_condition(ButtonCondition.begin("upgrade_attack", id="human_2"))
+def ui_upgrade_attack_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_upgrade_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "attack")
+
+
+@unsafe_condition(ButtonCondition.begin("upgrade_armor", id="human_2"))
+def ui_upgrade_armor_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_upgrade_command_for_role(self_role, PLAYER_2_ROLE_ID, objects, "armor")
 
 
 @unsafe_condition(KeyboardCondition.on_press("d", id="human_1"))

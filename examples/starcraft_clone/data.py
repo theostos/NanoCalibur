@@ -51,6 +51,16 @@ class RTSObject(Actor):
     gather_hq_uid: str
     carrying_kind: str
     carrying_amount: int
+    task_active: bool
+    task_kind: str
+    task_label: str
+    task_elapsed_ticks: int
+    task_total_ticks: int
+    task_build_kind: str
+    task_build_x: float
+    task_build_y: float
+    task_resource_kind: str
+    task_resource_amount: int
 
 
 class SelectionMarker(Actor):
@@ -100,6 +110,16 @@ scene.add_actor(
         gather_hq_uid="",
         carrying_kind="",
         carrying_amount=0,
+        task_active=False,
+        task_kind="",
+        task_label="",
+        task_elapsed_ticks=0,
+        task_total_ticks=0,
+        task_build_kind="",
+        task_build_x=0,
+        task_build_y=0,
+        task_resource_kind="",
+        task_resource_amount=0,
         sprite="worker_p1",
     )
 )
@@ -134,6 +154,16 @@ scene.add_actor(
         gather_hq_uid="",
         carrying_kind="",
         carrying_amount=0,
+        task_active=False,
+        task_kind="",
+        task_label="",
+        task_elapsed_ticks=0,
+        task_total_ticks=0,
+        task_build_kind="",
+        task_build_x=0,
+        task_build_y=0,
+        task_resource_kind="",
+        task_resource_amount=0,
         sprite="hq_p1",
     )
 )
@@ -169,6 +199,16 @@ scene.add_actor(
         gather_hq_uid="",
         carrying_kind="",
         carrying_amount=0,
+        task_active=False,
+        task_kind="",
+        task_label="",
+        task_elapsed_ticks=0,
+        task_total_ticks=0,
+        task_build_kind="",
+        task_build_x=0,
+        task_build_y=0,
+        task_resource_kind="",
+        task_resource_amount=0,
         sprite="worker_p2",
     )
 )
@@ -203,6 +243,16 @@ scene.add_actor(
         gather_hq_uid="",
         carrying_kind="",
         carrying_amount=0,
+        task_active=False,
+        task_kind="",
+        task_label="",
+        task_elapsed_ticks=0,
+        task_total_ticks=0,
+        task_build_kind="",
+        task_build_x=0,
+        task_build_y=0,
+        task_resource_kind="",
+        task_resource_amount=0,
         sprite="hq_p2",
     )
 )

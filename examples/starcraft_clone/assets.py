@@ -134,5 +134,85 @@ game.add_sprite(
         description="vespene geyser",
     )
 )
+game.add_sprite(
+    ColorSprite(
+        name="supply_depot_p1",
+        frame_width=48,
+        frame_height=48,
+        color=Color(103, 214, 186, symbol="S", description="player 1 supply depot"),
+        symbol="S",
+        description="player 1 supply depot",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="supply_depot_p2",
+        frame_width=48,
+        frame_height=48,
+        color=Color(214, 147, 103, symbol="S", description="player 2 supply depot"),
+        symbol="S",
+        description="player 2 supply depot",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="barracks_p1",
+        frame_width=56,
+        frame_height=56,
+        color=Color(86, 178, 241, symbol="B", description="player 1 barracks"),
+        symbol="B",
+        description="player 1 barracks",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="barracks_p2",
+        frame_width=56,
+        frame_height=56,
+        color=Color(220, 130, 90, symbol="B", description="player 2 barracks"),
+        symbol="B",
+        description="player 2 barracks",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="academy_p1",
+        frame_width=54,
+        frame_height=54,
+        color=Color(126, 169, 255, symbol="A", description="player 1 academy"),
+        symbol="A",
+        description="player 1 academy",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="academy_p2",
+        frame_width=54,
+        frame_height=54,
+        color=Color(230, 136, 124, symbol="A", description="player 2 academy"),
+        symbol="A",
+        description="player 2 academy",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="starport_p1",
+        frame_width=60,
+        frame_height=60,
+        color=Color(92, 162, 255, symbol="P", description="player 1 starport"),
+        symbol="P",
+        description="player 1 starport",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="starport_p2",
+        frame_width=60,
+        frame_height=60,
+        color=Color(219, 126, 102, symbol="P", description="player 2 starport"),
+        symbol="P",
+        description="player 2 starport",
+    )
+)
 
 CodeBlock.end("resources_and_sprites")

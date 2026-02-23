@@ -4,30 +4,60 @@
     left: 0;
     right: 0;
     bottom: 0;
-    min-height: 84px;
+    min-height: 170px;
     padding: 10px 14px;
     box-sizing: border-box;
-    background: linear-gradient(180deg, rgba(8, 10, 14, 0.88), rgba(5, 7, 10, 0.96));
+    background: linear-gradient(180deg, rgba(8, 10, 14, 0.9), rgba(5, 7, 10, 0.98));
     border-top: 1px solid rgba(145, 168, 198, 0.45);
     color: #d8e6ff;
     font-family: monospace;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 24px;
+    gap: 20px;
   "
 >
-  <div>
+  <div style="min-width: 250px">
     <div>Role: {{role.id}}</div>
     <div>Minerals: {{role.minerals}}</div>
     <div>Gas: {{role.gas}}</div>
     <div>Supply: {{role.supply_used}} / {{role.supply_cap}}</div>
+    <div>Upgrades: Atk {{role.attack_upgrade_level}} | Arm {{role.armor_upgrade_level}}</div>
+    <div>Owned: HQ {{role.has_hq}}, Depot {{role.has_supply_depot}}, Barracks {{role.has_barracks}}, Academy {{role.has_academy}}, Starport {{role.has_starport}}</div>
+    <div>Status: {{role.ui_status}}</div>
   </div>
-  <div style="text-align: right">
-    <div>Selection: {{role.selected_name}}</div>
+
+  <div style="min-width: 260px">
+    <div>Selection: {{role.selected_name}} ({{role.selected_kind}})</div>
+    <div>HP: {{role.selected_hp}} / {{role.selected_max_hp}}</div>
+    <div>Task: {{role.selected_task_label}}</div>
+    <div>{{role.selected_task_bar}} {{role.selected_task_percent}}%</div>
+    <div>ETA: {{role.selected_task_seconds_left}}s</div>
     <div>Selection Count: {{role.selected_count}}</div>
     <div>Selection UID: {{role.selected_uid}}</div>
     <div>Selected UIDs: {{role.selected_uids}}</div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 4px; min-width: 360px">
+    <div style="margin-bottom: 2px">Commands (selection-sensitive):</div>
+    <div style="display: flex; gap: 6px; flex-wrap: wrap">
+      <button data-button="train_worker">Train Worker</button>
+      <button data-button="build_hq">Build HQ</button>
+      <button data-button="build_supply_depot">Build Supply Depot</button>
+      <button data-button="build_barracks">Build Barracks</button>
+      <button data-button="build_academy">Build Academy</button>
+      <button data-button="build_starport">Build Starport</button>
+      <button data-button="upgrade_attack">Upgrade Attack</button>
+      <button data-button="upgrade_armor">Upgrade Armor</button>
+    </div>
+    <div>Train Worker Ready: {{role.can_train_worker}}</div>
+    <div>Build HQ Ready: {{role.can_build_hq}}</div>
+    <div>Build Supply Depot Ready: {{role.can_build_supply_depot}}</div>
+    <div>Build Barracks Ready: {{role.can_build_barracks}}</div>
+    <div>Build Academy Ready: {{role.can_build_academy}}</div>
+    <div>Build Starport Ready: {{role.can_build_starport}}</div>
+    <div>Upgrade Attack Ready: {{role.can_upgrade_attack}}</div>
+    <div>Upgrade Armor Ready: {{role.can_upgrade_armor}}</div>
     <div>Elapsed: {{__scene_elapsed}}</div>
   </div>
 </div>
