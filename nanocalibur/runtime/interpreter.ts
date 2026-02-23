@@ -866,7 +866,7 @@ export class NanoCaliburInterpreter {
       const phase = condition.phase || "on";
       const roleKey = this.resolveInputRoleKey(frame);
       const button = typeof condition.button === "string" ? condition.button : "left";
-      if (!this.matchMousePhase(frame, phase, button)) {
+      if (!this.matchMousePhase(frame, phase, button, roleKey)) {
         return { matched: false };
       }
       return {
@@ -1024,7 +1024,17 @@ export class NanoCaliburInterpreter {
     frame: NanoCaliburFrameInput,
     phase: string,
     button: string,
+    roleKey: string,
   ): boolean {
+    // An end event without an active press state is a stale duplicate and
+    // should not match role-scoped mouse end conditions.
+    if (phase === "end") {
+      const tickMap = this.mousePressedTickByRole.get(roleKey);
+      if (!tickMap || !tickMap.has(button)) {
+        return false;
+      }
+    }
+
     const phases = this.resolveMousePhases(frame);
     if (
       phase === "on"

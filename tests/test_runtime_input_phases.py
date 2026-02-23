@@ -96,6 +96,94 @@ def test_runtime_keyboard_and_mouse_phase_matching(tmp_path):
     assert values["ms_end"] == 1
 
 
+def test_runtime_mouse_end_requires_active_press_state(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    runtime_path = compiled_dir / "interpreter.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "ms_end", kind: "int", value: 0 }}
+          ],
+          predicates: [],
+          rules: [
+            {{ condition: {{ kind: "mouse", phase: "end", button: "left", role_id: "human_1" }}, action: "inc_ms_end" }}
+          ]
+        }};
+
+        const actions = {{
+          inc_ms_end: (ctx) => {{
+            ctx.globals.ms_end = ctx.globals.ms_end + 1;
+          }}
+        }};
+
+        const i = new NanoCaliburInterpreter(spec, actions, {{}});
+
+        // Stray end without begin should not match.
+        i.tick({{
+          role_id: "human_1",
+          mouse: {{ begin: [], on: [], end: ["left"] }},
+          mousePosition: {{ x: 1, y: 1 }},
+        }});
+
+        // Valid press + release should match once.
+        i.tick({{
+          role_id: "human_1",
+          mouse: {{ begin: ["left"], on: ["left"], end: [] }},
+          mousePosition: {{ x: 2, y: 2 }},
+        }});
+        i.tick({{
+          role_id: "human_1",
+          mouse: {{ begin: [], on: [], end: ["left"] }},
+          mousePosition: {{ x: 3, y: 3 }},
+        }});
+
+        // Duplicate end after release should not match again.
+        i.tick({{
+          role_id: "human_1",
+          mouse: {{ begin: [], on: [], end: ["left"] }},
+          mousePosition: {{ x: 4, y: 4 }},
+        }});
+
+        console.log(JSON.stringify(i.getState().globals.ms_end));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    count = json.loads(proc.stdout.strip())
+    assert count == 1
+
+
 def test_runtime_keyboard_normalization_and_scene_aliases(tmp_path):
     root = Path(__file__).resolve().parent.parent
     runtime_ts_path = root / "nanocalibur" / "runtime" / "interpreter.ts"
