@@ -1,10 +1,12 @@
 from nanocalibur.dsl_markers import CodeBlock, HumanRole, Interface, RoleKind
 
-from .shared import game, scene
+from .shared import MAP_HEIGHT_TILES, MAP_WIDTH_TILES, game, scene
 
 
 CodeBlock.begin("multiplayer_roles")
 """Two-player setup with shared RTS resources and per-role selection state."""
+
+FOG_TILE_COUNT = MAP_WIDTH_TILES * MAP_HEIGHT_TILES
 
 
 class RTSRole(HumanRole):
@@ -62,6 +64,9 @@ class RTSRole(HumanRole):
     disable_upgrade_attack: bool
     disable_upgrade_armor: bool
     disable_cancel_construction: bool
+    fog_visible_tiles: list[int]
+    fog_explored_tiles: list[int]
+    fog_memory_tiles: list[str]
     ui_status: str
 
 
@@ -124,6 +129,9 @@ game.add_role(
         disable_upgrade_attack=True,
         disable_upgrade_armor=True,
         disable_cancel_construction=True,
+        fog_visible_tiles=[0] * FOG_TILE_COUNT,
+        fog_explored_tiles=[0] * FOG_TILE_COUNT,
+        fog_memory_tiles=[""] * FOG_TILE_COUNT,
         ui_status="Ready",
     )
 )
@@ -186,6 +194,9 @@ game.add_role(
         disable_upgrade_attack=True,
         disable_upgrade_armor=True,
         disable_cancel_construction=True,
+        fog_visible_tiles=[0] * FOG_TILE_COUNT,
+        fog_explored_tiles=[0] * FOG_TILE_COUNT,
+        fog_memory_tiles=[""] * FOG_TILE_COUNT,
         ui_status="Ready",
     )
 )

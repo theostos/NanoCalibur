@@ -1,6 +1,6 @@
 from nanocalibur.dsl_markers import Actor, CodeBlock
 
-from .shared import WORLD_HEIGHT_PX, WORLD_WIDTH_PX, scene
+from .shared import TILE_SIZE, VIEWPORT_TILES_H, VIEWPORT_TILES_W, WORLD_HEIGHT_PX, WORLD_WIDTH_PX, scene
 
 
 CodeBlock.begin("actors_and_spawn")
@@ -27,6 +27,7 @@ P2_MINERAL_NODE_2_UID = "p2_mineral_node_2"
 P2_GAS_NODE_1_UID = "p2_gas_node_1"
 SELECTION_MARKER_POOL_SIZE = 12
 HEALTH_BAR_POOL_SIZE = 256
+FOG_CELL_POOL_SIZE = VIEWPORT_TILES_W * VIEWPORT_TILES_H
 
 
 class RTSObject(Actor):
@@ -43,6 +44,7 @@ class RTSObject(Actor):
     construction_site: bool
     selection_name: str
     move_speed: int
+    vision_range: int
     path_tiles_x: list[int]
     path_tiles_y: list[int]
     path_cursor: int
@@ -94,6 +96,11 @@ class HealthBarFill(Actor):
     slot_index: int
 
 
+class FogCell(Actor):
+    owner_role_id: str
+    slot_index: int
+
+
 scene.add_actor(
     RTSObject(
         uid=P1_WORKER_UID,
@@ -116,6 +123,7 @@ scene.add_actor(
         construction_site=False,
         selection_name="Worker",
         move_speed=220,
+        vision_range=192,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
@@ -166,6 +174,7 @@ scene.add_actor(
         construction_site=False,
         selection_name="HQ",
         move_speed=0,
+        vision_range=256,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
@@ -217,6 +226,7 @@ scene.add_actor(
         construction_site=False,
         selection_name="Worker",
         move_speed=220,
+        vision_range=192,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
@@ -267,6 +277,7 @@ scene.add_actor(
         construction_site=False,
         selection_name="HQ",
         move_speed=0,
+        vision_range=256,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
@@ -514,6 +525,38 @@ for bar_idx in range(HEALTH_BAR_POOL_SIZE):
             block_mask=None,
             slot_index=bar_idx,
             sprite="health_bar_fill_ok",
+        )
+    )
+
+for fog_idx in range(FOG_CELL_POOL_SIZE):
+    scene.add_actor(
+        FogCell(
+            uid=f"p1_fog_cell_{fog_idx}",
+            x=0,
+            y=0,
+            w=TILE_SIZE,
+            h=TILE_SIZE,
+            z=120,
+            active=False,
+            block_mask=None,
+            owner_role_id=PLAYER_1_ROLE_ID,
+            slot_index=fog_idx,
+            sprite="fog_unexplored",
+        )
+    )
+    scene.add_actor(
+        FogCell(
+            uid=f"p2_fog_cell_{fog_idx}",
+            x=0,
+            y=0,
+            w=TILE_SIZE,
+            h=TILE_SIZE,
+            z=120,
+            active=False,
+            block_mask=None,
+            owner_role_id=PLAYER_2_ROLE_ID,
+            slot_index=fog_idx,
+            sprite="fog_unexplored",
         )
     )
 

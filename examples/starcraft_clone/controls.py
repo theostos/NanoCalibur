@@ -15,7 +15,9 @@ from nanocalibur.dsl_markers import (
 )
 
 from .data import (
+    FOG_CELL_POOL_SIZE,
     HEALTH_BAR_POOL_SIZE,
+    FogCell,
     HealthBarBackground,
     HealthBarFill,
     PLAYER_1_ROLE_ID,
@@ -32,6 +34,8 @@ from .shared import (
     MAP_HEIGHT_TILES,
     MAP_WIDTH_TILES,
     TILE_SIZE,
+    VIEWPORT_TILES_H,
+    VIEWPORT_TILES_W,
     WORLD_HEIGHT_PX,
     WORLD_WIDTH_PX,
 )
@@ -91,6 +95,8 @@ UPGRADE_COST_ARMOR_MINERALS = 100
 UPGRADE_COST_ARMOR_GAS = 100
 MAX_UPGRADE_LEVEL = 3
 CONSTRUCTION_CANCEL_REFUND_PERCENT = 75
+FOG_TOTAL_TILES = MAP_WIDTH_TILES * MAP_HEIGHT_TILES
+FOG_MEMORY_NONE = ""
 
 
 @callable
@@ -676,6 +682,23 @@ def object_kind_hp(object_kind: str) -> int:
 
 
 @callable
+def object_kind_vision_range(object_kind: str) -> int:
+    if object_kind == "worker":
+        return 192
+    if object_kind == "hq":
+        return 256
+    if object_kind == "supply_depot":
+        return 192
+    if object_kind == "barracks":
+        return 224
+    if object_kind == "academy":
+        return 224
+    if object_kind == "starport":
+        return 240
+    return 192
+
+
+@callable
 def object_kind_mineral_cost(object_kind: str) -> int:
     if object_kind == "worker":
         return WORKER_TRAIN_MINERAL_COST
@@ -738,6 +761,283 @@ def object_kind_sprite(object_kind: str, team_id: int) -> str:
     if team_id == 1:
         return "worker_p1"
     return "worker_p2"
+
+
+@callable
+def fog_memory_kind_to_sprite(memory_kind: str) -> str:
+    if memory_kind == "hq":
+        return "fog_memory_hq"
+    if memory_kind == "supply_depot":
+        return "fog_memory_supply_depot"
+    if memory_kind == "barracks":
+        return "fog_memory_barracks"
+    if memory_kind == "academy":
+        return "fog_memory_academy"
+    if memory_kind == "starport":
+        return "fog_memory_starport"
+    if memory_kind == "mineral":
+        return "fog_memory_mineral"
+    if memory_kind == "gas":
+        return "fog_memory_gas"
+    return "fog_explored"
+
+
+@callable
+def ensure_role_fog_buffers(self_role: RTSRole):
+    return
+
+
+@callable
+def clear_role_visible_tiles(self_role: RTSRole):
+    for tile_idx in range(FOG_TOTAL_TILES):
+        self_role.fog_visible_tiles[tile_idx] = 0
+
+
+@callable
+def mark_role_visibility_from_source(
+    self_role: RTSRole,
+    source_x: float,
+    source_y: float,
+    source_w: float,
+    source_h: float,
+    vision_range: int,
+):
+    if vision_range <= 0:
+        return
+    if source_w <= 0:
+        source_w = 1
+    if source_h <= 0:
+        source_h = 1
+
+    range_sq = vision_range * vision_range
+    min_tile_x = world_to_tile_x(source_x - (source_w / 2) - vision_range)
+    max_tile_x = world_to_tile_x(source_x + (source_w / 2) + vision_range)
+    min_tile_y = world_to_tile_y(source_y - (source_h / 2) - vision_range)
+    max_tile_y = world_to_tile_y(source_y + (source_h / 2) + vision_range)
+
+    for tile_y in range(min_tile_y, max_tile_y + 1):
+        for tile_x in range(min_tile_x, max_tile_x + 1):
+            tile_x_world = tile_center_x(tile_x)
+            tile_y_world = tile_center_y(tile_y)
+            dist_sq = squared_distance_to_box(
+                tile_x_world,
+                tile_y_world,
+                source_x,
+                source_y,
+                source_w,
+                source_h,
+            )
+            if dist_sq > range_sq:
+                continue
+            tile_idx = tile_node(tile_x, tile_y)
+            self_role.fog_visible_tiles[tile_idx] = 1
+            self_role.fog_explored_tiles[tile_idx] = 1
+
+
+@callable
+def recompute_role_visibility(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    clear_role_visible_tiles(self_role)
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.hp <= 0:
+            continue
+        vision_range = obj.vision_range
+        if vision_range <= 0:
+            vision_range = object_kind_vision_range(obj.object_kind)
+        if vision_range <= 0:
+            continue
+        mark_role_visibility_from_source(
+            self_role,
+            obj.x,
+            obj.y,
+            obj.w,
+            obj.h,
+            vision_range,
+        )
+
+
+@callable
+def clear_visible_memory_tiles(self_role: RTSRole):
+    for tile_idx in range(FOG_TOTAL_TILES):
+        if self_role.fog_visible_tiles[tile_idx] == 1:
+            self_role.fog_memory_tiles[tile_idx] = FOG_MEMORY_NONE
+
+
+@callable
+def object_memory_kind(obj: RTSObject) -> str:
+    if obj.can_move:
+        return FOG_MEMORY_NONE
+    if obj.object_kind == "hq":
+        return "hq"
+    if obj.object_kind == "supply_depot":
+        return "supply_depot"
+    if obj.object_kind == "barracks":
+        return "barracks"
+    if obj.object_kind == "academy":
+        return "academy"
+    if obj.object_kind == "starport":
+        return "starport"
+    return FOG_MEMORY_NONE
+
+
+@callable
+def write_memory_for_box_if_visible(
+    self_role: RTSRole,
+    center_x: float,
+    center_y: float,
+    box_w: float,
+    box_h: float,
+    memory_kind: str,
+):
+    if memory_kind == FOG_MEMORY_NONE:
+        return
+    if box_w <= 0:
+        box_w = 1
+    if box_h <= 0:
+        box_h = 1
+
+    left_world = center_x - (box_w / 2) + 1
+    right_world = center_x + (box_w / 2) - 1
+    top_world = center_y - (box_h / 2) + 1
+    bottom_world = center_y + (box_h / 2) - 1
+    min_tile_x = world_to_tile_x(left_world)
+    max_tile_x = world_to_tile_x(right_world)
+    min_tile_y = world_to_tile_y(top_world)
+    max_tile_y = world_to_tile_y(bottom_world)
+
+    for tile_y in range(min_tile_y, max_tile_y + 1):
+        for tile_x in range(min_tile_x, max_tile_x + 1):
+            tile_idx = tile_node(tile_x, tile_y)
+            if self_role.fog_visible_tiles[tile_idx] != 1:
+                continue
+            self_role.fog_memory_tiles[tile_idx] = memory_kind
+
+
+@callable
+def refresh_role_memory_tiles(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    clear_visible_memory_tiles(self_role)
+
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.owner_role_id == owner_role_id:
+            continue
+        memory_kind = object_memory_kind(obj)
+        if memory_kind == FOG_MEMORY_NONE:
+            continue
+        write_memory_for_box_if_visible(
+            self_role,
+            obj.x,
+            obj.y,
+            obj.w,
+            obj.h,
+            memory_kind,
+        )
+
+    for resource in resources:
+        if resource.active == False:
+            continue
+        memory_kind = FOG_MEMORY_NONE
+        if resource.resource_kind == "mineral":
+            memory_kind = "mineral"
+        elif resource.resource_kind == "gas":
+            memory_kind = "gas"
+        if memory_kind == FOG_MEMORY_NONE:
+            continue
+        write_memory_for_box_if_visible(
+            self_role,
+            resource.x,
+            resource.y,
+            resource.w,
+            resource.h,
+            memory_kind,
+        )
+
+
+@callable
+def role_world_point_is_visible(
+    self_role: RTSRole,
+    world_x: float,
+    world_y: float,
+) -> bool:
+    tile_x = world_to_tile_x(world_x)
+    tile_y = world_to_tile_y(world_y)
+    tile_idx = tile_node(tile_x, tile_y)
+    return self_role.fog_visible_tiles[tile_idx] == 1
+
+
+@callable
+def refresh_fog_cells_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    camera_x: float,
+    camera_y: float,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+    fog_cells: List[FogCell],
+):
+    ensure_role_fog_buffers(self_role)
+    recompute_role_visibility(self_role, owner_role_id, objects)
+    refresh_role_memory_tiles(self_role, owner_role_id, objects, resources)
+
+    camera_left_world = clamp_camera_x(camera_x) - HALF_VIEW_W_PX
+    camera_top_world = clamp_camera_y(camera_y) - HALF_VIEW_H_PX
+
+    for fog_cell in fog_cells:
+        if fog_cell.owner_role_id != owner_role_id:
+            continue
+        if fog_cell.slot_index < 0 or fog_cell.slot_index >= FOG_CELL_POOL_SIZE:
+            fog_cell.active = False
+            continue
+
+        slot_x = fog_cell.slot_index
+        slot_y = 0
+        while slot_x >= VIEWPORT_TILES_W:
+            slot_x = slot_x - VIEWPORT_TILES_W
+            slot_y = slot_y + 1
+
+        if slot_y < 0 or slot_y >= VIEWPORT_TILES_H:
+            fog_cell.active = False
+            continue
+
+        probe_x = camera_left_world + (slot_x * TILE_SIZE) + (TILE_SIZE / 2)
+        probe_y = camera_top_world + (slot_y * TILE_SIZE) + (TILE_SIZE / 2)
+        tile_x = world_to_tile_x(probe_x)
+        tile_y = world_to_tile_y(probe_y)
+        tile_idx = tile_node(tile_x, tile_y)
+
+        fog_cell.x = probe_x
+        fog_cell.y = probe_y
+        fog_cell.w = TILE_SIZE
+        fog_cell.h = TILE_SIZE
+        fog_cell.z = 120
+
+        if self_role.fog_visible_tiles[tile_idx] == 1:
+            fog_cell.active = False
+            continue
+
+        fog_cell.active = True
+        if self_role.fog_explored_tiles[tile_idx] != 1:
+            fog_cell.sprite = "fog_unexplored"
+            continue
+
+        memory_kind = self_role.fog_memory_tiles[tile_idx]
+        if memory_kind == FOG_MEMORY_NONE:
+            fog_cell.sprite = "fog_explored"
+        else:
+            fog_cell.sprite = fog_memory_kind_to_sprite(memory_kind)
 
 
 @callable
@@ -897,6 +1197,7 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             construction_site=False,
             selection_name=object_kind_name("worker"),
             move_speed=220,
+            vision_range=object_kind_vision_range("worker"),
             path_tiles_x=[],
             path_tiles_y=[],
             path_cursor=0,
@@ -959,6 +1260,7 @@ def spawn_construction_site(
             construction_site=True,
             selection_name=object_kind_name(build_kind) + " (Constructing)",
             move_speed=0,
+            vision_range=object_kind_vision_range(build_kind),
             path_tiles_x=[],
             path_tiles_y=[],
             path_cursor=0,
@@ -2725,6 +3027,50 @@ def refresh_selection_markers_human_2(
     )
 
 
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_fog_cells_human_1(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_1"],
+    camera: Camera["camera_human_1"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+    fog_cells: List[FogCell],
+):
+    if drag_rect.owner_role_id != PLAYER_1_ROLE_ID:
+        return
+    refresh_fog_cells_for_role(
+        self_role,
+        PLAYER_1_ROLE_ID,
+        camera.x,
+        camera.y,
+        objects,
+        resources,
+        fog_cells,
+    )
+
+
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_fog_cells_human_2(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_2"],
+    camera: Camera["camera_human_2"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+    fog_cells: List[FogCell],
+):
+    if drag_rect.owner_role_id != PLAYER_2_ROLE_ID:
+        return
+    refresh_fog_cells_for_role(
+        self_role,
+        PLAYER_2_ROLE_ID,
+        camera.x,
+        camera.y,
+        objects,
+        resources,
+        fog_cells,
+    )
+
+
 @callable
 def clear_pending_build_for_role(self_role: RTSRole):
     self_role.pending_build_kind = ""
@@ -3499,17 +3845,20 @@ def command_selected_units_for_role(
     if self_role.selected_count <= 0:
         return
 
-    clicked_resource_uid = find_clicked_resource_uid(
-        target_world_x,
-        target_world_y,
-        resources,
-    )
-    clicked_site_uid = find_clicked_construction_site_uid(
-        target_world_x,
-        target_world_y,
-        owner_role_id,
-        objects,
-    )
+    clicked_resource_uid = ""
+    clicked_site_uid = ""
+    if role_world_point_is_visible(self_role, target_world_x, target_world_y):
+        clicked_resource_uid = find_clicked_resource_uid(
+            target_world_x,
+            target_world_y,
+            resources,
+        )
+        clicked_site_uid = find_clicked_construction_site_uid(
+            target_world_x,
+            target_world_y,
+            owner_role_id,
+            objects,
+        )
 
     selected_uids = self_role.selected_uids
     for obj in objects:

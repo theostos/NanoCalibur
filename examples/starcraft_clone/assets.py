@@ -1,6 +1,7 @@
 from nanocalibur.dsl_markers import CodeBlock, Color, ColorSprite
 
 from .shared import game
+from .shared import TILE_SIZE
 
 
 CodeBlock.begin("resources_and_sprites")
@@ -252,6 +253,96 @@ game.add_sprite(
         color=Color(225, 85, 85, a=0.95, symbol="-", description="health bar low"),
         symbol="-",
         description="health bar low",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_unexplored",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(4, 4, 8, a=0.98, symbol="?", description="unexplored shroud"),
+        symbol="?",
+        description="unexplored shroud",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_explored",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(18, 20, 24, a=0.95, symbol=":", description="explored fog"),
+        symbol=":",
+        description="explored fog",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_memory_hq",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(44, 52, 64, a=0.97, symbol="h", description="last seen HQ"),
+        symbol="h",
+        description="last seen HQ",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_memory_supply_depot",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(40, 58, 58, a=0.97, symbol="s", description="last seen supply depot"),
+        symbol="s",
+        description="last seen supply depot",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_memory_barracks",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(44, 52, 68, a=0.97, symbol="b", description="last seen barracks"),
+        symbol="b",
+        description="last seen barracks",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_memory_academy",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(50, 52, 70, a=0.97, symbol="a", description="last seen academy"),
+        symbol="a",
+        description="last seen academy",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_memory_starport",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(40, 48, 72, a=0.97, symbol="p", description="last seen starport"),
+        symbol="p",
+        description="last seen starport",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_memory_mineral",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(48, 66, 78, a=0.97, symbol="m", description="last seen mineral"),
+        symbol="m",
+        description="last seen mineral",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="fog_memory_gas",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(42, 74, 56, a=0.97, symbol="g", description="last seen gas"),
+        symbol="g",
+        description="last seen gas",
     )
 )
 
