@@ -444,9 +444,9 @@ def test_ts_emits_callable_helpers_and_invocations():
         """
     )
 
-    assert "export function next_x(x: any, offset: any): any {" in ts
+    assert "export function next_x(ctx: GameContext, x: any, offset: any): any {" in ts
     assert "let x: any;" in ts
-    assert "x = next_x(last_coin.x, 32);" in ts
+    assert "x = next_x(ctx, last_coin.x, 32);" in ts
 
 
 def test_ts_emits_void_callable_helpers_and_statement_invocations():
@@ -472,6 +472,35 @@ def test_ts_emits_void_callable_helpers_and_statement_invocations():
         """
     )
 
-    assert "export function activate(worker: any): void {" in ts
-    assert "activate(worker);" in ts
-    assert "return activate(worker);" not in ts
+    assert "export function activate(ctx: GameContext, worker: any): void {" in ts
+    assert "activate(ctx, worker);" in ts
+    assert "return activate(ctx, worker);" not in ts
+
+
+def test_ts_callable_with_scene_param_emits_ctx_scoped_scene_calls():
+    ts = compile_project_to_ts(
+        """
+        class Coin(Actor):
+            pass
+
+        @callable
+        def spawn_from_helper(scene: Scene, x: int):
+            scene.spawn(Coin(x=x, y=0, active=True))
+
+        @unsafe_condition(KeyboardCondition.begin_press("e", id="human_1"))
+        def spawn(scene: Scene, last_coin: Coin[-1]):
+            if last_coin is not None:
+                spawn_from_helper(scene, last_coin.x + 5)
+
+        game = Game()
+        game.add_role(Role(id="human_1", required=True, kind=RoleKind.HUMAN))
+        scene = Scene(gravity=False)
+        game.set_scene(scene)
+        scene.add_actor(Coin(uid="coin_1", x=0, y=0, active=True))
+        """
+    )
+
+    assert "export function spawn_from_helper(ctx: GameContext, scene: any, x: any): void {" in ts
+    assert "if (ctx.scene && ctx.scene.spawnActor) {" in ts
+    assert 'ctx.scene.spawnActor("Coin", "", { "x": x, "y": 0, "active": true });' in ts
+    assert "spawn_from_helper(ctx, scene, __nc_add(last_coin.x, 5));" in ts

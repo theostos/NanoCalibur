@@ -257,17 +257,19 @@ function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
         prefix = "export " if exported else ""
         returns_value = helper.return_expr is not None
         if typed:
-            params = ", ".join(f"{name}: any" for name in helper.params)
+            helper_params = ", ".join(f"{name}: any" for name in helper.params)
+            params = f"ctx: GameContext{', ' if helper_params else ''}{helper_params}"
             return_type = "any" if returns_value else "void"
             lines = [f"{prefix}function {helper.name}({params}): {return_type} {{"]
         else:
-            params = ", ".join(helper.params)
+            helper_params = ", ".join(helper.params)
+            params = f"ctx{', ' if helper_params else ''}{helper_params}"
             lines = [f"{prefix}function {helper.name}({params}) {{"]
 
         helper_local_names = [
             name
             for name in self._collect_assigned_var_names(helper.body)
-            if name not in set(helper.params)
+            if name not in (set(helper.params) | {"ctx"})
         ]
         for local_name in helper_local_names:
             if typed:
@@ -642,7 +644,9 @@ function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
             if stmt.name.startswith(CALLABLE_EXPR_PREFIX):
                 helper_name = stmt.name[len(CALLABLE_EXPR_PREFIX) :]
                 args = ", ".join(self._emit_expr(arg) for arg in stmt.args)
-                return [pad + f"{helper_name}({args});"]
+                if args:
+                    return [pad + f"{helper_name}(ctx, {args});"]
+                return [pad + f"{helper_name}(ctx);"]
             if stmt.name == "play_animation":
                 if len(stmt.args) != 2:
                     raise DSLValidationError(
@@ -1073,7 +1077,9 @@ function __nc_second_to_tick(seconds: any, ctx: GameContext): number {
                 return f"__nc_dict_items({args[0]})"
             if expr.name.startswith(CALLABLE_EXPR_PREFIX):
                 helper_name = expr.name[len(CALLABLE_EXPR_PREFIX) :]
-                return f"{helper_name}({', '.join(args)})"
+                if args:
+                    return f"{helper_name}(ctx, {', '.join(args)})"
+                return f"{helper_name}(ctx)"
             raise DSLValidationError(f"Unsupported builtin expression call: {expr.name}")
 
         raise DSLValidationError(f"Unsupported expression IR node: {type(expr).__name__}")
