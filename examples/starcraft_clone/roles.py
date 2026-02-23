@@ -21,7 +21,7 @@ class RTSRole(HumanRole):
     selected_max_hp: int
     selected_task_active: bool
     selected_task_label: str
-    selected_task_percent: float
+    selected_task_percent: int
     selected_task_bar: str
     selected_task_seconds_left: float
     can_train_worker: bool
@@ -39,6 +39,26 @@ class RTSRole(HumanRole):
     has_barracks: bool
     has_academy: bool
     has_starport: bool
+    pending_build_kind: str
+    pending_build_worker_uid: str
+    pending_build_name: str
+    build_placement_active: bool
+    hide_train_worker: bool
+    hide_build_hq: bool
+    hide_build_supply_depot: bool
+    hide_build_barracks: bool
+    hide_build_academy: bool
+    hide_build_starport: bool
+    hide_upgrade_attack: bool
+    hide_upgrade_armor: bool
+    disable_train_worker: bool
+    disable_build_hq: bool
+    disable_build_supply_depot: bool
+    disable_build_barracks: bool
+    disable_build_academy: bool
+    disable_build_starport: bool
+    disable_upgrade_attack: bool
+    disable_upgrade_armor: bool
     ui_status: str
 
 
@@ -47,7 +67,7 @@ game.add_role(
         id="human_1",
         required=True,
         kind=RoleKind.HUMAN,
-        minerals=50,
+        minerals=1500,
         gas=0,
         supply_used=1,
         supply_cap=10,
@@ -60,7 +80,7 @@ game.add_role(
         selected_max_hp=0,
         selected_task_active=False,
         selected_task_label="Idle",
-        selected_task_percent=0.0,
+        selected_task_percent=0,
         selected_task_bar="[....................]",
         selected_task_seconds_left=0.0,
         can_train_worker=False,
@@ -78,6 +98,26 @@ game.add_role(
         has_barracks=False,
         has_academy=False,
         has_starport=False,
+        pending_build_kind="",
+        pending_build_worker_uid="",
+        pending_build_name="",
+        build_placement_active=False,
+        hide_train_worker=True,
+        hide_build_hq=True,
+        hide_build_supply_depot=True,
+        hide_build_barracks=True,
+        hide_build_academy=True,
+        hide_build_starport=True,
+        hide_upgrade_attack=True,
+        hide_upgrade_armor=True,
+        disable_train_worker=True,
+        disable_build_hq=True,
+        disable_build_supply_depot=True,
+        disable_build_barracks=True,
+        disable_build_academy=True,
+        disable_build_starport=True,
+        disable_upgrade_attack=True,
+        disable_upgrade_armor=True,
         ui_status="Ready",
     )
 )
@@ -86,7 +126,7 @@ game.add_role(
         id="human_2",
         required=False,
         kind=RoleKind.HUMAN,
-        minerals=50,
+        minerals=1500,
         gas=0,
         supply_used=1,
         supply_cap=10,
@@ -99,7 +139,7 @@ game.add_role(
         selected_max_hp=0,
         selected_task_active=False,
         selected_task_label="Idle",
-        selected_task_percent=0.0,
+        selected_task_percent=0,
         selected_task_bar="[....................]",
         selected_task_seconds_left=0.0,
         can_train_worker=False,
@@ -117,6 +157,26 @@ game.add_role(
         has_barracks=False,
         has_academy=False,
         has_starport=False,
+        pending_build_kind="",
+        pending_build_worker_uid="",
+        pending_build_name="",
+        build_placement_active=False,
+        hide_train_worker=True,
+        hide_build_hq=True,
+        hide_build_supply_depot=True,
+        hide_build_barracks=True,
+        hide_build_academy=True,
+        hide_build_starport=True,
+        hide_upgrade_attack=True,
+        hide_upgrade_armor=True,
+        disable_train_worker=True,
+        disable_build_hq=True,
+        disable_build_supply_depot=True,
+        disable_build_barracks=True,
+        disable_build_academy=True,
+        disable_build_starport=True,
+        disable_upgrade_attack=True,
+        disable_upgrade_armor=True,
         ui_status="Ready",
     )
 )

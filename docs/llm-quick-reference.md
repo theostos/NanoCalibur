@@ -34,6 +34,11 @@ scene.add_rule(KeyboardCondition.on_press("move_right", Role["human_1"]), move_r
 - available in interface templates as `local.*`
 - never trusted server-side
 
+## Runtime Notes
+
+- Interface placeholders work in text and attributes (including boolean `hidden`/`disabled`).
+- Actor blocking is `block_mask`-based, with optional same-team moving pass-through when actors expose `can_move=True` and shared `team_id`.
+
 ## Build Command
 
 ```bash

@@ -179,6 +179,10 @@ Examples:
 - `OnOverlap(Player["hero"], Tile)` for actor-vs-blocking-tile overlap
 - `OnContact(Player["hero"], Coin)` for blocking contact events (equal `block_mask`)
 
+Collision runtime note:
+- Actor-vs-actor blocking is `block_mask`-based.
+- If both actors expose `can_move=True`, share the same `team_id`, and at least one is actively moving, runtime contact separation is skipped for that pair (same-team moving pass-through).
+
 ### Scene/Game Split
 
 - `Game` manages globals, resources, sprites, and active scene.
@@ -286,6 +290,8 @@ Built-in dynamic placeholders available in interface HTML:
 - `{{__scene_elapsed}}`
 - `{{role.<field>}}` for role-scoped values (for example `{{role.personal_score}}`)
 - `{{local.<field>}}` for client-local role values (for example `{{local.keybinds.move_up}}`)
+
+Placeholders can also be used inside HTML attributes. For boolean attributes like `hidden` and `disabled`, rendered values are coerced to boolean so UI buttons can be shown/hidden or enabled/disabled directly from role/global/local state.
 
 ### Code Blocks (Vibe Coding Workflow)
 
@@ -429,7 +435,7 @@ The standalone TypeScript runtime supports:
 - keyboard/mouse phase inputs
 - rule evaluation (`keyboard`, `mouse`, `collision`, `logical`, `tool`)
 - scene gravity toggle + actor spawn
-- mask-based tile/actor blocking
+- mask-based tile/actor blocking (with same-team moving-unit pass-through when `team_id`/`can_move` hints are provided)
 - sprite animation playback and image preloading
 - z-ordered rendering
 - headless symbolic rendering (`HeadlessHost`)

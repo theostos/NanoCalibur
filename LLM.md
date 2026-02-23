@@ -50,6 +50,7 @@ Per simulation step:
 - Blocking uses `block_mask`.
 - `OnOverlap` detects overlap.
 - `OnContact` tracks blocking contact (same `block_mask` group behavior).
+- Runtime skip rule: if two actors both expose `can_move=True`, have the same `team_id`, and at least one has moving intent (`path_active` or non-zero velocity), actor-vs-actor separation/contact is skipped for that pair.
 - Parent attachment exists (`parent` field + attach/detach helpers).
 
 ## 4) Public API Surface (Stable)
@@ -439,6 +440,16 @@ You can call `scene.set_interface(...)` inside an action to swap UI state during
 ### 14.3 UI button events
 
 `ButtonCondition.begin("name")` fires when UI emits matching button event (`data-button="name"`).
+
+### 14.4 Attribute placeholders
+
+Template placeholders work in text nodes and HTML attributes.
+
+- Standard placeholders: `{{global_like_path}}`, `{{role.some_field}}`, `{{local.some_field}}`
+- Boolean attributes such as `hidden` and `disabled` are interpreted as booleans from rendered values.
+- This enables direct UI state wiring such as:
+  - `hidden="{{role.hide_train_worker}}"`
+  - `disabled="{{role.disable_train_worker}}"`
 
 ## 15) Local vs Authoritative State
 

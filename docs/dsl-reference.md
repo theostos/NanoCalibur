@@ -23,6 +23,10 @@ Use:
 
 `KeyboardCondition`, `MouseCondition`, and `OnToolCall` require a declared role id.
 
+Collision note:
+- Actor/tile blocking uses `block_mask`.
+- Same-team moving actors can be configured to pass through each other by exposing `can_move=True` and shared `team_id` (runtime also requires movement intent on at least one of them).
+
 ## Role Scoping
 
 Selectors:
@@ -94,6 +98,8 @@ Placeholders:
 Nested local access works for dict-like values, for example:
 
 - `{{local.keybinds.move_up}}`
+
+Placeholders also work in HTML attributes. Boolean attributes such as `hidden` and `disabled` are interpreted as booleans from rendered values, enabling direct UI state wiring.
 
 ## Camera Model
 

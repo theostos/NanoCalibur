@@ -28,6 +28,13 @@ Per simulation tick:
 5. Update animation state.
 6. Render frame (browser host).
 
+## Collision Model
+
+- Tile and actor blocking use `block_mask`.
+- `OnOverlap` is geometric overlap detection.
+- `OnContact` is blocking contact tracking.
+- Runtime pass-through optimization: same-team moving actors do not block each other when both expose `can_move=True`, share `team_id`, and at least one is moving.
+
 ## Safe vs Unsafe Conditions
 
 - Safe: server-authoritative (`OnOverlap`, `OnContact`, `OnLogicalCondition`).

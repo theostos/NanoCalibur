@@ -112,6 +112,8 @@ Note: interface HTML is not injected by default. Add it explicitly only when nee
 scene.set_interface("<div>Score: {{score}}</div>")
 ```
 
+Placeholders are supported in text and attributes. For example, `hidden="{{role.hide_panel}}"` and `disabled="{{role.disable_action}}"` can drive button/panel state directly.
+
 ## 3. Generate NanoCalibur Output
 
 Run from your project directory:

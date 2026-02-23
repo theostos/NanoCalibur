@@ -863,6 +863,192 @@ def test_moving_dynamic_actor_does_not_displace_idle_dynamic_actor(tmp_path):
     assert values["heroAX"] < 112
 
 
+def test_same_team_moving_units_pass_through_each_other(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        const physics = new PhysicsSystem({{}});
+        physics.setMap({{
+          width: 20,
+          height: 20,
+          tile_size: 32,
+          tile_grid: Array.from({{ length: 20 }}, () => Array.from({{ length: 20 }}, () => 0)),
+          tile_defs: {{}}
+        }});
+
+        const actors = [
+          {{
+            uid: "ally_a",
+            type: "Player",
+            x: 100,
+            y: 100,
+            w: 32,
+            h: 32,
+            vx: 120,
+            vy: 0,
+            can_move: true,
+            team_id: 1,
+            active: true,
+            block_mask: 1
+          }},
+          {{
+            uid: "ally_b",
+            type: "Player",
+            x: 136,
+            y: 100,
+            w: 32,
+            h: 32,
+            vx: 0,
+            vy: 0,
+            can_move: true,
+            team_id: 1,
+            active: true,
+            block_mask: 1
+          }}
+        ];
+
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0.1);
+        physics.resolvePostActionSolidCollisions();
+        physics.writeBodiesToActors(actors);
+
+        console.log(JSON.stringify({{
+          allyAX: actors[0].x,
+          allyBX: actors[1].x
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert abs(values["allyAX"] - 112) < 0.001
+    assert values["allyBX"] == 136
+
+
+def test_different_team_units_still_block_each_other(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(physics_ts_path),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    physics_js_path = compiled_dir / "physics.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ PhysicsSystem }} = require({json.dumps(str(physics_js_path))});
+
+        const physics = new PhysicsSystem({{}});
+        physics.setMap({{
+          width: 20,
+          height: 20,
+          tile_size: 32,
+          tile_grid: Array.from({{ length: 20 }}, () => Array.from({{ length: 20 }}, () => 0)),
+          tile_defs: {{}}
+        }});
+
+        const actors = [
+          {{
+            uid: "team1",
+            type: "Player",
+            x: 100,
+            y: 100,
+            w: 32,
+            h: 32,
+            vx: 120,
+            vy: 0,
+            can_move: true,
+            team_id: 1,
+            active: true,
+            block_mask: 1
+          }},
+          {{
+            uid: "team2",
+            type: "Player",
+            x: 136,
+            y: 100,
+            w: 32,
+            h: 32,
+            vx: 0,
+            vy: 0,
+            can_move: true,
+            team_id: 2,
+            active: true,
+            block_mask: 1
+          }}
+        ];
+
+        physics.syncBodiesFromActors(actors, false);
+        physics.integrate(0.1);
+        physics.resolvePostActionSolidCollisions();
+        physics.writeBodiesToActors(actors);
+
+        console.log(JSON.stringify({{
+          team1X: actors[0].x,
+          team2X: actors[1].x
+        }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    values = json.loads(proc.stdout.strip())
+    assert values["team2X"] == 136
+    assert values["team1X"] < 112
+
+
 def test_parented_actor_touching_parent_does_not_block_parent_motion(tmp_path):
     root = Path(__file__).resolve().parent.parent
     physics_ts_path = root / "nanocalibur" / "runtime" / "canvas" / "physics.ts"

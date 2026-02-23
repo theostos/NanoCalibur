@@ -180,6 +180,9 @@ export interface PhysicsBodyRuntime {
   w: number;
   h: number;
   blockMask: number | null;
+  teamId: string | null;
+  canMove: boolean;
+  movingIntent: boolean;
   vx: number;
   vy: number;
   onGround: boolean;

@@ -77,6 +77,7 @@ Then run your web app (for the demo project, `cd nanocalibur-demo && npm run bui
 - `OnOverlap(A, B)` for overlap checks.
 - `OnContact(A, B)` for blocking contact checks.
 - Blocking is controlled by `block_mask`.
+- Runtime special case: if two actors have `can_move=True`, share a `team_id`, and at least one is moving, they pass through each other instead of blocking.
 
 ## Audio
 

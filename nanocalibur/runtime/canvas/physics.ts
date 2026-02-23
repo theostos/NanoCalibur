@@ -89,6 +89,8 @@ export class PhysicsSystem {
       body.w = actorWidth(actor);
       body.h = actorHeight(actor);
       body.blockMask = this.resolveActorMask(actor);
+      body.teamId = this.resolveActorTeamId(actor);
+      body.canMove = this.resolveActorCanMove(actor);
       body.active = actor.active !== false;
       body.parentUid =
         typeof actor.parent === "string" && actor.parent.trim().length > 0
@@ -99,6 +101,7 @@ export class PhysicsSystem {
 
       body.vx = asNumber(actor.vx, body.vx);
       body.vy = asNumber(actor.vy, body.vy);
+      body.movingIntent = this.resolveActorMovingIntent(actor, body.vx, body.vy);
     }
 
     for (const uid of this.bodies.keys()) {
@@ -186,6 +189,9 @@ export class PhysicsSystem {
             continue;
           }
           if (this.areBodiesDirectlyAttached(a, b)) {
+            continue;
+          }
+          if (this.shouldSkipSameTeamMovingCollision(a, b)) {
             continue;
           }
 
@@ -282,6 +288,9 @@ export class PhysicsSystem {
         if (bodyA.blockMask !== bodyB.blockMask) {
           continue;
         }
+        if (this.shouldSkipSameTeamMovingCollision(bodyA, bodyB)) {
+          continue;
+        }
         if (this.areBodiesTouchingOrOverlapping(bodyA, bodyB)) {
           contacts.push({ aUid: a.uid, bUid: b.uid });
         }
@@ -367,6 +376,13 @@ export class PhysicsSystem {
       w: actorWidth(actor),
       h: actorHeight(actor),
       blockMask: this.resolveActorMask(actor),
+      teamId: this.resolveActorTeamId(actor),
+      canMove: this.resolveActorCanMove(actor),
+      movingIntent: this.resolveActorMovingIntent(
+        actor,
+        asNumber(actor.vx, 0),
+        asNumber(actor.vy, 0),
+      ),
       vx: asNumber(actor.vx, 0),
       vy: asNumber(actor.vy, 0),
       onGround: false,
@@ -764,6 +780,33 @@ export class PhysicsSystem {
     return this.normalizeMaskValue(actor.block_mask);
   }
 
+  private resolveActorTeamId(actor: ActorState): string | null {
+    const teamRaw = actor.team_id;
+    if (typeof teamRaw === "string") {
+      const trimmed = teamRaw.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+    if (typeof teamRaw === "number" && Number.isFinite(teamRaw)) {
+      return String(Math.trunc(teamRaw));
+    }
+    return null;
+  }
+
+  private resolveActorCanMove(actor: ActorState): boolean {
+    return actor.can_move === true;
+  }
+
+  private resolveActorMovingIntent(
+    actor: ActorState,
+    resolvedVx: number,
+    resolvedVy: number,
+  ): boolean {
+    if (actor.path_active === true) {
+      return true;
+    }
+    return Math.abs(resolvedVx) > EPSILON || Math.abs(resolvedVy) > EPSILON;
+  }
+
   private normalizeMaskValue(value: unknown): number | null {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       return null;
@@ -782,6 +825,25 @@ export class PhysicsSystem {
     const tolerance = EPSILON * 2;
 
     return dx <= halfW + tolerance && dy <= halfH + tolerance;
+  }
+
+  private shouldSkipSameTeamMovingCollision(
+    a: PhysicsBodyRuntime,
+    b: PhysicsBodyRuntime,
+  ): boolean {
+    if (!a.canMove || !b.canMove) {
+      return false;
+    }
+    if (a.teamId === null || b.teamId === null) {
+      return false;
+    }
+    if (a.teamId !== b.teamId) {
+      return false;
+    }
+    if (!a.movingIntent && !b.movingIntent) {
+      return false;
+    }
+    return true;
   }
 
   private isTileBlockingForActorMask(

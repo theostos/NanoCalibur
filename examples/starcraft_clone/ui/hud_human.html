@@ -41,15 +41,17 @@
   <div style="display: flex; flex-direction: column; gap: 4px; min-width: 360px">
     <div style="margin-bottom: 2px">Commands (selection-sensitive):</div>
     <div style="display: flex; gap: 6px; flex-wrap: wrap">
-      <button data-button="train_worker">Train Worker</button>
-      <button data-button="build_hq">Build HQ</button>
-      <button data-button="build_supply_depot">Build Supply Depot</button>
-      <button data-button="build_barracks">Build Barracks</button>
-      <button data-button="build_academy">Build Academy</button>
-      <button data-button="build_starport">Build Starport</button>
-      <button data-button="upgrade_attack">Upgrade Attack</button>
-      <button data-button="upgrade_armor">Upgrade Armor</button>
+      <button data-button="train_worker" hidden="{{role.hide_train_worker}}" disabled="{{role.disable_train_worker}}">Train Worker</button>
+      <button data-button="build_hq" hidden="{{role.hide_build_hq}}" disabled="{{role.disable_build_hq}}">Build HQ</button>
+      <button data-button="build_supply_depot" hidden="{{role.hide_build_supply_depot}}" disabled="{{role.disable_build_supply_depot}}">Build Supply Depot</button>
+      <button data-button="build_barracks" hidden="{{role.hide_build_barracks}}" disabled="{{role.disable_build_barracks}}">Build Barracks</button>
+      <button data-button="build_academy" hidden="{{role.hide_build_academy}}" disabled="{{role.disable_build_academy}}">Build Academy</button>
+      <button data-button="build_starport" hidden="{{role.hide_build_starport}}" disabled="{{role.disable_build_starport}}">Build Starport</button>
+      <button data-button="upgrade_attack" hidden="{{role.hide_upgrade_attack}}" disabled="{{role.disable_upgrade_attack}}">Upgrade Attack</button>
+      <button data-button="upgrade_armor" hidden="{{role.hide_upgrade_armor}}" disabled="{{role.disable_upgrade_armor}}">Upgrade Armor</button>
     </div>
+    <div>Build Placement: {{role.pending_build_name}}</div>
+    <div>Placement Active: {{role.build_placement_active}}</div>
     <div>Train Worker Ready: {{role.can_train_worker}}</div>
     <div>Build HQ Ready: {{role.can_build_hq}}</div>
     <div>Build Supply Depot Ready: {{role.can_build_supply_depot}}</div>

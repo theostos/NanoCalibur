@@ -38,6 +38,8 @@ class RTSObject(Actor):
     mineral_cost: int
     gas_cost: int
     supply_cost: int
+    usable: bool
+    construction_site: bool
     selection_name: str
     move_speed: int
     path_tiles_x: list[int]
@@ -57,6 +59,7 @@ class RTSObject(Actor):
     task_elapsed_ticks: int
     task_total_ticks: int
     task_build_kind: str
+    task_build_uid: str
     task_build_x: float
     task_build_y: float
     task_resource_kind: str
@@ -97,6 +100,8 @@ scene.add_actor(
         mineral_cost=50,
         gas_cost=0,
         supply_cost=1,
+        usable=True,
+        construction_site=False,
         selection_name="Worker",
         move_speed=220,
         path_tiles_x=[],
@@ -116,6 +121,7 @@ scene.add_actor(
         task_elapsed_ticks=0,
         task_total_ticks=0,
         task_build_kind="",
+        task_build_uid="",
         task_build_x=0,
         task_build_y=0,
         task_resource_kind="",
@@ -141,6 +147,8 @@ scene.add_actor(
         mineral_cost=400,
         gas_cost=0,
         supply_cost=0,
+        usable=True,
+        construction_site=False,
         selection_name="HQ",
         move_speed=0,
         path_tiles_x=[],
@@ -160,6 +168,7 @@ scene.add_actor(
         task_elapsed_ticks=0,
         task_total_ticks=0,
         task_build_kind="",
+        task_build_uid="",
         task_build_x=0,
         task_build_y=0,
         task_resource_kind="",
@@ -186,6 +195,8 @@ scene.add_actor(
         mineral_cost=50,
         gas_cost=0,
         supply_cost=1,
+        usable=True,
+        construction_site=False,
         selection_name="Worker",
         move_speed=220,
         path_tiles_x=[],
@@ -205,6 +216,7 @@ scene.add_actor(
         task_elapsed_ticks=0,
         task_total_ticks=0,
         task_build_kind="",
+        task_build_uid="",
         task_build_x=0,
         task_build_y=0,
         task_resource_kind="",
@@ -230,6 +242,8 @@ scene.add_actor(
         mineral_cost=400,
         gas_cost=0,
         supply_cost=0,
+        usable=True,
+        construction_site=False,
         selection_name="HQ",
         move_speed=0,
         path_tiles_x=[],
@@ -249,6 +263,7 @@ scene.add_actor(
         task_elapsed_ticks=0,
         task_total_ticks=0,
         task_build_kind="",
+        task_build_uid="",
         task_build_x=0,
         task_build_y=0,
         task_resource_kind="",

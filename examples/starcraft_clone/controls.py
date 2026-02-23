@@ -47,11 +47,12 @@ RESOURCE_HARVEST_GAS = 6
 PATH_BLOCK_SHRINK_STATIC_PX = 8
 PATH_BLOCK_SHRINK_RESOURCE_PX = 8
 PROGRESS_BAR_SEGMENTS = 20
-BUILD_PLACEMENT_STEP_PX = 72
-
 RESOURCE_MINE_DURATION_MINERAL_TICKS = PHYSICS_STEP_HZ * 3
 RESOURCE_MINE_DURATION_GAS_TICKS = PHYSICS_STEP_HZ * 4
 RESOURCE_UNLOAD_DURATION_TICKS = PHYSICS_STEP_HZ
+CONSTRUCTION_PROGRESS_PER_WORKER_TICK = 1
+BUILD_WORKER_INSIDE_DISTANCE_SQ = 4.0
+BUILD_RELEASE_DISTANCE = 22
 
 WORKER_TRAIN_TIME_TICKS = PHYSICS_STEP_HZ * 4
 WORKER_TRAIN_MINERAL_COST = 50
@@ -490,6 +491,7 @@ def clear_object_task(obj: RTSObject):
     obj.task_elapsed_ticks = 0
     obj.task_total_ticks = 0
     obj.task_build_kind = ""
+    obj.task_build_uid = ""
     obj.task_build_x = 0
     obj.task_build_y = 0
     obj.task_resource_kind = ""
@@ -506,6 +508,7 @@ def start_object_task(obj: RTSObject, task_kind: str, task_label: str, total_tic
     obj.task_elapsed_ticks = 0
     obj.task_total_ticks = total_ticks
     obj.task_build_kind = ""
+    obj.task_build_uid = ""
     obj.task_build_x = 0
     obj.task_build_y = 0
     obj.task_resource_kind = ""
@@ -518,12 +521,26 @@ def is_worker_gather_task(task_kind: str) -> bool:
 
 
 @callable
-def task_progress_percent(obj: RTSObject) -> float:
+def is_worker_construction_task(task_kind: str) -> bool:
+    return task_kind == "construct_site"
+
+
+@callable
+def is_construction_site_task(task_kind: str) -> bool:
+    return task_kind == "construction_site"
+
+
+@callable
+def task_progress_percent(obj: RTSObject) -> int:
     if obj.task_active == False:
         return 0
     if obj.task_total_ticks <= 0:
         return 0
-    value = (obj.task_elapsed_ticks * 100.0) / obj.task_total_ticks
+    scaled = obj.task_elapsed_ticks * 100
+    value = 0
+    while scaled >= obj.task_total_ticks and value < 100:
+        scaled = scaled - obj.task_total_ticks
+        value = value + 1
     if value < 0:
         return 0
     if value > 100:
@@ -702,22 +719,10 @@ def has_owned_object_kind(owner_role_id: str, objects: List[RTSObject], object_k
             continue
         if obj.object_kind != object_kind:
             continue
+        if obj.usable == False:
+            continue
         return True
     return False
-
-
-@callable
-def count_owned_object_kind(owner_role_id: str, objects: List[RTSObject], object_kind: str) -> int:
-    count = 0
-    for obj in objects:
-        if obj.active == False:
-            continue
-        if obj.owner_role_id != owner_role_id:
-            continue
-        if obj.object_kind != object_kind:
-            continue
-        count = count + 1
-    return count
 
 
 @callable
@@ -751,71 +756,44 @@ def can_afford(role: RTSRole, mineral_cost: int, gas_cost: int) -> bool:
 
 
 @callable
-def compute_build_target_x(
-    worker: RTSObject,
-    owner_role_id: str,
-    objects: List[RTSObject],
-    build_kind: str,
-) -> float:
-    base_offset_x = 96
-    if build_kind == "hq":
-        base_offset_x = 128
-    if build_kind == "starport":
-        base_offset_x = 160
-
-    existing_count = count_owned_object_kind(owner_role_id, objects, build_kind)
-    column = existing_count
-    while column >= 4:
-        column = column - 4
-    target_x = worker.x + base_offset_x + (column * BUILD_PLACEMENT_STEP_PX)
-    return clamp_world_x_for_size(target_x, object_kind_w(build_kind))
-
-
-@callable
-def compute_build_target_y(
-    worker: RTSObject,
-    owner_role_id: str,
-    objects: List[RTSObject],
-    build_kind: str,
-) -> float:
-    base_offset_y = 0
-    if build_kind == "hq":
-        base_offset_y = 128
-    if build_kind == "supply_depot":
-        base_offset_y = -72
-    if build_kind == "barracks":
-        base_offset_y = 72
-    if build_kind == "academy":
-        base_offset_y = 144
-    if build_kind == "starport":
-        base_offset_y = -144
-
-    existing_count = count_owned_object_kind(owner_role_id, objects, build_kind)
-    row = 0
-    while existing_count >= 4:
-        existing_count = existing_count - 4
-        row = row + 1
-    target_y = worker.y + base_offset_y + (row * BUILD_PLACEMENT_STEP_PX)
-    return clamp_world_y_for_size(target_y, object_kind_h(build_kind))
-
-
-@callable
 def start_hq_worker_training(hq: RTSObject):
     start_object_task(hq, "train_worker", "Training Worker", WORKER_TRAIN_TIME_TICKS)
 
 
 @callable
-def start_worker_build_task(
+def start_worker_construction_task(
     worker: RTSObject,
-    owner_role_id: str,
-    objects: List[RTSObject],
     build_kind: str,
+    site_uid: str,
+    site_world_x: float,
+    site_world_y: float,
 ):
-    task_label = "Building " + object_kind_name(build_kind)
-    start_object_task(worker, "build_structure", task_label, build_kind_time_ticks(build_kind))
+    task_label = "Constructing " + object_kind_name(build_kind)
+    start_object_task(worker, "construct_site", task_label, build_kind_time_ticks(build_kind))
     worker.task_build_kind = build_kind
-    worker.task_build_x = compute_build_target_x(worker, owner_role_id, objects, build_kind)
-    worker.task_build_y = compute_build_target_y(worker, owner_role_id, objects, build_kind)
+    worker.task_build_uid = site_uid
+    worker.task_build_x = clamp_world_x_for_size(site_world_x, object_kind_w(build_kind))
+    worker.task_build_y = clamp_world_y_for_size(site_world_y, object_kind_h(build_kind))
+
+
+@callable
+def initial_construction_hp(max_hp: int, elapsed_ticks: int, total_ticks: int) -> int:
+    if max_hp <= 1:
+        return 1
+    if total_ticks <= 0:
+        return max_hp
+    if elapsed_ticks <= 0:
+        return 1
+    scaled = max_hp * elapsed_ticks
+    value = 0
+    while scaled >= total_ticks and value < max_hp:
+        scaled = scaled - total_ticks
+        value = value + 1
+    if value < 1:
+        return 1
+    if value > max_hp:
+        return max_hp
+    return value
 
 
 @callable
@@ -858,6 +836,8 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             mineral_cost=object_kind_mineral_cost("worker"),
             gas_cost=object_kind_gas_cost("worker"),
             supply_cost=1,
+            usable=True,
+            construction_site=False,
             selection_name=object_kind_name("worker"),
             move_speed=220,
             path_tiles_x=[],
@@ -877,6 +857,7 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             task_elapsed_ticks=0,
             task_total_ticks=0,
             task_build_kind="",
+            task_build_uid="",
             task_build_x=0,
             task_build_y=0,
             task_resource_kind="",
@@ -887,7 +868,7 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
 
 
 @callable
-def spawn_completed_structure(
+def spawn_construction_site(
     scene: Scene,
     owner_role_id: str,
     team_id: int,
@@ -895,6 +876,8 @@ def spawn_completed_structure(
     spawn_x: float,
     spawn_y: float,
 ):
+    total_ticks = build_kind_time_ticks(build_kind)
+    initial_hp = initial_construction_hp(object_kind_hp(build_kind), 1, total_ticks)
     scene.spawn(
         RTSObject(
             x=spawn_x,
@@ -902,17 +885,19 @@ def spawn_completed_structure(
             w=object_kind_w(build_kind),
             h=object_kind_h(build_kind),
             z=2,
-            block_mask=1,
+            block_mask=None,
             owner_role_id=owner_role_id,
             team_id=team_id,
             object_kind=build_kind,
             can_move=False,
             max_hp=object_kind_hp(build_kind),
-            hp=object_kind_hp(build_kind),
+            hp=initial_hp,
             mineral_cost=object_kind_mineral_cost(build_kind),
             gas_cost=object_kind_gas_cost(build_kind),
             supply_cost=0,
-            selection_name=object_kind_name(build_kind),
+            usable=False,
+            construction_site=True,
+            selection_name=object_kind_name(build_kind) + " (Constructing)",
             move_speed=0,
             path_tiles_x=[],
             path_tiles_y=[],
@@ -925,14 +910,15 @@ def spawn_completed_structure(
             gather_hq_uid="",
             carrying_kind="",
             carrying_amount=0,
-            task_active=False,
-            task_kind="",
-            task_label="",
-            task_elapsed_ticks=0,
-            task_total_ticks=0,
-            task_build_kind="",
-            task_build_x=0,
-            task_build_y=0,
+            task_active=True,
+            task_kind="construction_site",
+            task_label="Under Construction",
+            task_elapsed_ticks=1,
+            task_total_ticks=total_ticks,
+            task_build_kind=build_kind,
+            task_build_uid="",
+            task_build_x=spawn_x,
+            task_build_y=spawn_y,
             task_resource_kind="",
             task_resource_amount=0,
             sprite=object_kind_sprite(build_kind, team_id),
@@ -946,7 +932,6 @@ def should_process_timed_object_tasks(obj: RTSObject) -> bool:
         and obj.task_active
         and (
             obj.task_kind == "train_worker"
-            or obj.task_kind == "build_structure"
             or obj.task_kind == "research_attack"
             or obj.task_kind == "research_armor"
         )
@@ -970,29 +955,12 @@ def process_timed_object_task(
         return
 
     finished_task = obj.task_kind
-    finished_build_kind = obj.task_build_kind
-    finished_build_x = obj.task_build_x
-    finished_build_y = obj.task_build_y
     clear_object_task(obj)
 
     if finished_task == "train_worker":
         spawn_worker_from_hq(scene, obj)
         role.supply_used = role.supply_used + WORKER_TRAIN_SUPPLY_COST
         role.ui_status = "Worker ready."
-        return
-
-    if finished_task == "build_structure":
-        spawn_completed_structure(
-            scene,
-            obj.owner_role_id,
-            obj.team_id,
-            finished_build_kind,
-            finished_build_x,
-            finished_build_y,
-        )
-        role.ui_status = object_kind_name(finished_build_kind) + " complete."
-        if finished_build_kind == "supply_depot":
-            role.supply_cap = role.supply_cap + SUPPLY_DEPOT_SUPPLY_BONUS
         return
 
     if finished_task == "research_attack":
@@ -1034,11 +1002,90 @@ def clear_worker_gather_loop(worker: RTSObject):
     worker.carrying_amount = 0
     if is_worker_gather_task(worker.task_kind):
         clear_object_task(worker)
-    clear_move_path(worker)
+    if worker.path_active:
+        clear_move_path(worker)
 
 
 @callable
-def find_closest_hq_uid(owner_role_id: str, worker: RTSObject, objects: List[RTSObject]) -> str:
+def clear_worker_construction_task(worker: RTSObject):
+    if is_worker_construction_task(worker.task_kind):
+        clear_object_task(worker)
+    if worker.path_active:
+        clear_move_path(worker)
+
+
+@callable
+def clear_worker_activity(worker: RTSObject):
+    clear_worker_gather_loop(worker)
+    clear_worker_construction_task(worker)
+
+
+@callable
+def is_under_construction_site(obj: RTSObject) -> bool:
+    return (
+        obj.active
+        and obj.can_move == False
+        and obj.construction_site
+        and obj.usable == False
+        and obj.task_active
+        and is_construction_site_task(obj.task_kind)
+    )
+
+
+@callable
+def is_worker_inside_site(worker: RTSObject, site: RTSObject) -> bool:
+    return (
+        squared_distance_to_box(worker.x, worker.y, site.x, site.y, site.w, site.h)
+        <= BUILD_WORKER_INSIDE_DISTANCE_SQ
+    )
+
+
+@callable
+def worker_targets_site(worker: RTSObject, site: RTSObject) -> bool:
+    if worker.task_build_kind != site.object_kind:
+        return False
+    if worker.task_build_uid != "":
+        return worker.task_build_uid == site.uid
+    return squared_distance(worker.task_build_x, worker.task_build_y, site.x, site.y) <= 4
+
+
+@callable
+def nudge_worker_outside_site(worker: RTSObject, site: RTSObject, release_index: int):
+    ring = 0
+    direction = release_index
+    while direction >= 4:
+        direction = direction - 4
+        ring = ring + 1
+
+    distance = (site.w / 2) + (worker.w / 2) + BUILD_RELEASE_DISTANCE + (ring * 8)
+    release_x = site.x
+    release_y = site.y
+    if direction == 0:
+        release_x = site.x + distance
+        release_y = site.y
+    elif direction == 1:
+        release_x = site.x - distance
+        release_y = site.y
+    elif direction == 2:
+        release_x = site.x
+        release_y = site.y + distance
+    else:
+        release_x = site.x
+        release_y = site.y - distance
+
+    worker.x = clamp_world_x_for_size(release_x, worker.w)
+    worker.y = clamp_world_y_for_size(release_y, worker.h)
+    worker.vx = 0
+    worker.vy = 0
+
+
+@callable
+def find_closest_hq_uid_to_point(
+    owner_role_id: str,
+    target_x: float,
+    target_y: float,
+    objects: List[RTSObject],
+) -> str:
     closest_hq_uid = ""
     closest_dist_sq = 999999999999.0
     for obj in objects:
@@ -1049,7 +1096,7 @@ def find_closest_hq_uid(owner_role_id: str, worker: RTSObject, objects: List[RTS
         if obj.object_kind != "hq":
             continue
 
-        dist_sq = squared_distance(worker.x, worker.y, obj.x, obj.y)
+        dist_sq = squared_distance(target_x, target_y, obj.x, obj.y)
         if dist_sq < closest_dist_sq:
             closest_hq_uid = obj.uid
             closest_dist_sq = dist_sq
@@ -1089,6 +1136,59 @@ def find_clicked_resource_uid(
 
 
 @callable
+def find_clicked_construction_site_uid(
+    target_world_x: float,
+    target_world_y: float,
+    owner_role_id: str,
+    objects: List[RTSObject],
+) -> str:
+    clicked_uid = ""
+    clicked_z = -999999
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if is_under_construction_site(obj) == False:
+            continue
+        half_w = obj.w / 2
+        half_h = obj.h / 2
+        inside = (
+            target_world_x >= obj.x - half_w
+            and target_world_x <= obj.x + half_w
+            and target_world_y >= obj.y - half_h
+            and target_world_y <= obj.y + half_h
+        )
+        if not inside:
+            continue
+        if obj.z < clicked_z:
+            continue
+        clicked_uid = obj.uid
+        clicked_z = obj.z
+    return clicked_uid
+
+
+@callable
+def assign_worker_to_construction_site(
+    worker: RTSObject,
+    site: RTSObject,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    clear_worker_activity(worker)
+    start_worker_construction_task(worker, site.object_kind, site.uid, site.x, site.y)
+    if is_worker_inside_site(worker, site):
+        if worker.path_active:
+            clear_move_path(worker)
+        worker.x = site.x
+        worker.y = site.y
+        worker.vx = 0
+        worker.vy = 0
+    else:
+        build_worker_path(worker, objects, resources, site.x, site.y)
+
+
+@callable
 def start_worker_gather_loop(
     worker: RTSObject,
     objects: List[RTSObject],
@@ -1119,7 +1219,12 @@ def start_worker_gather_loop(
         clear_worker_gather_loop(worker)
         return
 
-    nearest_hq_uid = find_closest_hq_uid(worker.owner_role_id, worker, objects)
+    nearest_hq_uid = find_closest_hq_uid_to_point(
+        worker.owner_role_id,
+        target_resource_x,
+        target_resource_y,
+        objects,
+    )
     if nearest_hq_uid == "":
         clear_worker_gather_loop(worker)
         return
@@ -1161,6 +1266,10 @@ def build_worker_path(
         if obj.active == False:
             continue
         if obj.uid == unit.uid:
+            continue
+        if obj.block_mask is None:
+            continue
+        if obj.can_move and obj.team_id == unit.team_id:
             continue
 
         block_shrink_px = 0
@@ -1632,7 +1741,12 @@ def process_worker_gather(
         hq_found = True
 
     if not hq_found:
-        new_hq_uid = find_closest_hq_uid(worker.owner_role_id, worker, objects)
+        new_hq_uid = find_closest_hq_uid_to_point(
+            worker.owner_role_id,
+            target_resource_x,
+            target_resource_y,
+            objects,
+        )
         worker.gather_hq_uid = new_hq_uid
         if new_hq_uid == "":
             clear_worker_gather_loop(worker)
@@ -1871,6 +1985,170 @@ def process_gather_for_human_2(
     process_worker_gather(worker, role, PLAYER_2_ROLE_ID, objects, resources)
 
 
+def should_process_construction_site(obj: RTSObject) -> bool:
+    return is_under_construction_site(obj)
+
+
+@callable
+def process_construction_site(
+    site: RTSObject,
+    role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    if site.owner_role_id != owner_role_id:
+        return
+    if is_under_construction_site(site) == False:
+        return
+    if site.hp <= 0:
+        site.destroy()
+        for worker in objects:
+            if worker.active == False:
+                continue
+            if worker.owner_role_id != owner_role_id:
+                continue
+            if worker.object_kind != "worker":
+                continue
+            if is_worker_construction_task(worker.task_kind) == False:
+                continue
+            if worker_targets_site(worker, site) == False:
+                continue
+            clear_object_task(worker)
+        return
+
+    worker_count = 0
+    for worker in objects:
+        if worker.active == False:
+            continue
+        if worker.owner_role_id != owner_role_id:
+            continue
+        if worker.object_kind != "worker":
+            continue
+        if worker.task_active == False:
+            continue
+        if is_worker_construction_task(worker.task_kind) == False:
+            continue
+        if worker_targets_site(worker, site) == False:
+            continue
+
+        if worker.task_build_uid == "":
+            worker.task_build_uid = site.uid
+        worker.task_elapsed_ticks = site.task_elapsed_ticks
+        worker.task_total_ticks = site.task_total_ticks
+
+        if is_worker_inside_site(worker, site):
+            if worker.path_active:
+                clear_move_path(worker)
+            worker.x = site.x
+            worker.y = site.y
+            worker.vx = 0
+            worker.vy = 0
+            worker_count = worker_count + 1
+            continue
+
+        if worker.path_active == False:
+            build_worker_path(worker, objects, resources, site.x, site.y)
+
+    if worker_count <= 0:
+        site.hp = initial_construction_hp(site.max_hp, site.task_elapsed_ticks, site.task_total_ticks)
+        return
+
+    site.task_elapsed_ticks = site.task_elapsed_ticks + (
+        worker_count * CONSTRUCTION_PROGRESS_PER_WORKER_TICK
+    )
+    if site.task_elapsed_ticks > site.task_total_ticks:
+        site.task_elapsed_ticks = site.task_total_ticks
+    site.hp = initial_construction_hp(site.max_hp, site.task_elapsed_ticks, site.task_total_ticks)
+
+    if site.task_elapsed_ticks < site.task_total_ticks:
+        return
+
+    site.usable = True
+    site.construction_site = False
+    site.block_mask = 1
+    site.selection_name = object_kind_name(site.object_kind)
+    clear_object_task(site)
+    site.hp = site.max_hp
+    if site.object_kind == "supply_depot":
+        role.supply_cap = role.supply_cap + SUPPLY_DEPOT_SUPPLY_BONUS
+    role.ui_status = object_kind_name(site.object_kind) + " complete."
+
+    release_index = 0
+    for worker in objects:
+        if worker.active == False:
+            continue
+        if worker.owner_role_id != owner_role_id:
+            continue
+        if worker.object_kind != "worker":
+            continue
+        if is_worker_construction_task(worker.task_kind) == False:
+            continue
+        if worker_targets_site(worker, site) == False:
+            continue
+        clear_object_task(worker)
+        nudge_worker_outside_site(worker, site, release_index)
+        release_index = release_index + 1
+
+
+@safe_condition(OnLogicalCondition(should_process_construction_site, RTSObject))
+def process_construction_site_human_1(
+    site: RTSObject,
+    role: RTSRole["human_1"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    process_construction_site(site, role, PLAYER_1_ROLE_ID, objects, resources)
+
+
+@safe_condition(OnLogicalCondition(should_process_construction_site, RTSObject))
+def process_construction_site_human_2(
+    site: RTSObject,
+    role: RTSRole["human_2"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    process_construction_site(site, role, PLAYER_2_ROLE_ID, objects, resources)
+
+
+def should_validate_worker_construction_task(worker: RTSObject) -> bool:
+    return worker.active and worker.task_active and is_worker_construction_task(worker.task_kind)
+
+
+@callable
+def validate_worker_construction_task(worker: RTSObject, objects: List[RTSObject]):
+    found_site = False
+    for obj in objects:
+        if is_under_construction_site(obj) == False:
+            continue
+        if obj.owner_role_id != worker.owner_role_id:
+            continue
+        if worker_targets_site(worker, obj):
+            found_site = True
+    if not found_site:
+        clear_object_task(worker)
+
+
+@safe_condition(OnLogicalCondition(should_validate_worker_construction_task, RTSObject))
+def validate_worker_construction_task_human_1(
+    worker: RTSObject,
+    objects: List[RTSObject],
+):
+    if worker.owner_role_id != PLAYER_1_ROLE_ID:
+        return
+    validate_worker_construction_task(worker, objects)
+
+
+@safe_condition(OnLogicalCondition(should_validate_worker_construction_task, RTSObject))
+def validate_worker_construction_task_human_2(
+    worker: RTSObject,
+    objects: List[RTSObject],
+):
+    if worker.owner_role_id != PLAYER_2_ROLE_ID:
+        return
+    validate_worker_construction_task(worker, objects)
+
+
 @callable
 def refresh_selection_markers(
     owner_role_id: str,
@@ -1961,6 +2239,14 @@ def refresh_selection_markers_human_2(
 
 
 @callable
+def clear_pending_build_for_role(self_role: RTSRole):
+    self_role.pending_build_kind = ""
+    self_role.pending_build_worker_uid = ""
+    self_role.pending_build_name = ""
+    self_role.build_placement_active = False
+
+
+@callable
 def clear_role_action_flags(self_role: RTSRole):
     self_role.can_train_worker = False
     self_role.can_build_hq = False
@@ -1970,6 +2256,22 @@ def clear_role_action_flags(self_role: RTSRole):
     self_role.can_build_starport = False
     self_role.can_upgrade_attack = False
     self_role.can_upgrade_armor = False
+    self_role.hide_train_worker = True
+    self_role.hide_build_hq = True
+    self_role.hide_build_supply_depot = True
+    self_role.hide_build_barracks = True
+    self_role.hide_build_academy = True
+    self_role.hide_build_starport = True
+    self_role.hide_upgrade_attack = True
+    self_role.hide_upgrade_armor = True
+    self_role.disable_train_worker = True
+    self_role.disable_build_hq = True
+    self_role.disable_build_supply_depot = True
+    self_role.disable_build_barracks = True
+    self_role.disable_build_academy = True
+    self_role.disable_build_starport = True
+    self_role.disable_upgrade_attack = True
+    self_role.disable_upgrade_armor = True
 
 
 @callable
@@ -2028,14 +2330,19 @@ def refresh_role_interface_state(
     self_role.selected_task_seconds_left = 0
 
     if self_role.selected_count > 1:
+        if self_role.build_placement_active:
+            clear_pending_build_for_role(self_role)
         self_role.selected_kind = "group"
         self_role.selected_task_label = "Multiple units selected"
         return
     if self_role.selected_count <= 0:
+        if self_role.build_placement_active:
+            clear_pending_build_for_role(self_role)
         return
 
     selected_uid = self_role.selected_uid
     found_selected_obj = False
+    selected_worker_uid = ""
     for obj in objects:
         if obj.active == False:
             continue
@@ -2062,44 +2369,63 @@ def refresh_role_interface_state(
                 ticks_left = ticks_left - PHYSICS_STEP_HZ
             self_role.selected_task_seconds_left = seconds_left
 
-        if obj.object_kind == "hq":
-            self_role.can_train_worker = (
+        if obj.object_kind == "hq" and obj.usable != False:
+            can_train_worker = (
                 obj.task_active == False
                 and can_afford(self_role, WORKER_TRAIN_MINERAL_COST, WORKER_TRAIN_GAS_COST)
                 and (self_role.supply_used + WORKER_TRAIN_SUPPLY_COST) <= self_role.supply_cap
             )
+            self_role.can_train_worker = can_train_worker
+            self_role.hide_train_worker = False
+            self_role.disable_train_worker = can_train_worker == False
 
         if obj.object_kind == "worker":
-            can_build_now = obj.task_active == False
-            self_role.can_build_hq = (
+            selected_worker_uid = obj.uid
+            can_build_now = obj.task_active == False or is_worker_gather_task(obj.task_kind)
+            can_build_hq = (
                 can_build_now
                 and has_build_requirements(owner_role_id, objects, "hq")
                 and can_afford(self_role, COST_HQ_MINERALS, COST_HQ_GAS)
             )
-            self_role.can_build_supply_depot = (
+            can_build_supply_depot = (
                 can_build_now
                 and has_build_requirements(owner_role_id, objects, "supply_depot")
                 and can_afford(self_role, COST_SUPPLY_DEPOT_MINERALS, COST_SUPPLY_DEPOT_GAS)
             )
-            self_role.can_build_barracks = (
+            can_build_barracks = (
                 can_build_now
                 and has_build_requirements(owner_role_id, objects, "barracks")
                 and can_afford(self_role, COST_BARRACKS_MINERALS, COST_BARRACKS_GAS)
             )
-            self_role.can_build_academy = (
+            can_build_academy = (
                 can_build_now
                 and has_build_requirements(owner_role_id, objects, "academy")
                 and can_afford(self_role, COST_ACADEMY_MINERALS, COST_ACADEMY_GAS)
             )
-            self_role.can_build_starport = (
+            can_build_starport = (
                 can_build_now
                 and has_build_requirements(owner_role_id, objects, "starport")
                 and can_afford(self_role, COST_STARPORT_MINERALS, COST_STARPORT_GAS)
             )
+            self_role.can_build_hq = can_build_hq
+            self_role.can_build_supply_depot = can_build_supply_depot
+            self_role.can_build_barracks = can_build_barracks
+            self_role.can_build_academy = can_build_academy
+            self_role.can_build_starport = can_build_starport
+            self_role.hide_build_hq = False
+            self_role.hide_build_supply_depot = False
+            self_role.hide_build_barracks = False
+            self_role.hide_build_academy = False
+            self_role.hide_build_starport = False
+            self_role.disable_build_hq = can_build_hq == False
+            self_role.disable_build_supply_depot = can_build_supply_depot == False
+            self_role.disable_build_barracks = can_build_barracks == False
+            self_role.disable_build_academy = can_build_academy == False
+            self_role.disable_build_starport = can_build_starport == False
 
-        if obj.object_kind == "academy":
+        if obj.object_kind == "academy" and obj.usable != False:
             can_research_now = obj.task_active == False
-            self_role.can_upgrade_attack = (
+            can_upgrade_attack = (
                 can_research_now
                 and self_role.attack_upgrade_level < MAX_UPGRADE_LEVEL
                 and can_afford(
@@ -2108,7 +2434,7 @@ def refresh_role_interface_state(
                     UPGRADE_COST_ATTACK_GAS,
                 )
             )
-            self_role.can_upgrade_armor = (
+            can_upgrade_armor = (
                 can_research_now
                 and self_role.armor_upgrade_level < MAX_UPGRADE_LEVEL
                 and can_afford(
@@ -2117,6 +2443,12 @@ def refresh_role_interface_state(
                     UPGRADE_COST_ARMOR_GAS,
                 )
             )
+            self_role.can_upgrade_attack = can_upgrade_attack
+            self_role.can_upgrade_armor = can_upgrade_armor
+            self_role.hide_upgrade_attack = False
+            self_role.hide_upgrade_armor = False
+            self_role.disable_upgrade_attack = can_upgrade_attack == False
+            self_role.disable_upgrade_armor = can_upgrade_armor == False
 
     if not found_selected_obj:
         self_role.selected_uid = ""
@@ -2124,6 +2456,15 @@ def refresh_role_interface_state(
         self_role.selected_count = 0
         self_role.selected_uids = []
         self_role.selected_kind = "none"
+        if self_role.build_placement_active:
+            clear_pending_build_for_role(self_role)
+        return
+
+    if self_role.build_placement_active:
+        if self_role.pending_build_kind == "" or self_role.pending_build_worker_uid == "":
+            clear_pending_build_for_role(self_role)
+        elif selected_worker_uid == "" or self_role.pending_build_worker_uid != selected_worker_uid:
+            clear_pending_build_for_role(self_role)
 
 
 @callable
@@ -2147,6 +2488,9 @@ def issue_train_worker_for_role(
         if obj.object_kind != "hq":
             self_role.ui_status = "Select HQ to train Worker."
             return
+        if obj.usable == False:
+            self_role.ui_status = "HQ is still under construction."
+            return
         if obj.task_active:
             self_role.ui_status = "HQ is busy."
             return
@@ -2164,6 +2508,82 @@ def issue_train_worker_for_role(
         return
 
     self_role.ui_status = "Select one HQ."
+
+
+@callable
+def boxes_overlap(
+    left_x: float,
+    left_y: float,
+    left_w: float,
+    left_h: float,
+    right_x: float,
+    right_y: float,
+    right_w: float,
+    right_h: float,
+) -> bool:
+    return (
+        abs_value(left_x - right_x) < ((left_w + right_w) / 2)
+        and abs_value(left_y - right_y) < ((left_h + right_h) / 2)
+    )
+
+
+@callable
+def placement_hits_blocked_tiles(center_x: float, center_y: float, box_w: float, box_h: float) -> bool:
+    left_world = center_x - (box_w / 2) + 1
+    right_world = center_x + (box_w / 2) - 1
+    top_world = center_y - (box_h / 2) + 1
+    bottom_world = center_y + (box_h / 2) - 1
+    min_tile_x = world_to_tile_x(left_world)
+    max_tile_x = world_to_tile_x(right_world)
+    min_tile_y = world_to_tile_y(top_world)
+    max_tile_y = world_to_tile_y(bottom_world)
+
+    for tile_y in range(min_tile_y, max_tile_y + 1):
+        for tile_x in range(min_tile_x, max_tile_x + 1):
+            if is_static_blocked_tile(tile_x, tile_y):
+                return True
+    return False
+
+
+@callable
+def placement_hits_object(
+    center_x: float,
+    center_y: float,
+    box_w: float,
+    box_h: float,
+    objects: List[RTSObject],
+) -> bool:
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if boxes_overlap(center_x, center_y, box_w, box_h, obj.x, obj.y, obj.w, obj.h):
+            return True
+    return False
+
+
+@callable
+def placement_hits_resource(
+    center_x: float,
+    center_y: float,
+    box_w: float,
+    box_h: float,
+    resources: List[ResourceNode],
+) -> bool:
+    for resource in resources:
+        if resource.active == False:
+            continue
+        if boxes_overlap(
+            center_x,
+            center_y,
+            box_w,
+            box_h,
+            resource.x,
+            resource.y,
+            resource.w,
+            resource.h,
+        ):
+            return True
+    return False
 
 
 @callable
@@ -2188,7 +2608,7 @@ def issue_build_command_for_role(
         if obj.object_kind != "worker":
             self_role.ui_status = "Select Worker to build structures."
             return
-        if obj.task_active:
+        if obj.task_active and is_worker_gather_task(obj.task_kind) == False:
             self_role.ui_status = "Worker is busy."
             return
         if has_build_requirements(owner_role_id, objects, build_kind) == False:
@@ -2201,14 +2621,135 @@ def issue_build_command_for_role(
             self_role.ui_status = "Not enough resources for " + object_kind_name(build_kind) + "."
             return
 
-        self_role.minerals = self_role.minerals - mineral_cost
-        self_role.gas = self_role.gas - gas_cost
-        clear_worker_gather_loop(obj)
-        start_worker_build_task(obj, owner_role_id, objects, build_kind)
-        self_role.ui_status = "Constructing " + object_kind_name(build_kind) + "..."
+        if (
+            self_role.build_placement_active
+            and self_role.pending_build_kind == build_kind
+            and self_role.pending_build_worker_uid == obj.uid
+        ):
+            clear_pending_build_for_role(self_role)
+            self_role.ui_status = "Build placement canceled."
+            return
+
+        self_role.pending_build_kind = build_kind
+        self_role.pending_build_worker_uid = obj.uid
+        self_role.pending_build_name = object_kind_name(build_kind)
+        self_role.build_placement_active = True
+        self_role.ui_status = "Click map to place " + self_role.pending_build_name + "."
         return
 
     self_role.ui_status = "Select one Worker."
+
+
+@callable
+def place_pending_build_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    scene: Scene,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+    target_world_x: float,
+    target_world_y: float,
+) -> bool:
+    if self_role.build_placement_active == False:
+        return False
+
+    build_kind = self_role.pending_build_kind
+    worker_uid = self_role.pending_build_worker_uid
+    if build_kind == "" or worker_uid == "":
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Build placement canceled."
+        return True
+
+    worker_found = False
+    worker_task_active = False
+    worker_task_kind = ""
+    worker_team_id = 0
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != worker_uid:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.object_kind != "worker":
+            continue
+        worker_found = True
+        worker_task_active = obj.task_active
+        worker_task_kind = obj.task_kind
+        worker_team_id = obj.team_id
+
+    if not worker_found:
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Worker unavailable for build placement."
+        return True
+
+    if (
+        worker_task_active
+        and is_worker_gather_task(worker_task_kind) == False
+        and is_worker_construction_task(worker_task_kind) == False
+    ):
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Worker is busy."
+        return True
+
+    if has_build_requirements(owner_role_id, objects, build_kind) == False:
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = build_requirement_text(build_kind)
+        return True
+
+    mineral_cost = object_kind_mineral_cost(build_kind)
+    gas_cost = object_kind_gas_cost(build_kind)
+    if can_afford(self_role, mineral_cost, gas_cost) == False:
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Not enough resources for " + object_kind_name(build_kind) + "."
+        return True
+
+    build_w = object_kind_w(build_kind)
+    build_h = object_kind_h(build_kind)
+    place_x = clamp_world_x_for_size(target_world_x, build_w)
+    place_y = clamp_world_y_for_size(target_world_y, build_h)
+
+    if placement_hits_blocked_tiles(place_x, place_y, build_w, build_h):
+        self_role.ui_status = "Cannot place there: blocked terrain."
+        return True
+    if placement_hits_object(place_x, place_y, build_w, build_h, objects):
+        self_role.ui_status = "Cannot place there: occupied by a unit/building."
+        return True
+    if placement_hits_resource(place_x, place_y, build_w, build_h, resources):
+        self_role.ui_status = "Cannot place there: occupied by resource node."
+        return True
+
+    if worker_team_id <= 0:
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Worker unavailable for build placement."
+        return True
+
+    started = False
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != worker_uid:
+            continue
+        if obj.owner_role_id != owner_role_id:
+            continue
+        if obj.object_kind != "worker":
+            continue
+        clear_worker_activity(obj)
+        start_worker_construction_task(obj, build_kind, "", place_x, place_y)
+        build_worker_path(obj, objects, resources, place_x, place_y)
+        started = True
+
+    if not started:
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Worker unavailable for build placement."
+        return True
+
+    spawn_construction_site(scene, owner_role_id, worker_team_id, build_kind, place_x, place_y)
+    self_role.minerals = self_role.minerals - mineral_cost
+    self_role.gas = self_role.gas - gas_cost
+    clear_pending_build_for_role(self_role)
+    self_role.ui_status = "Started " + object_kind_name(build_kind) + " construction."
+    return True
 
 
 @callable
@@ -2232,6 +2773,9 @@ def issue_upgrade_command_for_role(
             continue
         if obj.object_kind != "academy":
             self_role.ui_status = "Select Academy for upgrades."
+            return
+        if obj.usable == False:
+            self_role.ui_status = "Academy is still under construction."
             return
         if obj.task_active:
             self_role.ui_status = "Academy is busy."
@@ -2418,6 +2962,12 @@ def command_selected_units_for_role(
         target_world_y,
         resources,
     )
+    clicked_site_uid = find_clicked_construction_site_uid(
+        target_world_x,
+        target_world_y,
+        owner_role_id,
+        objects,
+    )
 
     selected_uids = self_role.selected_uids
     for obj in objects:
@@ -2435,9 +2985,27 @@ def command_selected_units_for_role(
 
         if not is_selected:
             continue
-        if obj.task_active and is_worker_gather_task(obj.task_kind) == False:
+        if (
+            obj.task_active
+            and is_worker_gather_task(obj.task_kind) == False
+            and is_worker_construction_task(obj.task_kind) == False
+        ):
+            continue
+        if clicked_site_uid != "":
+            if obj.object_kind != "worker":
+                continue
+            for site in objects:
+                if site.active == False:
+                    continue
+                if site.uid != clicked_site_uid:
+                    continue
+                if is_under_construction_site(site) == False:
+                    continue
+                assign_worker_to_construction_site(obj, site, objects, resources)
             continue
         if clicked_resource_uid != "":
+            if is_worker_construction_task(obj.task_kind):
+                clear_worker_construction_task(obj)
             start_worker_gather_loop(
                 obj,
                 objects,
@@ -2445,7 +3013,7 @@ def command_selected_units_for_role(
                 clicked_resource_uid,
             )
         else:
-            clear_worker_gather_loop(obj)
+            clear_worker_activity(obj)
             build_worker_path(obj, objects, resources, target_world_x, target_world_y)
 
 
@@ -2664,10 +3232,15 @@ def pan_camera_down_human_2(camera: Camera["camera_human_2"]):
 
 @unsafe_condition(MouseCondition.on_click("left", id="human_1"))
 def update_drag_rect_human_1(
+    self_role: RTSRole["human_1"],
     camera: Camera["camera_human_1"],
     drag_rect: DragSelectionRect["p1_drag_rect"],
     mouse: MouseInfo,
 ):
+    if self_role.build_placement_active:
+        drag_rect.active = False
+        return
+
     drag_select = is_drag_select(mouse.pressed_x, mouse.pressed_y, mouse.x, mouse.y)
     if not drag_select:
         drag_rect.active = False
@@ -2692,7 +3265,9 @@ def select_for_human_1(
     self_role: RTSRole["human_1"],
     camera: Camera["camera_human_1"],
     drag_rect: DragSelectionRect["p1_drag_rect"],
+    scene: Scene,
     objects: List[RTSObject],
+    resources: List[ResourceNode],
     markers: List[SelectionMarker],
     mouse: MouseInfo,
 ):
@@ -2701,6 +3276,31 @@ def select_for_human_1(
     start_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
     end_world_x = camera_screen_to_world_x(camera.x, mouse.x)
     end_world_y = camera_screen_to_world_y(camera.y, mouse.y)
+
+    if self_role.build_placement_active:
+        if drag_select:
+            self_role.ui_status = "Build placement requires a single click."
+            drag_rect.active = False
+            return
+        placement_handled = place_pending_build_for_role(
+            self_role,
+            PLAYER_1_ROLE_ID,
+            scene,
+            objects,
+            resources,
+            end_world_x,
+            end_world_y,
+        )
+        if placement_handled:
+            refresh_selection_markers(
+                PLAYER_1_ROLE_ID,
+                markers,
+                objects,
+                self_role.selected_uids,
+                self_role.selected_count,
+            )
+            drag_rect.active = False
+            return
 
     select_for_role(
         self_role,
@@ -2730,6 +3330,11 @@ def command_selected_units_for_human_1(
     resources: List[ResourceNode],
     mouse: MouseInfo,
 ):
+    if self_role.build_placement_active:
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Build placement canceled."
+        return
+
     target_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
     target_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
     command_selected_units_for_role(
@@ -2744,10 +3349,15 @@ def command_selected_units_for_human_1(
 
 @unsafe_condition(MouseCondition.on_click("left", id="human_2"))
 def update_drag_rect_human_2(
+    self_role: RTSRole["human_2"],
     camera: Camera["camera_human_2"],
     drag_rect: DragSelectionRect["p2_drag_rect"],
     mouse: MouseInfo,
 ):
+    if self_role.build_placement_active:
+        drag_rect.active = False
+        return
+
     drag_select = is_drag_select(mouse.pressed_x, mouse.pressed_y, mouse.x, mouse.y)
     if not drag_select:
         drag_rect.active = False
@@ -2772,7 +3382,9 @@ def select_for_human_2(
     self_role: RTSRole["human_2"],
     camera: Camera["camera_human_2"],
     drag_rect: DragSelectionRect["p2_drag_rect"],
+    scene: Scene,
     objects: List[RTSObject],
+    resources: List[ResourceNode],
     markers: List[SelectionMarker],
     mouse: MouseInfo,
 ):
@@ -2781,6 +3393,31 @@ def select_for_human_2(
     start_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
     end_world_x = camera_screen_to_world_x(camera.x, mouse.x)
     end_world_y = camera_screen_to_world_y(camera.y, mouse.y)
+
+    if self_role.build_placement_active:
+        if drag_select:
+            self_role.ui_status = "Build placement requires a single click."
+            drag_rect.active = False
+            return
+        placement_handled = place_pending_build_for_role(
+            self_role,
+            PLAYER_2_ROLE_ID,
+            scene,
+            objects,
+            resources,
+            end_world_x,
+            end_world_y,
+        )
+        if placement_handled:
+            refresh_selection_markers(
+                PLAYER_2_ROLE_ID,
+                markers,
+                objects,
+                self_role.selected_uids,
+                self_role.selected_count,
+            )
+            drag_rect.active = False
+            return
 
     select_for_role(
         self_role,
@@ -2810,6 +3447,11 @@ def command_selected_units_for_human_2(
     resources: List[ResourceNode],
     mouse: MouseInfo,
 ):
+    if self_role.build_placement_active:
+        clear_pending_build_for_role(self_role)
+        self_role.ui_status = "Build placement canceled."
+        return
+
     target_world_x = camera_screen_to_world_x(camera.x, mouse.pressed_x)
     target_world_y = camera_screen_to_world_y(camera.y, mouse.pressed_y)
     command_selected_units_for_role(
