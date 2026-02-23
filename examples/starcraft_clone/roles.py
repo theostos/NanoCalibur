@@ -1,4 +1,4 @@
-from nanocalibur.dsl_markers import CodeBlock, HumanRole, Interface, RoleKind
+from nanocalibur.dsl_markers import CodeBlock, HumanRole, Interface, RoleKind, View
 
 from .shared import MAP_HEIGHT_TILES, MAP_WIDTH_TILES, game, scene
 
@@ -67,6 +67,7 @@ class RTSRole(HumanRole):
     fog_visible_tiles: list[int]
     fog_explored_tiles: list[int]
     fog_memory_tiles: list[str]
+    fog_refresh_cooldown: int
     ui_status: str
 
 
@@ -132,6 +133,7 @@ game.add_role(
         fog_visible_tiles=[0] * FOG_TILE_COUNT,
         fog_explored_tiles=[0] * FOG_TILE_COUNT,
         fog_memory_tiles=[""] * FOG_TILE_COUNT,
+        fog_refresh_cooldown=0,
         ui_status="Ready",
     )
 )
@@ -197,11 +199,22 @@ game.add_role(
         fog_visible_tiles=[0] * FOG_TILE_COUNT,
         fog_explored_tiles=[0] * FOG_TILE_COUNT,
         fog_memory_tiles=[""] * FOG_TILE_COUNT,
+        fog_refresh_cooldown=0,
         ui_status="Ready",
     )
 )
 
-scene.set_interface(Interface("ui/hud_human.html", RTSRole["human_1"]))
-scene.set_interface(Interface("ui/hud_human.html", RTSRole["human_2"]))
+scene.set_interface(
+    Interface("ui/hud_human.html", RTSRole["human_1"], View["main_h1"])
+)
+scene.set_interface(
+    Interface("ui/minimap_overlay.html", RTSRole["human_1"], View["minimap_h1"])
+)
+scene.set_interface(
+    Interface("ui/hud_human.html", RTSRole["human_2"], View["main_h2"])
+)
+scene.set_interface(
+    Interface("ui/minimap_overlay.html", RTSRole["human_2"], View["minimap_h2"])
+)
 
 CodeBlock.end("multiplayer_roles")

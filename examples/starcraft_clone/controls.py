@@ -9,13 +9,17 @@ from nanocalibur.dsl_markers import (
     MouseInfo,
     OnLogicalCondition,
     Scene,
+    View,
     callable,
     safe_condition,
     unsafe_condition,
 )
 
 from .data import (
-    FOG_CELL_POOL_SIZE,
+    FOG_MAIN_CELL_POOL_SIZE,
+    FOG_MINIMAP_CELL_POOL_SIZE,
+    FOG_MINIMAP_GRID_H,
+    FOG_MINIMAP_GRID_W,
     HEALTH_BAR_POOL_SIZE,
     FogCell,
     HealthBarBackground,
@@ -97,6 +101,7 @@ MAX_UPGRADE_LEVEL = 3
 CONSTRUCTION_CANCEL_REFUND_PERCENT = 75
 FOG_TOTAL_TILES = MAP_WIDTH_TILES * MAP_HEIGHT_TILES
 FOG_MEMORY_NONE = ""
+FOG_REFRESH_INTERVAL_TICKS = 1
 
 
 @callable
@@ -988,6 +993,11 @@ def refresh_fog_cells_for_role(
     resources: List[ResourceNode],
     fog_cells: List[FogCell],
 ):
+    if self_role.fog_refresh_cooldown > 0:
+        self_role.fog_refresh_cooldown = self_role.fog_refresh_cooldown - 1
+        return
+    self_role.fog_refresh_cooldown = FOG_REFRESH_INTERVAL_TICKS - 1
+
     ensure_role_fog_buffers(self_role)
     recompute_role_visibility(self_role, owner_role_id, objects)
     refresh_role_memory_tiles(self_role, owner_role_id, objects, resources)
@@ -998,30 +1008,73 @@ def refresh_fog_cells_for_role(
     for fog_cell in fog_cells:
         if fog_cell.owner_role_id != owner_role_id:
             continue
-        if fog_cell.slot_index < 0 or fog_cell.slot_index >= FOG_CELL_POOL_SIZE:
+
+        tile_stride = fog_cell.tile_stride
+        if tile_stride < 1:
+            tile_stride = 1
+        is_minimap_cell = tile_stride > 1
+
+        slot_capacity = FOG_MAIN_CELL_POOL_SIZE
+        slot_grid_w = VIEWPORT_TILES_W
+        slot_grid_h = VIEWPORT_TILES_H
+        if is_minimap_cell:
+            slot_capacity = FOG_MINIMAP_CELL_POOL_SIZE
+            slot_grid_w = FOG_MINIMAP_GRID_W
+            slot_grid_h = FOG_MINIMAP_GRID_H
+
+        if fog_cell.slot_index < 0 or fog_cell.slot_index >= slot_capacity:
             fog_cell.active = False
             continue
 
         slot_x = fog_cell.slot_index
         slot_y = 0
-        while slot_x >= VIEWPORT_TILES_W:
-            slot_x = slot_x - VIEWPORT_TILES_W
+        while slot_x >= slot_grid_w:
+            slot_x = slot_x - slot_grid_w
             slot_y = slot_y + 1
-
-        if slot_y < 0 or slot_y >= VIEWPORT_TILES_H:
+        if slot_y < 0 or slot_y >= slot_grid_h:
             fog_cell.active = False
             continue
 
-        probe_x = camera_left_world + (slot_x * TILE_SIZE) + (TILE_SIZE / 2)
-        probe_y = camera_top_world + (slot_y * TILE_SIZE) + (TILE_SIZE / 2)
-        tile_x = world_to_tile_x(probe_x)
-        tile_y = world_to_tile_y(probe_y)
+        probe_x = 0.0
+        probe_y = 0.0
+        tile_x = 0
+        tile_y = 0
+        if is_minimap_cell:
+            half_stride = 0
+            remaining_stride = tile_stride
+            while remaining_stride >= 2:
+                remaining_stride = remaining_stride - 2
+                half_stride = half_stride + 1
+            tile_x = (slot_x * tile_stride) + half_stride
+            tile_y = (slot_y * tile_stride) + half_stride
+            if tile_x < 0:
+                tile_x = 0
+            if tile_x >= MAP_WIDTH_TILES:
+                tile_x = MAP_WIDTH_TILES - 1
+            if tile_y < 0:
+                tile_y = 0
+            if tile_y >= MAP_HEIGHT_TILES:
+                tile_y = MAP_HEIGHT_TILES - 1
+            probe_x = tile_center_x(tile_x)
+            probe_y = tile_center_y(tile_y)
+            fog_cell.w = TILE_SIZE * tile_stride
+            fog_cell.h = TILE_SIZE * tile_stride
+        else:
+            # Main fog must stay anchored to world tiles (not screen slots),
+            # otherwise it appears "stuck then jumps" while the camera pans.
+            sample_world_x = camera_left_world + (slot_x * TILE_SIZE)
+            sample_world_y = camera_top_world + (slot_y * TILE_SIZE)
+            tile_x = world_to_tile_x(sample_world_x)
+            tile_y = world_to_tile_y(sample_world_y)
+            probe_x = tile_center_x(tile_x)
+            probe_y = tile_center_y(tile_y)
+            fog_cell.w = TILE_SIZE
+            fog_cell.h = TILE_SIZE
+
         tile_idx = tile_node(tile_x, tile_y)
 
         fog_cell.x = probe_x
         fog_cell.y = probe_y
-        fog_cell.w = TILE_SIZE
-        fog_cell.h = TILE_SIZE
         fog_cell.z = 120
 
         if self_role.fog_visible_tiles[tile_idx] == 1:
@@ -3036,17 +3089,9 @@ def refresh_fog_cells_human_1(
     resources: List[ResourceNode],
     fog_cells: List[FogCell],
 ):
-    if drag_rect.owner_role_id != PLAYER_1_ROLE_ID:
-        return
-    refresh_fog_cells_for_role(
-        self_role,
-        PLAYER_1_ROLE_ID,
-        camera.x,
-        camera.y,
-        objects,
-        resources,
-        fog_cells,
-    )
+    # Keep this earlier rule as a no-op so fog refresh can run after camera input
+    # rules (defined near the end of this file) and avoid one-tick camera lag.
+    return
 
 
 @safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
@@ -3058,17 +3103,9 @@ def refresh_fog_cells_human_2(
     resources: List[ResourceNode],
     fog_cells: List[FogCell],
 ):
-    if drag_rect.owner_role_id != PLAYER_2_ROLE_ID:
-        return
-    refresh_fog_cells_for_role(
-        self_role,
-        PLAYER_2_ROLE_ID,
-        camera.x,
-        camera.y,
-        objects,
-        resources,
-        fog_cells,
-    )
+    # Keep this earlier rule as a no-op so fog refresh can run after camera input
+    # rules (defined near the end of this file) and avoid one-tick camera lag.
+    return
 
 
 @callable
@@ -4137,7 +4174,7 @@ def pan_camera_down_human_2(camera: Camera["camera_human_2"]):
     camera.y = clamp_camera_y(camera.y)
 
 
-@unsafe_condition(MouseCondition.on_click("left", id="human_1"))
+@unsafe_condition(MouseCondition.on_click("left", id="human_1", view=View["main_h1"]))
 def update_drag_rect_human_1(
     self_role: RTSRole["human_1"],
     camera: Camera["camera_human_1"],
@@ -4167,7 +4204,7 @@ def update_drag_rect_human_1(
     drag_rect.active = True
 
 
-@unsafe_condition(MouseCondition.end_click("left", id="human_1"))
+@unsafe_condition(MouseCondition.end_click("left", id="human_1", view=View["main_h1"]))
 def select_for_human_1(
     self_role: RTSRole["human_1"],
     camera: Camera["camera_human_1"],
@@ -4229,7 +4266,7 @@ def select_for_human_1(
     drag_rect.active = False
 
 
-@unsafe_condition(MouseCondition.begin_click("right", id="human_1"))
+@unsafe_condition(MouseCondition.begin_click("right", id="human_1", view=View["main_h1"]))
 def command_selected_units_for_human_1(
     self_role: RTSRole["human_1"],
     camera: Camera["camera_human_1"],
@@ -4254,7 +4291,18 @@ def command_selected_units_for_human_1(
     )
 
 
-@unsafe_condition(MouseCondition.on_click("left", id="human_2"))
+@unsafe_condition(
+    MouseCondition.begin_click("left", id="human_1", view=View["minimap_h1"])
+)
+def recenter_camera_from_minimap_human_1(
+    camera: Camera["camera_human_1"],
+    mouse: MouseInfo,
+):
+    camera.x = clamp_camera_x(mouse.world_x)
+    camera.y = clamp_camera_y(mouse.world_y)
+
+
+@unsafe_condition(MouseCondition.on_click("left", id="human_2", view=View["main_h2"]))
 def update_drag_rect_human_2(
     self_role: RTSRole["human_2"],
     camera: Camera["camera_human_2"],
@@ -4284,7 +4332,7 @@ def update_drag_rect_human_2(
     drag_rect.active = True
 
 
-@unsafe_condition(MouseCondition.end_click("left", id="human_2"))
+@unsafe_condition(MouseCondition.end_click("left", id="human_2", view=View["main_h2"]))
 def select_for_human_2(
     self_role: RTSRole["human_2"],
     camera: Camera["camera_human_2"],
@@ -4346,7 +4394,7 @@ def select_for_human_2(
     drag_rect.active = False
 
 
-@unsafe_condition(MouseCondition.begin_click("right", id="human_2"))
+@unsafe_condition(MouseCondition.begin_click("right", id="human_2", view=View["main_h2"]))
 def command_selected_units_for_human_2(
     self_role: RTSRole["human_2"],
     camera: Camera["camera_human_2"],
@@ -4368,6 +4416,61 @@ def command_selected_units_for_human_2(
         resources,
         target_world_x,
         target_world_y,
+    )
+
+
+@unsafe_condition(
+    MouseCondition.begin_click("left", id="human_2", view=View["minimap_h2"])
+)
+def recenter_camera_from_minimap_human_2(
+    camera: Camera["camera_human_2"],
+    mouse: MouseInfo,
+):
+    camera.x = clamp_camera_x(mouse.world_x)
+    camera.y = clamp_camera_y(mouse.world_y)
+
+
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_fog_cells_human_1_late(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_1"],
+    camera: Camera["camera_human_1"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+    fog_cells: List[FogCell],
+):
+    if drag_rect.owner_role_id != PLAYER_1_ROLE_ID:
+        return
+    refresh_fog_cells_for_role(
+        self_role,
+        PLAYER_1_ROLE_ID,
+        camera.x,
+        camera.y,
+        objects,
+        resources,
+        fog_cells,
+    )
+
+
+@safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
+def refresh_fog_cells_human_2_late(
+    drag_rect: DragSelectionRect,
+    self_role: RTSRole["human_2"],
+    camera: Camera["camera_human_2"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+    fog_cells: List[FogCell],
+):
+    if drag_rect.owner_role_id != PLAYER_2_ROLE_ID:
+        return
+    refresh_fog_cells_for_role(
+        self_role,
+        PLAYER_2_ROLE_ID,
+        camera.x,
+        camera.y,
+        objects,
+        resources,
+        fog_cells,
     )
 
 

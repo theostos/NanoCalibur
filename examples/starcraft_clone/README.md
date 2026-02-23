@@ -12,6 +12,10 @@ Current features:
 - Same-team moving units pass through each other while enemy units still block.
 - Selection creates a visible selection marker around the selected object.
 - Resource nodes are available near each HQ and in central map clusters for panning tests.
+- View system enabled per role:
+  - `main` view for normal RTS control.
+  - `minimap` view rendered from a dedicated full-map camera.
+  - Left-click on minimap recenters the main camera.
 - Bottom HUD is selection-sensitive:
   - Selecting an `HQ` shows `Train Worker`.
   - Selecting a `Worker` shows structure commands (`HQ`, `Supply Depot`, `Barracks`, `Academy`, `Starport`).

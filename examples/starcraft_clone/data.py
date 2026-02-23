@@ -1,6 +1,15 @@
 from nanocalibur.dsl_markers import Actor, CodeBlock
 
-from .shared import TILE_SIZE, VIEWPORT_TILES_H, VIEWPORT_TILES_W, WORLD_HEIGHT_PX, WORLD_WIDTH_PX, scene
+from .shared import (
+    MAP_HEIGHT_TILES,
+    MAP_WIDTH_TILES,
+    TILE_SIZE,
+    VIEWPORT_TILES_H,
+    VIEWPORT_TILES_W,
+    WORLD_HEIGHT_PX,
+    WORLD_WIDTH_PX,
+    scene,
+)
 
 
 CodeBlock.begin("actors_and_spawn")
@@ -27,7 +36,12 @@ P2_MINERAL_NODE_2_UID = "p2_mineral_node_2"
 P2_GAS_NODE_1_UID = "p2_gas_node_1"
 SELECTION_MARKER_POOL_SIZE = 12
 HEALTH_BAR_POOL_SIZE = 256
-FOG_CELL_POOL_SIZE = VIEWPORT_TILES_W * VIEWPORT_TILES_H
+FOG_MAIN_CELL_POOL_SIZE = VIEWPORT_TILES_W * VIEWPORT_TILES_H
+FOG_MINIMAP_TILE_STRIDE = 4
+FOG_MINIMAP_GRID_W = (MAP_WIDTH_TILES + FOG_MINIMAP_TILE_STRIDE - 1) // FOG_MINIMAP_TILE_STRIDE
+FOG_MINIMAP_GRID_H = (MAP_HEIGHT_TILES + FOG_MINIMAP_TILE_STRIDE - 1) // FOG_MINIMAP_TILE_STRIDE
+FOG_MINIMAP_CELL_POOL_SIZE = FOG_MINIMAP_GRID_W * FOG_MINIMAP_GRID_H
+FOG_CELL_POOL_SIZE = FOG_MAIN_CELL_POOL_SIZE + FOG_MINIMAP_CELL_POOL_SIZE
 
 
 class RTSObject(Actor):
@@ -75,10 +89,14 @@ class RTSObject(Actor):
 class SelectionMarker(Actor):
     owner_role_id: str
     slot_index: int
+    physics_enabled: bool
+    physics_collidable: bool
 
 
 class DragSelectionRect(Actor):
     owner_role_id: str
+    physics_enabled: bool
+    physics_collidable: bool
 
 
 class ResourceNode(Actor):
@@ -90,15 +108,26 @@ class ResourceNode(Actor):
 
 class HealthBarBackground(Actor):
     slot_index: int
+    physics_enabled: bool
+    physics_collidable: bool
 
 
 class HealthBarFill(Actor):
     slot_index: int
+    physics_enabled: bool
+    physics_collidable: bool
 
 
 class FogCell(Actor):
     owner_role_id: str
     slot_index: int
+    view_id: str
+    tile_stride: int
+    symbolic_stack: bool
+    position_smoothing: bool
+    camera_locked: bool
+    physics_enabled: bool
+    physics_collidable: bool
 
 
 scene.add_actor(
@@ -311,7 +340,7 @@ scene.add_actor(
     ResourceNode(
         uid=MINERAL_NODE_1_UID,
         x=1392,
-        y=928,
+        y=944,
         w=32,
         h=32,
         z=2,
@@ -326,8 +355,8 @@ scene.add_actor(
 scene.add_actor(
     ResourceNode(
         uid=MINERAL_NODE_2_UID,
-        x=1664,
-        y=992,
+        x=1680,
+        y=1008,
         w=32,
         h=32,
         z=2,
@@ -342,8 +371,8 @@ scene.add_actor(
 scene.add_actor(
     ResourceNode(
         uid=GAS_NODE_1_UID,
-        x=1600,
-        y=864,
+        x=1616,
+        y=880,
         w=32,
         h=32,
         z=2,
@@ -358,8 +387,8 @@ scene.add_actor(
 scene.add_actor(
     ResourceNode(
         uid=GAS_NODE_2_UID,
-        x=1536,
-        y=1088,
+        x=1552,
+        y=1104,
         w=32,
         h=32,
         z=2,
@@ -478,6 +507,8 @@ for marker_idx in range(SELECTION_MARKER_POOL_SIZE):
             h=28,
             z=1,
             active=False,
+            physics_enabled=False,
+            physics_collidable=False,
             owner_role_id=PLAYER_1_ROLE_ID,
             slot_index=marker_idx,
             sprite="selection_marker_p1",
@@ -492,6 +523,8 @@ for marker_idx in range(SELECTION_MARKER_POOL_SIZE):
             h=28,
             z=1,
             active=False,
+            physics_enabled=False,
+            physics_collidable=False,
             owner_role_id=PLAYER_2_ROLE_ID,
             slot_index=marker_idx,
             sprite="selection_marker_p2",
@@ -509,6 +542,8 @@ for bar_idx in range(HEALTH_BAR_POOL_SIZE):
             z=35,
             active=False,
             block_mask=None,
+            physics_enabled=False,
+            physics_collidable=False,
             slot_index=bar_idx,
             sprite="health_bar_bg",
         )
@@ -523,15 +558,17 @@ for bar_idx in range(HEALTH_BAR_POOL_SIZE):
             z=36,
             active=False,
             block_mask=None,
+            physics_enabled=False,
+            physics_collidable=False,
             slot_index=bar_idx,
             sprite="health_bar_fill_ok",
         )
     )
 
-for fog_idx in range(FOG_CELL_POOL_SIZE):
+for fog_idx in range(FOG_MAIN_CELL_POOL_SIZE):
     scene.add_actor(
         FogCell(
-            uid=f"p1_fog_cell_{fog_idx}",
+            uid=f"p1_main_fog_cell_{fog_idx}",
             x=0,
             y=0,
             w=TILE_SIZE,
@@ -539,14 +576,21 @@ for fog_idx in range(FOG_CELL_POOL_SIZE):
             z=120,
             active=False,
             block_mask=None,
+            physics_enabled=False,
+            physics_collidable=False,
             owner_role_id=PLAYER_1_ROLE_ID,
             slot_index=fog_idx,
+            view_id="main_h1",
+            tile_stride=1,
+            symbolic_stack=False,
+            position_smoothing=False,
+            camera_locked=True,
             sprite="fog_unexplored",
         )
     )
     scene.add_actor(
         FogCell(
-            uid=f"p2_fog_cell_{fog_idx}",
+            uid=f"p2_main_fog_cell_{fog_idx}",
             x=0,
             y=0,
             w=TILE_SIZE,
@@ -554,8 +598,61 @@ for fog_idx in range(FOG_CELL_POOL_SIZE):
             z=120,
             active=False,
             block_mask=None,
+            physics_enabled=False,
+            physics_collidable=False,
             owner_role_id=PLAYER_2_ROLE_ID,
             slot_index=fog_idx,
+            view_id="main_h2",
+            tile_stride=1,
+            symbolic_stack=False,
+            position_smoothing=False,
+            camera_locked=True,
+            sprite="fog_unexplored",
+        )
+    )
+
+for fog_idx in range(FOG_MINIMAP_CELL_POOL_SIZE):
+    scene.add_actor(
+        FogCell(
+            uid=f"p1_minimap_fog_cell_{fog_idx}",
+            x=0,
+            y=0,
+            w=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
+            h=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
+            z=120,
+            active=False,
+            block_mask=None,
+            physics_enabled=False,
+            physics_collidable=False,
+            owner_role_id=PLAYER_1_ROLE_ID,
+            slot_index=fog_idx,
+            view_id="minimap_h1",
+            tile_stride=FOG_MINIMAP_TILE_STRIDE,
+            symbolic_stack=False,
+            position_smoothing=False,
+            camera_locked=True,
+            sprite="fog_unexplored",
+        )
+    )
+    scene.add_actor(
+        FogCell(
+            uid=f"p2_minimap_fog_cell_{fog_idx}",
+            x=0,
+            y=0,
+            w=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
+            h=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
+            z=120,
+            active=False,
+            block_mask=None,
+            physics_enabled=False,
+            physics_collidable=False,
+            owner_role_id=PLAYER_2_ROLE_ID,
+            slot_index=fog_idx,
+            view_id="minimap_h2",
+            tile_stride=FOG_MINIMAP_TILE_STRIDE,
+            symbolic_stack=False,
+            position_smoothing=False,
+            camera_locked=True,
             sprite="fog_unexplored",
         )
     )
@@ -569,6 +666,8 @@ scene.add_actor(
         h=1,
         z=28,
         active=False,
+        physics_enabled=False,
+        physics_collidable=False,
         owner_role_id=PLAYER_1_ROLE_ID,
         sprite="drag_select_rect_p1",
     )
@@ -582,6 +681,8 @@ scene.add_actor(
         h=1,
         z=28,
         active=False,
+        physics_enabled=False,
+        physics_collidable=False,
         owner_role_id=PLAYER_2_ROLE_ID,
         sprite="drag_select_rect_p2",
     )
