@@ -8,8 +8,16 @@ import type { InterpreterState } from './nanocalibur_generated/interpreter';
 import { AssetStore } from './nanocalibur_generated/canvas/assets';
 import { AnimationSystem } from './nanocalibur_generated/canvas/animation';
 import { CanvasRenderer } from './nanocalibur_generated/canvas/renderer';
-import { InterfaceOverlay } from './nanocalibur_generated/canvas/interface_overlay';
-import type { ActorState, MapSpec } from './nanocalibur_generated/canvas/types';
+import {
+  InterfaceOverlay,
+  type InterfaceButtonEvent,
+  type InterfaceOverlayRect,
+} from './nanocalibur_generated/canvas/interface_overlay';
+import type {
+  ActorState,
+  MapSpec,
+  SceneInterfaceBinding,
+} from './nanocalibur_generated/canvas/types';
 
 type SymbolicLegendEntry = { symbol: string; description: string };
 type SymbolicFrame = { rows: string[]; legend: SymbolicLegendEntry[] };
@@ -276,14 +284,27 @@ class SessionSnapshotRenderer {
   private readonly animation: AnimationSystem;
   private readonly assets: AssetStore;
   private readonly renderer: CanvasRenderer;
-  private interfaceOverlay: InterfaceOverlay | null;
-  private interfaceHtml: string;
+  private readonly fallbackInterfaceHtml: string;
+  private readonly interfaceOverlays = new Map<
+    string,
+    {
+      overlay: InterfaceOverlay;
+      html: string;
+      rectKey: string;
+    }
+  >();
   private localState: Record<string, any> = {};
   private ready = false;
   private latestState: InterpreterState | null = null;
+  private latestProjectionState: InterpreterState | null = null;
   private latestSnapshotAtMs = 0;
   private readonly smoothedPositionsByUid = new Map<string, { x: number; y: number }>();
+  private readonly smoothedCameraPositionsById = new Map<string, { x: number; y: number }>();
   private lastRenderAtMs = 0;
+  private latestStateRevision = 0;
+  private localStateRevision = 0;
+  private lastOverlayStateRevision = -1;
+  private lastOverlayLocalRevision = -1;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -294,11 +315,7 @@ class SessionSnapshotRenderer {
     this.assets = new AssetStore(options);
     this.animation = new AnimationSystem(options, () => undefined);
     this.renderer = new CanvasRenderer(canvas, options, this.assets, this.animation);
-    this.interfaceHtml = interfaceHtml;
-    this.interfaceOverlay =
-      interfaceHtml.trim().length > 0
-        ? new InterfaceOverlay(canvas, interfaceHtml)
-        : null;
+    this.fallbackInterfaceHtml = interfaceHtml;
   }
 
   async start(): Promise<void> {
@@ -310,17 +327,48 @@ class SessionSnapshotRenderer {
   render(snapshot: SessionSnapshot): void {
     this.latestState = (snapshot.state || {}) as InterpreterState;
     this.latestSnapshotAtMs = performance.now();
+    this.latestStateRevision += 1;
   }
 
   setLocalState(nextLocalState: Record<string, any>): void {
     this.localState = deepCloneLocalState(nextLocalState);
+    this.localStateRevision += 1;
   }
 
-  consumeInterfaceButtonPhases(): { begin: string[]; on: string[]; end: string[] } {
-    if (!this.interfaceOverlay) {
-      return { begin: [], on: [], end: [] };
+  consumeInterfaceButtonPhases(): {
+    begin: InterfaceButtonEvent[];
+    on: InterfaceButtonEvent[];
+    end: InterfaceButtonEvent[];
+  } {
+    const begin: InterfaceButtonEvent[] = [];
+    const on: InterfaceButtonEvent[] = [];
+    const end: InterfaceButtonEvent[] = [];
+    for (const entry of this.interfaceOverlays.values()) {
+      const phases = entry.overlay.consumeButtonPhases();
+      begin.push(...phases.begin);
+      on.push(...phases.on);
+      end.push(...phases.end);
     }
-    return this.interfaceOverlay.consumeButtonPhases();
+    return { begin, on, end };
+  }
+
+  projectScreenToWorld(screenX: number, screenY: number): {
+    localX: number;
+    localY: number;
+    worldX: number;
+    worldY: number;
+    viewId: string;
+  } | null {
+    const state = this.latestProjectionState || this.latestState;
+    if (!state) {
+      return null;
+    }
+    return this.renderer.projectScreenToWorld(
+      state,
+      (state.map || null) as MapSpec | null,
+      screenX,
+      screenY,
+    );
   }
 
   private renderLoop = (): void => {
@@ -344,9 +392,14 @@ class SessionSnapshotRenderer {
       state,
       (state.map || null) as MapSpec | null,
     );
-    this.syncInterfaceOverlay(state);
-    if (this.interfaceOverlay) {
-      this.interfaceOverlay.updateGlobals(this.buildInterfaceGlobals(state));
+    this.latestProjectionState = state;
+    if (
+      this.latestStateRevision !== this.lastOverlayStateRevision
+      || this.localStateRevision !== this.lastOverlayLocalRevision
+    ) {
+      this.syncInterfaceOverlays(this.latestState || state);
+      this.lastOverlayStateRevision = this.latestStateRevision;
+      this.lastOverlayLocalRevision = this.localStateRevision;
     }
   }
 
@@ -357,7 +410,7 @@ class SessionSnapshotRenderer {
     const nowMs = performance.now();
     const elapsedSeconds = Math.max(
       0,
-      Math.min(0.2, (nowMs - this.latestSnapshotAtMs) / 1000),
+      Math.min(0.12, (nowMs - this.latestSnapshotAtMs) / 1000),
     );
     const renderDeltaMs =
       this.lastRenderAtMs > 0
@@ -426,6 +479,7 @@ class SessionSnapshotRenderer {
       const cloned = { ...actor };
       const projected = projectActor(actor);
       const uid = typeof actor.uid === 'string' ? actor.uid : '';
+      const shouldSmooth = this.actorPositionSmoothingEnabled(actor);
       if (!uid) {
         cloned.x = projected.x;
         cloned.y = projected.y;
@@ -435,7 +489,7 @@ class SessionSnapshotRenderer {
       const previousSmoothed = this.smoothedPositionsByUid.get(uid);
       let nextX = projected.x;
       let nextY = projected.y;
-      if (previousSmoothed) {
+      if (previousSmoothed && shouldSmooth) {
         const dx = projected.x - previousSmoothed.x;
         const dy = projected.y - previousSmoothed.y;
         const distanceSq = dx * dx + dy * dy;
@@ -459,26 +513,252 @@ class SessionSnapshotRenderer {
       actors,
     } as InterpreterState;
 
-    if (
-      nextState.camera &&
-      typeof nextState.camera === 'object' &&
-      typeof nextState.camera.target_uid === 'string'
-    ) {
-      const target = actors.find((actor) => actor.uid === nextState.camera?.target_uid);
-      if (target && typeof target.x === 'number' && typeof target.y === 'number') {
-        const offsetX =
-          typeof nextState.camera.offset_x === 'number' ? nextState.camera.offset_x : 0;
-        const offsetY =
-          typeof nextState.camera.offset_y === 'number' ? nextState.camera.offset_y : 0;
+    const activeCameraKeys = new Set<string>();
+    const cameraDeltaByKey = new Map<string, { x: number; y: number }>();
+    const sourceCameras =
+      this.latestState && this.latestState.cameras && typeof this.latestState.cameras === 'object'
+        ? (this.latestState.cameras as Record<string, any>)
+        : null;
+    if (sourceCameras) {
+      const nextCameras: Record<string, any> = {};
+      for (const [cameraName, cameraValue] of Object.entries(sourceCameras)) {
+        if (!cameraValue || typeof cameraValue !== 'object') {
+          continue;
+        }
+        const cameraState = cameraValue as Record<string, any>;
+        const key = `camera:${cameraName}`;
+        activeCameraKeys.add(key);
+        const smoothed = this.resolveSmoothedCameraPosition(
+          key,
+          cameraState,
+          actors,
+          smoothAlpha,
+        );
+        if (
+          smoothed
+          && typeof cameraState.x === 'number'
+          && Number.isFinite(cameraState.x)
+          && typeof cameraState.y === 'number'
+          && Number.isFinite(cameraState.y)
+        ) {
+          cameraDeltaByKey.set(key, {
+            x: smoothed.x - cameraState.x,
+            y: smoothed.y - cameraState.y,
+          });
+        }
+        nextCameras[cameraName] = smoothed
+          ? {
+              ...cameraState,
+              x: smoothed.x,
+              y: smoothed.y,
+            }
+          : { ...cameraState };
+      }
+      nextState.cameras = nextCameras;
+    }
+
+    if (nextState.camera && typeof nextState.camera === 'object') {
+      const fallbackCamera = nextState.camera as Record<string, any>;
+      const namedCameraId =
+        typeof fallbackCamera.name === 'string' && fallbackCamera.name.length > 0
+          ? fallbackCamera.name
+          : '';
+      let smoothedFallback: { x: number; y: number } | null = null;
+
+      if (
+        namedCameraId
+        && nextState.cameras
+        && typeof nextState.cameras === 'object'
+        && !Array.isArray(nextState.cameras)
+      ) {
+        const namedCamera = (nextState.cameras as Record<string, any>)[namedCameraId];
+        if (namedCamera && typeof namedCamera === 'object') {
+          const cameraX = typeof namedCamera.x === 'number' ? namedCamera.x : null;
+          const cameraY = typeof namedCamera.y === 'number' ? namedCamera.y : null;
+          if (cameraX !== null && cameraY !== null) {
+            smoothedFallback = { x: cameraX, y: cameraY };
+          }
+        }
+      }
+
+      if (!smoothedFallback) {
+        const key = 'camera:__primary__';
+        activeCameraKeys.add(key);
+        smoothedFallback = this.resolveSmoothedCameraPosition(
+          key,
+          fallbackCamera,
+          actors,
+          smoothAlpha,
+        );
+        if (
+          smoothedFallback
+          && typeof fallbackCamera.x === 'number'
+          && Number.isFinite(fallbackCamera.x)
+          && typeof fallbackCamera.y === 'number'
+          && Number.isFinite(fallbackCamera.y)
+        ) {
+          cameraDeltaByKey.set(key, {
+            x: smoothedFallback.x - fallbackCamera.x,
+            y: smoothedFallback.y - fallbackCamera.y,
+          });
+        }
+      }
+      if (smoothedFallback) {
         nextState.camera = {
-          ...nextState.camera,
-          x: target.x + offsetX,
-          y: target.y + offsetY,
+          ...fallbackCamera,
+          x: smoothedFallback.x,
+          y: smoothedFallback.y,
         };
       }
     }
 
+    this.applyCameraLockDeltaToActors(actors, cameraDeltaByKey);
+    this.clearStaleSmoothedCameraKeys(activeCameraKeys);
     return nextState;
+  }
+
+  private actorPositionSmoothingEnabled(actor: ActorState): boolean {
+    const actorRecord = actor as Record<string, unknown>;
+    if (actorRecord.position_smoothing === false || actorRecord.positionSmoothing === false) {
+      return false;
+    }
+    if (actorRecord.interpolate_position === false || actorRecord.interpolatePosition === false) {
+      return false;
+    }
+    return true;
+  }
+
+  private actorCameraLockEnabled(actor: ActorState): boolean {
+    const actorRecord = actor as Record<string, unknown>;
+    if (actorRecord.camera_locked === true || actorRecord.cameraLocked === true) {
+      return true;
+    }
+    return false;
+  }
+
+  private resolveSmoothedCameraPosition(
+    cameraKey: string,
+    cameraState: Record<string, any>,
+    actors: ActorState[],
+    smoothAlpha: number,
+  ): { x: number; y: number } | null {
+    let targetX = typeof cameraState.x === 'number' ? cameraState.x : null;
+    let targetY = typeof cameraState.y === 'number' ? cameraState.y : null;
+    const targetUid =
+      typeof cameraState.target_uid === 'string' && cameraState.target_uid.length > 0
+        ? cameraState.target_uid
+        : null;
+    if (targetUid) {
+      const target = actors.find((actor) => actor.uid === targetUid);
+      if (target && typeof target.x === 'number' && typeof target.y === 'number') {
+        const offsetX = typeof cameraState.offset_x === 'number' ? cameraState.offset_x : 0;
+        const offsetY = typeof cameraState.offset_y === 'number' ? cameraState.offset_y : 0;
+        targetX = target.x + offsetX;
+        targetY = target.y + offsetY;
+      }
+    }
+    if (targetX === null || targetY === null) {
+      return null;
+    }
+    if (!Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+      return null;
+    }
+
+    const smoothingDisabled =
+      cameraState.interpolate_camera === false
+      || cameraState.interpolateCamera === false
+      || cameraState.interpolate === false
+      || cameraState.position_smoothing === false
+      || cameraState.positionSmoothing === false;
+    const shouldSmooth = !smoothingDisabled;
+    if (!shouldSmooth) {
+      this.smoothedCameraPositionsById.set(cameraKey, { x: targetX, y: targetY });
+      return { x: targetX, y: targetY };
+    }
+
+    const previous = this.smoothedCameraPositionsById.get(cameraKey);
+    const cameraAlpha = Math.min(0.85, Math.max(0.45, smoothAlpha * 2.0));
+    let nextX = targetX;
+    let nextY = targetY;
+    if (previous) {
+      const dx = targetX - previous.x;
+      const dy = targetY - previous.y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq <= 512 * 512) {
+        nextX = previous.x + (dx * cameraAlpha);
+        nextY = previous.y + (dy * cameraAlpha);
+      }
+    }
+    this.smoothedCameraPositionsById.set(cameraKey, { x: nextX, y: nextY });
+    return { x: nextX, y: nextY };
+  }
+
+  private clearStaleSmoothedCameraKeys(activeKeys: Set<string>): void {
+    for (const key of Array.from(this.smoothedCameraPositionsById.keys())) {
+      if (!activeKeys.has(key)) {
+        this.smoothedCameraPositionsById.delete(key);
+      }
+    }
+  }
+
+  private resolveViewCameraKeyById(state: InterpreterState | null): Map<string, string> {
+    const out = new Map<string, string>();
+    if (!state || !state.scene || typeof state.scene !== 'object') {
+      return out;
+    }
+    const sceneRecord = state.scene as unknown as Record<string, unknown>;
+    const rawViews = Array.isArray(sceneRecord.views)
+      ? (sceneRecord.views as Array<Record<string, unknown>>)
+      : [];
+    for (const entry of rawViews) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      const viewId = typeof entry.id === 'string' ? entry.id : '';
+      if (!viewId) {
+        continue;
+      }
+      const cameraName = typeof entry.camera_name === 'string' ? entry.camera_name : '';
+      if (cameraName) {
+        out.set(viewId, `camera:${cameraName}`);
+      } else {
+        out.set(viewId, 'camera:__primary__');
+      }
+    }
+    return out;
+  }
+
+  private applyCameraLockDeltaToActors(
+    actors: ActorState[],
+    cameraDeltaByKey: Map<string, { x: number; y: number }>,
+  ): void {
+    if (actors.length <= 0 || cameraDeltaByKey.size <= 0) {
+      return;
+    }
+    const viewCameraKeyById = this.resolveViewCameraKeyById(this.latestState);
+    for (const actor of actors) {
+      if (!this.actorCameraLockEnabled(actor)) {
+        continue;
+      }
+      if (typeof actor.x !== 'number' || typeof actor.y !== 'number') {
+        continue;
+      }
+      const actorRecord = actor as Record<string, unknown>;
+      const actorViewId = typeof actorRecord.view_id === 'string'
+        ? actorRecord.view_id
+        : typeof actorRecord.viewId === 'string'
+          ? actorRecord.viewId
+          : '';
+      const cameraKey = actorViewId
+        ? (viewCameraKeyById.get(actorViewId) || 'camera:__primary__')
+        : 'camera:__primary__';
+      const delta = cameraDeltaByKey.get(cameraKey) || cameraDeltaByKey.get('camera:__primary__');
+      if (!delta) {
+        continue;
+      }
+      actor.x = actor.x + delta.x;
+      actor.y = actor.y + delta.y;
+    }
   }
 
   private buildInterfaceGlobals(state: InterpreterState): Record<string, any> {
@@ -501,28 +781,120 @@ class SessionSnapshotRenderer {
     return globals;
   }
 
-  private syncInterfaceOverlay(state: InterpreterState): void {
+  private resolveActiveInterfaceBindings(state: InterpreterState): Array<{
+    key: string;
+    html: string;
+    viewId: string | null;
+    rect: InterfaceOverlayRect | null;
+  }> {
     const scene = state.scene as Record<string, any> | null;
-    const nextHtml =
+    const fallbackHtml =
       scene && typeof scene.interfaceHtml === 'string'
         ? scene.interfaceHtml
-        : this.interfaceHtml;
-    if (nextHtml === this.interfaceHtml) {
-      return;
+        : this.fallbackInterfaceHtml;
+    const rawBindings = Array.isArray(scene?.interfaces)
+      ? (scene?.interfaces as SceneInterfaceBinding[])
+      : [];
+    const bindings = rawBindings.length > 0
+      ? rawBindings
+      : fallbackHtml.trim().length > 0
+        ? [{ html: fallbackHtml, role_id: null, view_id: null }]
+        : [];
+
+    const stateRecord = state as Record<string, any>;
+    const selfState = stateRecord.self as Record<string, unknown> | null;
+    const selfRoleId =
+      selfState && typeof selfState.id === 'string'
+        ? (selfState.id as string)
+        : null;
+
+    const viewRects = new Map<string, InterfaceOverlayRect>();
+    for (const view of this.renderer.getRenderViews(state, (state.map || null) as MapSpec | null)) {
+      viewRects.set(view.id, {
+        x: view.x,
+        y: view.y,
+        width: view.width,
+        height: view.height,
+      });
     }
-    this.interfaceHtml = nextHtml;
-    if (nextHtml.trim().length === 0) {
-      if (this.interfaceOverlay) {
-        this.interfaceOverlay.destroy();
-        this.interfaceOverlay = null;
+
+    const desired = new Map<string, {
+      key: string;
+      html: string;
+      viewId: string | null;
+      rect: InterfaceOverlayRect | null;
+    }>();
+    for (const binding of bindings) {
+      const html = typeof binding.html === 'string' ? binding.html : '';
+      if (html.trim().length === 0) {
+        continue;
       }
-      return;
+      const roleId =
+        typeof binding.role_id === 'string' && binding.role_id ? binding.role_id : null;
+      const viewId =
+        typeof binding.view_id === 'string' && binding.view_id ? binding.view_id : null;
+      if (roleId && selfRoleId && roleId !== selfRoleId) {
+        continue;
+      }
+      const rect = viewId ? (viewRects.get(viewId) || null) : null;
+      if (viewId && !rect) {
+        continue;
+      }
+      const key = `${roleId || ''}::${viewId || ''}`;
+      desired.set(key, {
+        key,
+        html,
+        viewId,
+        rect,
+      });
     }
-    if (this.interfaceOverlay) {
-      this.interfaceOverlay.setHtml(nextHtml);
-      return;
+    return Array.from(desired.values());
+  }
+
+  private syncInterfaceOverlays(state: InterpreterState): void {
+    const desired = this.resolveActiveInterfaceBindings(state);
+    const desiredKeys = new Set(desired.map((item) => item.key));
+
+    for (const [key, existing] of this.interfaceOverlays.entries()) {
+      if (!desiredKeys.has(key)) {
+        existing.overlay.destroy();
+        this.interfaceOverlays.delete(key);
+      }
     }
-    this.interfaceOverlay = new InterfaceOverlay(this.canvas, nextHtml);
+
+    for (const target of desired) {
+      const existing = this.interfaceOverlays.get(target.key);
+      const rectKey = target.rect
+        ? `${target.rect.x},${target.rect.y},${target.rect.width},${target.rect.height}`
+        : 'full';
+      if (!existing) {
+        const overlay = new InterfaceOverlay(
+          this.canvas,
+          target.html,
+          target.viewId,
+          target.rect,
+        );
+        this.interfaceOverlays.set(target.key, {
+          overlay,
+          html: target.html,
+          rectKey,
+        });
+        continue;
+      }
+      if (existing.html !== target.html) {
+        existing.overlay.setHtml(target.html);
+        existing.html = target.html;
+      }
+      if (existing.rectKey !== rectKey) {
+        existing.overlay.setRect(target.rect);
+        existing.rectKey = rectKey;
+      }
+    }
+
+    const globals = this.buildInterfaceGlobals(state);
+    for (const entry of this.interfaceOverlays.values()) {
+      entry.overlay.updateGlobals(globals);
+    }
   }
 }
 
@@ -737,6 +1109,14 @@ function uniqueStrings(values: string[]): string[] {
   return out;
 }
 
+function buttonEventNames(events: InterfaceButtonEvent[]): string[] {
+  return uniqueStrings(
+    events
+      .map((event) => event.name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0),
+  );
+}
+
 function mapMouseButton(buttonCode: number): string {
   if (buttonCode === 0) return 'left';
   if (buttonCode === 1) return 'middle';
@@ -829,6 +1209,7 @@ async function startSessionBrowserClient(
   let latestSnapshot: SessionSnapshot | null = null;
   let sessionWarning: string | null = null;
   let lastSymbolicRenderAtMs = 0;
+  let lastSymbolicText = '';
   const multiplayerSpec =
     sessionSpec &&
     typeof sessionSpec === 'object' &&
@@ -851,13 +1232,21 @@ async function startSessionBrowserClient(
         sessionWarning ? `WARNING: ${sessionWarning}` : '',
         'Waiting for first snapshot...',
       ].filter((line) => line.length > 0);
-      symbolicPanel.textContent = lines.join('\n');
+      const nextText = lines.join('\n');
+      if (nextText !== lastSymbolicText) {
+        symbolicPanel.textContent = nextText;
+        lastSymbolicText = nextText;
+      }
       lastSymbolicRenderAtMs = nowMs;
       return;
     }
     if (shouldRenderSymbolic) {
       const warningPrefix = sessionWarning ? `WARNING: ${sessionWarning}\n\n` : '';
-      symbolicPanel.textContent = `${warningPrefix}${formatSessionSnapshot(latestSnapshot)}`;
+      const nextText = `${warningPrefix}${formatSessionSnapshot(latestSnapshot)}`;
+      if (nextText !== lastSymbolicText) {
+        symbolicPanel.textContent = nextText;
+        lastSymbolicText = nextText;
+      }
       lastSymbolicRenderAtMs = nowMs;
     }
     sessionRenderer.render(latestSnapshot);
@@ -956,6 +1345,8 @@ async function startSessionBrowserClient(
       buttons?: string[];
       mouseButtons?: string[];
       mousePosition?: { x: number; y: number };
+      mouseWorldPosition?: { x: number; y: number };
+      mouseViewId?: string;
     } = {},
   ): void => {
     const ws = activeWebSocket as unknown as {
@@ -974,6 +1365,8 @@ async function startSessionBrowserClient(
       buttons: options.buttons || [],
       mouse_buttons: options.mouseButtons || [],
       mouse_position: options.mousePosition,
+      mouse_world_position: options.mouseWorldPosition,
+      mouse_view_id: options.mouseViewId,
     };
     try {
       ws.send(JSON.stringify(payload));
@@ -1067,13 +1460,35 @@ async function startSessionBrowserClient(
   const mouseBeginEvents: string[] = [];
   const mouseEndEvents: string[] = [];
   let mousePosition = { x: 0, y: 0 };
+  let mouseWorldPosition = { x: 0, y: 0 };
+  let mouseViewId = '';
 
   const updateMousePosition = (event: MouseEvent): void => {
     const rect = canvas.getBoundingClientRect();
+    const screenX = event.clientX - rect.left;
+    const screenY = event.clientY - rect.top;
+    const projection = sessionRenderer.projectScreenToWorld(screenX, screenY);
+    if (projection) {
+      mousePosition = {
+        x: projection.localX,
+        y: projection.localY,
+      };
+      mouseWorldPosition = {
+        x: projection.worldX,
+        y: projection.worldY,
+      };
+      mouseViewId = projection.viewId;
+      return;
+    }
     mousePosition = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
+      x: screenX,
+      y: screenY,
     };
+    mouseWorldPosition = {
+      x: screenX,
+      y: screenY,
+    };
+    mouseViewId = '';
   };
 
   const consumeMousePhases = (): { begin: string[]; on: string[]; end: string[] } => {
@@ -1106,6 +1521,8 @@ async function startSessionBrowserClient(
         buttons: [],
         mouseButtons: [],
         mousePosition,
+        mouseWorldPosition,
+        mouseViewId,
       });
       return;
     }
@@ -1121,6 +1538,8 @@ async function startSessionBrowserClient(
     if (mouseButtonsDown.length > 0) {
       command.mouse = { end: uniqueStrings(mouseButtonsDown) };
       command.mousePosition = mousePosition;
+      command.mouseWorldPosition = mouseWorldPosition;
+      command.mouseViewId = mouseViewId;
     }
     enqueueCommand(command);
   };
@@ -1214,6 +1633,8 @@ async function startSessionBrowserClient(
         on: uniqueStrings(Array.from(mouseDown.values())),
       },
       mousePosition,
+      mouseWorldPosition,
+      mouseViewId,
     });
   };
 
@@ -1237,6 +1658,8 @@ async function startSessionBrowserClient(
         end: [button],
       },
       mousePosition,
+      mouseWorldPosition,
+      mouseViewId,
     });
   };
 
@@ -1255,6 +1678,8 @@ async function startSessionBrowserClient(
           on: uniqueStrings(Array.from(mouseDown.values())),
         },
         mousePosition,
+        mouseWorldPosition,
+        mouseViewId,
       },
       { dropIfBusy: true },
     );
@@ -1290,9 +1715,11 @@ async function startSessionBrowserClient(
     if (isWebSocketInputActive()) {
       // Fixed-rate protocol: send down-sets; include begin-edges so short taps/clicks are not lost.
       sendWebSocketInputFrame(onTokens, {
-        buttons: uniqueStrings([...uiButtonPhases.on, ...uiButtonPhases.begin]),
+        buttons: buttonEventNames([...uiButtonPhases.on, ...uiButtonPhases.begin]),
         mouseButtons: uniqueStrings([...mousePhases.on, ...mousePhases.begin]),
         mousePosition,
+        mouseWorldPosition,
+        mouseViewId,
       });
       return;
     }
@@ -1314,9 +1741,15 @@ async function startSessionBrowserClient(
     if (hasMousePhases) {
       command.mouse = mousePhases;
       command.mousePosition = mousePosition;
+      command.mouseWorldPosition = mouseWorldPosition;
+      command.mouseViewId = mouseViewId;
     }
     if (hasUiButtonPhases) {
-      command.uiButtons = uiButtonPhases;
+      command.uiButtons = {
+        begin: buttonEventNames(uiButtonPhases.begin),
+        on: buttonEventNames(uiButtonPhases.on),
+        end: buttonEventNames(uiButtonPhases.end),
+      };
     }
     const hasEdge =
       mousePhases.begin.length > 0
@@ -1358,6 +1791,8 @@ async function startSessionBrowserClient(
             buttons: [],
             mouseButtons: uniqueStrings(Array.from(mouseDown.values())),
             mousePosition,
+            mouseWorldPosition,
+            mouseViewId,
           });
         };
 
