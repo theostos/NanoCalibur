@@ -21,6 +21,7 @@ import type {
 
 type SymbolicLegendEntry = { symbol: string; description: string };
 type SymbolicAnnotationEntry = {
+  id?: string;
   uid: string;
   type: string;
   x: number;
@@ -28,11 +29,25 @@ type SymbolicAnnotationEntry = {
   symbol: string;
   text: string;
   priority: number;
-  mode: string;
+};
+type SymbolicStackActorEntry = {
+  id?: string;
+  uid: string;
+  type: string;
+  symbol: string;
+  description: string;
+  z: number;
+};
+type SymbolicStackEntry = {
+  x: number;
+  y: number;
+  symbol: string;
+  actors: SymbolicStackActorEntry[];
 };
 type SymbolicViewFrame = {
   rows: string[];
   legend: SymbolicLegendEntry[];
+  stacks?: SymbolicStackEntry[];
   annotations?: SymbolicAnnotationEntry[];
   origin_x?: number;
   origin_y?: number;
@@ -972,7 +987,59 @@ function formatAnnotations(annotations: SymbolicAnnotationEntry[]): string {
     if (!item || typeof item.text !== 'string' || !item.text.trim()) {
       continue;
     }
+    const symbolicId =
+      typeof item.id === 'string' && item.id.trim()
+        ? item.id.trim()
+        : (typeof item.uid === 'string' ? item.uid : '');
+    if (symbolicId) {
+      lines.push(`(${item.x},${item.y}) ${symbolicId} | ${item.text}`);
+      continue;
+    }
     lines.push(`(${item.x},${item.y}) ${item.text}`);
+  }
+  return lines.join('\n');
+}
+
+function formatStacks(frame: SymbolicViewFrame): string {
+  const rawStacks = Array.isArray(frame.stacks) ? frame.stacks : [];
+  if (rawStacks.length <= 0) {
+    return '';
+  }
+  const originX =
+    typeof frame.origin_x === 'number' && Number.isFinite(frame.origin_x)
+      ? Math.floor(frame.origin_x)
+      : 0;
+  const originY =
+    typeof frame.origin_y === 'number' && Number.isFinite(frame.origin_y)
+      ? Math.floor(frame.origin_y)
+      : 0;
+  const lines: string[] = [];
+  for (const stack of rawStacks) {
+    if (!stack || !Array.isArray(stack.actors) || stack.actors.length <= 1) {
+      continue;
+    }
+    const worldX = originX + Math.floor(stack.x);
+    const worldY = originY + Math.floor(stack.y);
+    const symbol = typeof stack.symbol === 'string' && stack.symbol ? stack.symbol : '?';
+    const actorParts: string[] = [];
+    for (const actor of stack.actors) {
+      if (!actor) {
+        continue;
+      }
+      const symbolicId =
+        typeof actor.id === 'string' && actor.id.trim()
+          ? actor.id.trim()
+          : (typeof actor.uid === 'string' && actor.uid ? actor.uid : 'unknown');
+      const description =
+        typeof actor.description === 'string' && actor.description
+          ? actor.description
+          : (typeof actor.type === 'string' && actor.type ? actor.type : 'actor');
+      actorParts.push(`"${symbolicId}": ${description}`);
+    }
+    if (actorParts.length <= 1) {
+      continue;
+    }
+    lines.push(`(${worldX},${worldY}): ${symbol} contains ${actorParts.join(', ')}`);
   }
   return lines.join('\n');
 }
@@ -1029,6 +1096,10 @@ function formatSingleSymbolicFrame(
     : '';
   if (annotations) {
     sections.push(`Annotations\n${annotations}`);
+  }
+  const stacks = formatStacks(frame);
+  if (stacks) {
+    sections.push(`Stacks\n${stacks}`);
   }
   const includeLegend = options.includeLegend !== false;
   if (includeLegend) {

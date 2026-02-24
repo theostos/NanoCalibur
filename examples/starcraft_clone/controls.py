@@ -1405,8 +1405,8 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             task_build_y=0,
             task_resource_kind="",
             task_resource_amount=0,
+            symbolic_id="",
             symbolic_note="",
-            symbolic_note_mode="always",
             symbolic_note_priority=0,
             view_ids=["main_h1", "main_h2"],
             sprite=sprite_name,
@@ -1472,8 +1472,8 @@ def spawn_construction_site(
             task_build_y=spawn_y,
             task_resource_kind="",
             task_resource_amount=0,
+            symbolic_id="",
             symbolic_note="",
-            symbolic_note_mode="always",
             symbolic_note_priority=0,
             view_ids=["main_h1", "main_h2"],
             sprite=object_kind_sprite(build_kind, team_id),
@@ -3250,32 +3250,14 @@ def sync_world_symbolic_notes(
 ):
     for obj in objects:
         if obj.active == False or obj.hp <= 0:
+            obj.symbolic_id = ""
             obj.symbolic_note = ""
-            obj.symbolic_note_mode = "always"
             obj.symbolic_note_priority = 0
             continue
 
         status = symbolic_status_for_object(obj)
         label = symbolic_label_for_object(obj, objects)
-        obj.symbolic_note = (
-            label
-            + " | HP "
-            + int_to_text(obj.hp)
-            + "/"
-            + int_to_text(obj.max_hp)
-            + " | "
-            + status
-        )
-
-        mode = "always"
         priority = 0
-        hp_pct = health_percent(obj)
-        if hp_pct <= 35:
-            mode = "alert"
-            priority = 80
-        elif status != "Idle":
-            mode = "alert"
-            priority = 45
 
         selected_h1 = selected_uid_in_slots(
             obj.uid,
@@ -3288,10 +3270,18 @@ def sync_world_symbolic_notes(
             role_h2.selected_count,
         )
         if selected_h1 or selected_h2:
-            mode = "focus"
             priority = 100
 
-        obj.symbolic_note_mode = mode
+        obj.symbolic_id = label
+        obj.symbolic_note = (
+            "HP "
+            + int_to_text(obj.hp)
+            + "/"
+            + int_to_text(obj.max_hp)
+            + " | "
+            + status
+        )
+
         obj.symbolic_note_priority = priority
 
 

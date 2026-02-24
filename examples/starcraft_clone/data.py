@@ -90,8 +90,8 @@ class RTSObject(Actor):
     task_build_y: float
     task_resource_kind: str
     task_resource_amount: int
+    symbolic_id: str
     symbolic_note: str
-    symbolic_note_mode: str
     symbolic_note_priority: int
     view_ids: list[str]
 
@@ -218,8 +218,8 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        symbolic_id="",
         symbolic_note="",
-        symbolic_note_mode="always",
         symbolic_note_priority=0,
         view_ids=["main_h1", "main_h2"],
         sprite="worker_p1",
@@ -273,8 +273,8 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        symbolic_id="",
         symbolic_note="",
-        symbolic_note_mode="always",
         symbolic_note_priority=0,
         view_ids=["main_h1", "main_h2"],
         sprite="hq_p1",
@@ -329,8 +329,8 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        symbolic_id="",
         symbolic_note="",
-        symbolic_note_mode="always",
         symbolic_note_priority=0,
         view_ids=["main_h1", "main_h2"],
         sprite="worker_p2",
@@ -384,8 +384,8 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        symbolic_id="",
         symbolic_note="",
-        symbolic_note_mode="always",
         symbolic_note_priority=0,
         view_ids=["main_h1", "main_h2"],
         sprite="hq_p2",
