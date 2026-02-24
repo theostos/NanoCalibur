@@ -33,6 +33,7 @@ type SymbolicSubFrame = {
   legend: SymbolicLegendItem[];
   stacks: SymbolicStackCell[];
   annotations: SymbolicAnnotationItem[];
+  prefix?: string;
 };
 
 interface SymbolicAnnotationCandidate extends SymbolicAnnotationItem {
@@ -47,6 +48,199 @@ interface SymbolicAnnotationCandidate extends SymbolicAnnotationItem {
 export interface SymbolicViewer {
   roleId?: string | null;
   roleKind?: string | null;
+}
+
+class SymbolicPrefixResolver {
+  private readonly globals: Record<string, unknown> | null;
+  private readonly roles: Record<string, unknown> | null;
+  private readonly options: CanvasHostOptions;
+
+  constructor(state: InterpreterState, options: CanvasHostOptions) {
+    this.globals =
+      state && state.globals && typeof state.globals === "object"
+        ? (state.globals as Record<string, unknown>)
+        : null;
+    this.roles =
+      state && state.roles && typeof state.roles === "object"
+        ? (state.roles as Record<string, unknown>)
+        : null;
+    this.options = options;
+  }
+
+  resolve(roleId: string | null, viewId: string | null): string {
+    const rolePrefix = this.resolveRolePrefix(roleId, viewId);
+    const globalPrefix = this.resolveGlobalPrefix(roleId, viewId);
+    const rawPrefix = rolePrefix || globalPrefix;
+    if (!rawPrefix) {
+      return "";
+    }
+    const normalized = rawPrefix.replace(/\r\n/g, "\n");
+    if (!normalized.trim()) {
+      return "";
+    }
+    const maxChars = this.resolveMaxChars();
+    if (maxChars <= 0) {
+      return "";
+    }
+    if (normalized.length <= maxChars) {
+      return normalized;
+    }
+    return normalized.slice(0, maxChars);
+  }
+
+  private resolveMaxChars(): number {
+    const globalValue = this.globals?.symbolic_prefix_max_chars;
+    const optionValue = this.options.symbolic?.prefixMaxChars;
+    if (typeof globalValue === "number" && Number.isFinite(globalValue)) {
+      return Math.max(0, Math.floor(globalValue));
+    }
+    if (typeof optionValue === "number" && Number.isFinite(optionValue)) {
+      return Math.max(0, Math.floor(optionValue));
+    }
+    return 1024;
+  }
+
+  private resolveRolePrefix(roleId: string | null, viewId: string | null): string {
+    const roleRecord = this.resolveRoleRecord(roleId);
+    if (!roleRecord) {
+      return "";
+    }
+    const roleViewPrefix = this.resolveRoleViewScopedPrefix(roleRecord, viewId);
+    if (roleViewPrefix) {
+      return roleViewPrefix;
+    }
+    const rolePrefix = this.resolveStringProperty(roleRecord, [
+      "symbolic_prefix_text",
+      "symbolic_prefix",
+    ]);
+    return rolePrefix;
+  }
+
+  private resolveGlobalPrefix(roleId: string | null, viewId: string | null): string {
+    if (!this.globals) {
+      return "";
+    }
+    const roleViewPrefix = this.resolveRoleViewMap(
+      this.globals.symbolic_prefix_text_by_role_view,
+      roleId,
+      viewId,
+    ) || this.resolveRoleViewMap(
+      this.globals.symbolic_prefix_by_role_view,
+      roleId,
+      viewId,
+    );
+    if (roleViewPrefix) {
+      return roleViewPrefix;
+    }
+
+    const rolePrefix = this.resolveMapString(
+      this.globals.symbolic_prefix_text_by_role,
+      roleId,
+    ) || this.resolveMapString(
+      this.globals.symbolic_prefix_by_role,
+      roleId,
+    );
+    if (rolePrefix) {
+      return rolePrefix;
+    }
+
+    const viewPrefix = this.resolveMapString(
+      this.globals.symbolic_prefix_text_by_view,
+      viewId,
+    ) || this.resolveMapString(
+      this.globals.symbolic_prefix_by_view,
+      viewId,
+    );
+    if (viewPrefix) {
+      return viewPrefix;
+    }
+
+    return this.resolveStringProperty(this.globals, [
+      "symbolic_prefix_text",
+      "symbolic_prefix",
+    ]);
+  }
+
+  private resolveRoleRecord(roleId: string | null): Record<string, unknown> | null {
+    if (!roleId || !this.roles) {
+      return null;
+    }
+    const raw = this.roles[roleId];
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    return raw as Record<string, unknown>;
+  }
+
+  private resolveRoleViewScopedPrefix(
+    roleRecord: Record<string, unknown>,
+    viewId: string | null,
+  ): string {
+    const viewPrefix = this.resolveMapString(roleRecord.symbolic_prefix_text_by_view, viewId)
+      || this.resolveMapString(roleRecord.symbolic_prefix_by_view, viewId);
+    if (viewPrefix) {
+      return viewPrefix;
+    }
+    return "";
+  }
+
+  private resolveStringProperty(
+    record: Record<string, unknown>,
+    keys: string[],
+  ): string {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === "string" && value) {
+        return value;
+      }
+    }
+    return "";
+  }
+
+  private resolveMapString(rawMap: unknown, key: string | null): string {
+    if (!key || !rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+      return "";
+    }
+    const mapRecord = rawMap as Record<string, unknown>;
+    const value = mapRecord[key];
+    if (typeof value !== "string" || !value) {
+      return "";
+    }
+    return value;
+  }
+
+  private resolveRoleViewMap(
+    rawMap: unknown,
+    roleId: string | null,
+    viewId: string | null,
+  ): string {
+    if (!roleId || !viewId || !rawMap || typeof rawMap !== "object" || Array.isArray(rawMap)) {
+      return "";
+    }
+    const mapRecord = rawMap as Record<string, unknown>;
+    const flatCandidates = [
+      `${roleId}|${viewId}`,
+      `${roleId}:${viewId}`,
+      `${roleId}::${viewId}`,
+      `${roleId}/${viewId}`,
+    ];
+    for (const candidateKey of flatCandidates) {
+      const flatValue = mapRecord[candidateKey];
+      if (typeof flatValue === "string" && flatValue) {
+        return flatValue;
+      }
+    }
+
+    const nested = mapRecord[roleId];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
+      return "";
+    }
+    const nestedValue = (nested as Record<string, unknown>)[viewId];
+    if (typeof nestedValue !== "string" || !nestedValue) {
+      return "";
+    }
+    return nestedValue;
+  }
 }
 
 export class SymbolicRenderer {
@@ -64,6 +258,9 @@ export class SymbolicRenderer {
     const actors = (state.actors || []) as ActorState[];
     const tileSize = mapSpec ? Math.max(1, asNumber(mapSpec.tile_size, 32)) : 32;
     const roleKind = typeof viewer.roleKind === "string" ? viewer.roleKind.toLowerCase() : null;
+    const viewerRoleId =
+      typeof viewer.roleId === "string" && viewer.roleId ? viewer.roleId : null;
+    const prefixResolver = new SymbolicPrefixResolver(state, this.options);
     const scene =
       state && state.scene && typeof state.scene === "object"
         ? (state.scene as Record<string, any>)
@@ -81,10 +278,10 @@ export class SymbolicRenderer {
       }
       const roleId =
         typeof entry.role_id === "string" && entry.role_id ? entry.role_id : null;
-      if (!viewer.roleId) {
+      if (!viewerRoleId) {
         return roleId === null;
       }
-      return roleId === null || roleId === viewer.roleId;
+      return roleId === null || roleId === viewerRoleId;
     });
 
     const viewFrames: Record<string, SymbolicSubFrame> = {};
@@ -93,7 +290,7 @@ export class SymbolicRenderer {
         const cameraState = this.resolveCameraForView(
           state,
           view,
-          viewer.roleId || null,
+          viewerRoleId,
         );
         if (!cameraState) {
           continue;
@@ -106,21 +303,30 @@ export class SymbolicRenderer {
           cameraState,
           view.id as string,
         );
+        const subframePrefix = prefixResolver.resolve(viewerRoleId, view.id as string);
+        if (subframePrefix) {
+          subframe.prefix = subframePrefix;
+        }
         viewFrames[view.id as string] = subframe;
       }
       const viewIds = Object.keys(viewFrames);
       if (viewIds.length > 0) {
         const primaryId = viewFrames.main ? "main" : viewIds[0];
-        return {
+        const out: SymbolicFrame = {
           ...viewFrames[primaryId],
           views: viewFrames,
         };
+        const primaryPrefix = viewFrames[primaryId].prefix || "";
+        if (primaryPrefix) {
+          out.prefix = primaryPrefix;
+        }
+        return out;
       }
     }
 
-    const cameraState = this.resolveViewerCamera(state, viewer.roleId || null);
-    if (roleKind === "ai" && viewer.roleId && !cameraState) {
-      return {
+    const cameraState = this.resolveViewerCamera(state, viewerRoleId);
+    if (roleKind === "ai" && viewerRoleId && !cameraState) {
+      const out: SymbolicFrame = {
         width: 0,
         height: 0,
         rows: [],
@@ -128,6 +334,11 @@ export class SymbolicRenderer {
         stacks: [],
         annotations: [],
       };
+      const emptyPrefix = prefixResolver.resolve(viewerRoleId, null);
+      if (emptyPrefix) {
+        out.prefix = emptyPrefix;
+      }
+      return out;
     }
     const single = this.renderForCameraState(
       state,
@@ -137,6 +348,13 @@ export class SymbolicRenderer {
       cameraState,
       null,
     );
+    const framePrefix = prefixResolver.resolve(viewerRoleId, null);
+    if (framePrefix) {
+      return {
+        ...single,
+        prefix: framePrefix,
+      };
+    }
     return single;
   }
 

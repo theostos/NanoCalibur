@@ -998,3 +998,210 @@ def test_headless_symbolic_annotations_respect_runtime_limits(tmp_path):
     assert len(frame["annotations"]) == 1
     assert frame["annotations"][0]["uid"] == "u2"
     assert frame["annotations"][0]["text"] == "HP 30/40 | idle"
+
+
+def test_headless_symbolic_frame_includes_runtime_prefix_text(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_dir = root / "nanocalibur" / "runtime"
+
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_dir / "headless_host.ts"),
+            str(runtime_dir / "runtime_core.ts"),
+            str(runtime_dir / "symbolic_renderer.ts"),
+            str(runtime_dir / "interpreter.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_path = compiled_dir / "interpreter.js"
+    headless_path = compiled_dir / "headless_host.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [
+            {{ name: "symbolic_prefix_text", kind: "str", value: "Mission: defend base.\\nYou are p1." }},
+            {{ name: "symbolic_prefix_max_chars", kind: "int", value: 21 }}
+          ],
+          predicates: [],
+          rules: [],
+          map: {{
+            width: 2,
+            height: 2,
+            tile_size: 16,
+            tile_grid: [
+              [0, 0],
+              [0, 0]
+            ],
+            tile_defs: {{}}
+          }},
+          resources: [],
+          sprites: {{
+            by_name: {{}},
+            by_uid: {{}},
+            by_type: {{}}
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, {{}}, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        const frame = host.getSymbolicFrame();
+        console.log(JSON.stringify(frame));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    frame = json.loads(proc.stdout.strip())
+    assert frame["prefix"] == "Mission: defend base."
+
+
+def test_headless_symbolic_prefix_can_be_role_and_view_dependent(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_dir = root / "nanocalibur" / "runtime"
+
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_dir / "headless_host.ts"),
+            str(runtime_dir / "runtime_core.ts"),
+            str(runtime_dir / "symbolic_renderer.ts"),
+            str(runtime_dir / "interpreter.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_path = compiled_dir / "interpreter.js"
+    headless_path = compiled_dir / "headless_host.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+
+        const spec = {{
+          actors: [],
+          globals: [],
+          roles: [
+            {{
+              id: "human_1",
+              type: "HumanRole",
+              kind: "human",
+              required: true,
+              fields: {{
+                symbolic_prefix_text: "You are p1.",
+                symbolic_prefix_by_view: {{
+                  main_h1: "You are p1 (main).",
+                  minimap_h1: "You are p1 (minimap)."
+                }}
+              }}
+            }},
+            {{
+              id: "human_2",
+              type: "HumanRole",
+              kind: "human",
+              required: true,
+              fields: {{
+                symbolic_prefix_text: "You are p2.",
+                symbolic_prefix_by_view: {{
+                  main_h2: "You are p2 (main).",
+                  minimap_h2: "You are p2 (minimap)."
+                }}
+              }}
+            }}
+          ],
+          predicates: [],
+          rules: [],
+          cameras: [
+            {{ name: "cam_h1_main", role_id: "human_1", x: 16, y: 16, width: 2, height: 2 }},
+            {{ name: "cam_h1_minimap", role_id: "human_1", x: 16, y: 16, width: 2, height: 2 }},
+            {{ name: "cam_h2_main", role_id: "human_2", x: 16, y: 16, width: 2, height: 2 }},
+            {{ name: "cam_h2_minimap", role_id: "human_2", x: 16, y: 16, width: 2, height: 2 }}
+          ],
+          views: [
+            {{ id: "main_h1", role_id: "human_1", camera_name: "cam_h1_main", symbolic: true }},
+            {{ id: "minimap_h1", role_id: "human_1", camera_name: "cam_h1_minimap", symbolic: true }},
+            {{ id: "main_h2", role_id: "human_2", camera_name: "cam_h2_main", symbolic: true }},
+            {{ id: "minimap_h2", role_id: "human_2", camera_name: "cam_h2_minimap", symbolic: true }}
+          ],
+          map: {{
+            width: 2,
+            height: 2,
+            tile_size: 16,
+            tile_grid: [
+              [0, 0],
+              [0, 0]
+            ],
+            tile_defs: {{}}
+          }},
+          resources: [],
+          sprites: {{
+            by_name: {{}},
+            by_uid: {{}},
+            by_type: {{}}
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, {{}}, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        const h1 = host.getSymbolicFrame({{ roleId: "human_1", roleKind: "human" }});
+        const h2 = host.getSymbolicFrame({{ roleId: "human_2", roleKind: "human" }});
+        console.log(JSON.stringify({{ h1, h2 }}));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout.strip())
+    h1 = payload["h1"]
+    h2 = payload["h2"]
+
+    assert h1["prefix"] == "You are p1 (main)."
+    assert h1["views"]["main_h1"]["prefix"] == "You are p1 (main)."
+    assert h1["views"]["minimap_h1"]["prefix"] == "You are p1 (minimap)."
+
+    assert h2["prefix"] == "You are p2 (main)."
+    assert h2["views"]["main_h2"]["prefix"] == "You are p2 (main)."
+    assert h2["views"]["minimap_h2"]["prefix"] == "You are p2 (minimap)."

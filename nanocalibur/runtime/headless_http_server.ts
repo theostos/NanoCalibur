@@ -45,6 +45,8 @@ interface RoleWebSocketInputState {
 
 export class HeadlessHttpServer {
   private static readonly MAX_SYMBOLIC_STACKS_PER_PRIMARY_FRAME = 256;
+  private static readonly MAX_SYMBOLIC_ANNOTATIONS_PER_FRAME = 128;
+  private static readonly MAX_SYMBOLIC_PREFIX_CHARS = 4096;
   private static readonly MAX_WEBSOCKET_SNAPSHOT_BACKLOG_BYTES = 256 * 1024;
 
   private readonly host: HeadlessHost;
@@ -1629,6 +1631,14 @@ export class HeadlessHttpServer {
             HeadlessHttpServer.MAX_SYMBOLIC_STACKS_PER_PRIMARY_FRAME,
           )
         : [],
+      annotations: this.truncateSymbolicAnnotations(
+        rawFrame.annotations,
+        HeadlessHttpServer.MAX_SYMBOLIC_ANNOTATIONS_PER_FRAME,
+      ),
+      prefix: this.sanitizeSymbolicPrefix(
+        rawFrame.prefix,
+        HeadlessHttpServer.MAX_SYMBOLIC_PREFIX_CHARS,
+      ),
     };
   }
 
@@ -1650,6 +1660,40 @@ export class HeadlessHttpServer {
       }
     }
     return out;
+  }
+
+  private truncateSymbolicAnnotations(
+    rawAnnotations: unknown,
+    maxAnnotations: number,
+  ): Array<Record<string, any>> {
+    if (!Array.isArray(rawAnnotations) || maxAnnotations <= 0) {
+      return [];
+    }
+    const out: Array<Record<string, any>> = [];
+    for (const entry of rawAnnotations) {
+      if (!entry || typeof entry !== "object") {
+        continue;
+      }
+      out.push(entry as Record<string, any>);
+      if (out.length >= maxAnnotations) {
+        break;
+      }
+    }
+    return out;
+  }
+
+  private sanitizeSymbolicPrefix(rawPrefix: unknown, maxChars: number): string {
+    if (typeof rawPrefix !== "string" || maxChars <= 0) {
+      return "";
+    }
+    const normalized = rawPrefix.replace(/\r\n/g, "\n");
+    if (!normalized.trim()) {
+      return "";
+    }
+    if (normalized.length <= maxChars) {
+      return normalized;
+    }
+    return normalized.slice(0, maxChars);
   }
 
   private scopeFrameForViewer(
@@ -1704,6 +1748,10 @@ export class HeadlessHttpServer {
       true,
     );
     root.views = scopedViews;
+    root.prefix = this.sanitizeSymbolicPrefix(
+      frame.prefix,
+      HeadlessHttpServer.MAX_SYMBOLIC_PREFIX_CHARS,
+    );
     return root;
   }
 

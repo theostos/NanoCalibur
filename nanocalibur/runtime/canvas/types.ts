@@ -165,6 +165,7 @@ export interface CanvasHostOptions {
     cropHeight?: number;
     annotationMaxCount?: number;
     annotationMaxChars?: number;
+    prefixMaxChars?: number;
   };
 }
 
@@ -285,6 +286,7 @@ export interface SymbolicFrame {
   legend: SymbolicLegendItem[];
   stacks: SymbolicStackCell[];
   annotations: SymbolicAnnotationItem[];
+  prefix?: string;
   views?: Record<
     string,
     {
@@ -294,6 +296,7 @@ export interface SymbolicFrame {
       legend: SymbolicLegendItem[];
       stacks: SymbolicStackCell[];
       annotations: SymbolicAnnotationItem[];
+      prefix?: string;
     }
   >;
 }
