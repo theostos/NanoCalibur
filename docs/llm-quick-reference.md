@@ -41,8 +41,8 @@ scene.add_rule(KeyboardCondition.on_press("move_right", Role["human_1"]), move_r
 - Actor render scoping supports `view_id` / `view_ids`.
 - Symbolic visibility supports `symbolic_visible=False` (or `symbolic=False`) and optional `symbolic_stack=False`.
 - Symbolic annotations are actor-driven with:
+  - `symbolic_id`
   - `symbolic_note`
-  - `symbolic_note_mode` (`focus`/`alert`/`always`)
   - `symbolic_note_priority`
 - Symbolic annotation limits are runtime globals:
   - `symbolic_annotations_max_count`

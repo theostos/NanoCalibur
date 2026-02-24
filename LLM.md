@@ -394,12 +394,12 @@ Actor-side fields used by the runtime:
   - `False` hides actor from symbolic output while keeping normal canvas rendering.
 - `symbolic_stack: bool`
   - `False` excludes actor from `frame.stacks`.
+- `symbolic_id: str`
+  - stable symbolic identifier emitted in both annotations and stacks.
 - `symbolic_note: str`
   - short per-actor note shown in symbolic output.
-- `symbolic_note_mode: str`
-  - advisory priority tier (`focus`, `alert`, `always`).
 - `symbolic_note_priority: int`
-  - numeric ordering within the same mode.
+  - numeric ordering for annotation selection (higher first).
 
 Symbolic frame payload includes:
 

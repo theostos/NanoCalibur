@@ -73,7 +73,7 @@ Local role values are not trusted server state.
 - Symbolic output contains `rows`, `legend`, `stacks`, `annotations`, and optional `prefix`.
 - `symbolic_visible=False` (or `symbolic=False`) hides actor from symbolic render without affecting normal canvas draw.
 - `symbolic_stack=False` excludes actor from stack metadata.
-- Actor notes (`symbolic_note`, `symbolic_note_mode`, `symbolic_note_priority`) provide compact extra context for LLM consumers.
+- Actor symbolic id (`symbolic_id`) and notes (`symbolic_note`, `symbolic_note_priority`) provide compact extra context for LLM consumers.
 - Annotation flood budgets are runtime globals:
   - `symbolic_annotations_max_count`
   - `symbolic_annotations_max_chars`

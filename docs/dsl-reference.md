@@ -152,9 +152,9 @@ Actor fields understood by symbolic rendering:
 
 - `symbolic_visible: bool` (or `symbolic: bool`) to include/exclude actor
 - `symbolic_stack: bool` to include/exclude actor from symbolic stack metadata
+- `symbolic_id: str` as stable actor identifier for symbolic outputs
 - `symbolic_note: str` for compact per-actor annotation text
-- `symbolic_note_mode: str` (`focus`, `alert`, `always`) for ranking tier
-- `symbolic_note_priority: int` for ordering inside same tier
+- `symbolic_note_priority: int` for annotation ordering
 
 Frame outputs include:
 

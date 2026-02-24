@@ -341,14 +341,15 @@ You can control symbolic output at actor level without hardcoding game behavior 
 - `view_id` / `view_ids`: limit where an actor is rendered.
 - `symbolic_visible=False` (or `symbolic=False`): hide actor from symbolic output.
 - `symbolic_stack=False`: keep actor out of symbolic stack metadata.
-- `symbolic_note`, `symbolic_note_mode`, `symbolic_note_priority`: provide compact per-actor annotation text.
+- `symbolic_id`: stable symbolic identifier shared by annotations and stack entries.
+- `symbolic_note`, `symbolic_note_priority`: provide compact per-actor annotation text and rank.
 
 Example (actor fields):
 
 ```python
 class Unit(Actor):
+    symbolic_id: str
     symbolic_note: str
-    symbolic_note_mode: str
     symbolic_note_priority: int
     view_ids: list[str]
 ```
