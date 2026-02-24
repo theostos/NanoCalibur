@@ -1623,6 +1623,14 @@ export class HeadlessHttpServer {
         typeof rawFrame.height === "number" && Number.isFinite(rawFrame.height)
           ? Math.max(0, Math.floor(rawFrame.height))
           : 0,
+      origin_x:
+        typeof rawFrame.origin_x === "number" && Number.isFinite(rawFrame.origin_x)
+          ? Math.floor(rawFrame.origin_x)
+          : 0,
+      origin_y:
+        typeof rawFrame.origin_y === "number" && Number.isFinite(rawFrame.origin_y)
+          ? Math.floor(rawFrame.origin_y)
+          : 0,
       rows: Array.isArray(rawFrame.rows) ? rawFrame.rows : [],
       legend: Array.isArray(rawFrame.legend) ? rawFrame.legend : [],
       stacks: keepStacks

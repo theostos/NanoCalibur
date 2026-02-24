@@ -29,6 +29,8 @@ interface TileSymbolInfo {
 type SymbolicSubFrame = {
   width: number;
   height: number;
+  origin_x: number;
+  origin_y: number;
   rows: string[];
   legend: SymbolicLegendItem[];
   stacks: SymbolicStackCell[];
@@ -329,6 +331,8 @@ export class SymbolicRenderer {
       const out: SymbolicFrame = {
         width: 0,
         height: 0,
+        origin_x: 0,
+        origin_y: 0,
         rows: [],
         legend: [],
         stacks: [],
@@ -443,6 +447,8 @@ export class SymbolicRenderer {
     return {
       width,
       height,
+      origin_x: originX,
+      origin_y: originY,
       rows: grid.map((row) => row.join("")),
       legend,
       stacks,

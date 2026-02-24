@@ -34,6 +34,8 @@ type SymbolicViewFrame = {
   rows: string[];
   legend: SymbolicLegendEntry[];
   annotations?: SymbolicAnnotationEntry[];
+  origin_x?: number;
+  origin_y?: number;
   prefix?: string;
 };
 type SymbolicFrame = SymbolicViewFrame & {
@@ -975,11 +977,48 @@ function formatAnnotations(annotations: SymbolicAnnotationEntry[]): string {
   return lines.join('\n');
 }
 
+function formatRowsWithCoordinates(frame: SymbolicViewFrame): string {
+  const rows = Array.isArray(frame.rows) ? frame.rows : [];
+  if (rows.length <= 0) {
+    return '';
+  }
+  const width = rows[0]?.length || 0;
+  const originX =
+    typeof frame.origin_x === 'number' && Number.isFinite(frame.origin_x)
+      ? Math.floor(frame.origin_x)
+      : 0;
+  const originY =
+    typeof frame.origin_y === 'number' && Number.isFinite(frame.origin_y)
+      ? Math.floor(frame.origin_y)
+      : 0;
+
+  const maxCol = originX + Math.max(0, width - 1);
+  const maxRow = originY + Math.max(0, rows.length - 1);
+  const rowPad = Math.max(String(originY).length, String(maxRow).length);
+  const colDigits = Math.max(String(originX).length, String(maxCol).length);
+  const lines: string[] = [];
+
+  for (let digitIndex = 0; digitIndex < colDigits; digitIndex += 1) {
+    let header = `${' '.repeat(rowPad)} `;
+    for (let col = 0; col < width; col += 1) {
+      const label = String(originX + col).padStart(colDigits, ' ');
+      header += label[digitIndex] || ' ';
+    }
+    lines.push(header);
+  }
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const yLabel = String(originY + rowIndex).padStart(rowPad, ' ');
+    lines.push(`${yLabel} ${rows[rowIndex]}`);
+  }
+  return lines.join('\n');
+}
+
 function formatSingleSymbolicFrame(
   frame: SymbolicViewFrame,
   options: { includeLegend?: boolean; prefix?: string } = {},
 ): string {
-  const rowsText = frame.rows.join('\n');
+  const rowsText = formatRowsWithCoordinates(frame);
   const sections: string[] = [rowsText];
   const prefix = typeof options.prefix === 'string' ? options.prefix.trim() : '';
   if (prefix) {

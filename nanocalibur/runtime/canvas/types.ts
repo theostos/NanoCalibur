@@ -282,6 +282,8 @@ export interface SymbolicAnnotationItem {
 export interface SymbolicFrame {
   width: number;
   height: number;
+  origin_x?: number;
+  origin_y?: number;
   rows: string[];
   legend: SymbolicLegendItem[];
   stacks: SymbolicStackCell[];
@@ -292,6 +294,8 @@ export interface SymbolicFrame {
     {
       width: number;
       height: number;
+      origin_x?: number;
+      origin_y?: number;
       rows: string[];
       legend: SymbolicLegendItem[];
       stacks: SymbolicStackCell[];

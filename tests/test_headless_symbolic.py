@@ -300,6 +300,8 @@ def test_headless_symbolic_crop_and_tile_palette(tmp_path):
     frame = json.loads(proc.stdout.strip())
     assert frame["width"] == 3
     assert frame["height"] == 2
+    assert frame["origin_x"] == 3
+    assert frame["origin_y"] == 0
     assert frame["rows"] == ["~~c", "~.@"]
     legend = {item["symbol"]: item["description"] for item in frame["legend"]}
     assert legend["~"] == "water tile"
