@@ -20,9 +20,20 @@ import type {
 } from './nanocalibur_generated/canvas/types';
 
 type SymbolicLegendEntry = { symbol: string; description: string };
+type SymbolicAnnotationEntry = {
+  uid: string;
+  type: string;
+  x: number;
+  y: number;
+  symbol: string;
+  text: string;
+  priority: number;
+  mode: string;
+};
 type SymbolicViewFrame = {
   rows: string[];
   legend: SymbolicLegendEntry[];
+  annotations?: SymbolicAnnotationEntry[];
 };
 type SymbolicFrame = SymbolicViewFrame & {
   views?: Record<string, SymbolicViewFrame>;
@@ -952,19 +963,39 @@ function formatLegend(legend: SymbolicLegendEntry[]): string {
   return legend.map((item) => `${item.symbol}: ${item.description}`).join('\n');
 }
 
+function formatAnnotations(annotations: SymbolicAnnotationEntry[]): string {
+  const lines: string[] = [];
+  for (const item of annotations) {
+    if (!item || typeof item.text !== 'string' || !item.text.trim()) {
+      continue;
+    }
+    const uid = typeof item.uid === 'string' ? item.uid : '';
+    const mode = typeof item.mode === 'string' && item.mode ? item.mode : 'always';
+    lines.push(`(${item.x},${item.y}) ${uid} [${mode}] ${item.text}`);
+  }
+  return lines.join('\n');
+}
+
 function formatSingleSymbolicFrame(
   frame: SymbolicViewFrame,
   options: { includeLegend?: boolean } = {},
 ): string {
+  const rowsText = frame.rows.join('\n');
+  const sections: string[] = [rowsText];
+  const annotations = Array.isArray(frame.annotations)
+    ? formatAnnotations(frame.annotations)
+    : '';
+  if (annotations) {
+    sections.push(`Annotations\n${annotations}`);
+  }
   const includeLegend = options.includeLegend !== false;
-  if (!includeLegend) {
-    return frame.rows.join('\n');
+  if (includeLegend) {
+    const legend = formatLegend(frame.legend || []);
+    if (legend) {
+      sections.push(`Legend\n${legend}`);
+    }
   }
-  const legend = formatLegend(frame.legend || []);
-  if (!legend) {
-    return frame.rows.join('\n');
-  }
-  return `${frame.rows.join('\n')}\n\nLegend\n${legend}`;
+  return sections.join('\n\n');
 }
 
 function sortSymbolicViewIds(viewIds: string[]): string[] {

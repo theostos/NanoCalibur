@@ -6,6 +6,7 @@ import {
   DEFAULT_WIDTH,
   MapSpec,
   SpriteAnimationConfig,
+  SymbolicAnnotationItem,
   SymbolicFrame,
   SymbolicStackActorItem,
   SymbolicStackCell,
@@ -31,7 +32,17 @@ type SymbolicSubFrame = {
   rows: string[];
   legend: SymbolicLegendItem[];
   stacks: SymbolicStackCell[];
+  annotations: SymbolicAnnotationItem[];
 };
+
+interface SymbolicAnnotationCandidate extends SymbolicAnnotationItem {
+  z: number;
+  modeRank: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
 
 export interface SymbolicViewer {
   roleId?: string | null;
@@ -115,6 +126,7 @@ export class SymbolicRenderer {
         rows: [],
         legend: [],
         stacks: [],
+        annotations: [],
       };
     }
     const single = this.renderForCameraState(
@@ -160,10 +172,20 @@ export class SymbolicRenderer {
       )
       .sort((a, b) => asNumber(a.z, 0) - asNumber(b.z, 0));
     const stackByCell = new Map<string, SymbolicStackActorItem[]>();
+    const annotationCandidates: SymbolicAnnotationCandidate[] = [];
 
     for (const actor of sortedActors) {
       const { symbol, description } = this.resolveActorSymbol(actor);
       const bounds = this.resolveActorTileBounds(actor, tileSize);
+      const annotationCandidate = this.resolveActorAnnotationCandidate(
+        actor,
+        symbol,
+        tileSize,
+        viewport,
+      );
+      if (annotationCandidate) {
+        annotationCandidates.push(annotationCandidate);
+      }
       for (let worldTileY = bounds.minTileY; worldTileY <= bounds.maxTileY; worldTileY += 1) {
         const tileY = worldTileY - originY;
         if (tileY < 0 || tileY >= viewport.height) {
@@ -199,12 +221,14 @@ export class SymbolicRenderer {
       ([symbol, description]) => ({ symbol, description }),
     );
     const stacks = this.buildStacks(stackByCell, grid);
+    const annotations = this.resolveAnnotationsForFrame(annotationCandidates, grid, state);
     return {
       width,
       height,
       rows: grid.map((row) => row.join("")),
       legend,
       stacks,
+      annotations,
     };
   }
 
@@ -292,6 +316,170 @@ export class SymbolicRenderer {
     }
     stacks.sort((a, b) => (a.y - b.y) || (a.x - b.x));
     return stacks;
+  }
+
+  private resolveActorAnnotationCandidate(
+    actor: ActorState,
+    symbol: string,
+    tileSize: number,
+    viewport: SymbolicViewport,
+  ): SymbolicAnnotationCandidate | null {
+    const actorRecord = actor as Record<string, unknown>;
+    const rawText = typeof actorRecord.symbolic_note === "string"
+      ? actorRecord.symbolic_note
+      : typeof actorRecord.symbolicNote === "string"
+        ? actorRecord.symbolicNote
+        : "";
+    const text = rawText.trim();
+    if (!text) {
+      return null;
+    }
+
+    const priority = Math.floor(
+      asNumber(
+        actorRecord.symbolic_note_priority,
+        asNumber(actorRecord.symbolicNotePriority, 0),
+      ),
+    );
+    const rawMode = typeof actorRecord.symbolic_note_mode === "string"
+      ? actorRecord.symbolic_note_mode
+      : typeof actorRecord.symbolicNoteMode === "string"
+        ? actorRecord.symbolicNoteMode
+        : "always";
+    const mode = rawMode ? rawMode.toLowerCase() : "always";
+    const modeRank = mode === "focus"
+      ? 0
+      : mode === "alert"
+        ? 1
+        : 2;
+
+    const bounds = this.resolveActorTileBounds(actor, tileSize);
+    const minX = bounds.minTileX - viewport.originX;
+    const maxX = bounds.maxTileX - viewport.originX;
+    const minY = bounds.minTileY - viewport.originY;
+    const maxY = bounds.maxTileY - viewport.originY;
+    const centerX = Math.floor(actorCenterX(actor) / tileSize) - viewport.originX;
+    const centerY = Math.floor(actorCenterY(actor) / tileSize) - viewport.originY;
+
+    return {
+      uid: typeof actor.uid === "string" ? actor.uid : "",
+      type: typeof actor.type === "string" ? actor.type : "",
+      x: centerX,
+      y: centerY,
+      symbol,
+      text,
+      priority,
+      mode,
+      z: asNumber(actor.z, 0),
+      modeRank,
+      minX,
+      minY,
+      maxX,
+      maxY,
+    };
+  }
+
+  private resolveAnnotationsForFrame(
+    candidates: SymbolicAnnotationCandidate[],
+    grid: string[][],
+    state: InterpreterState,
+  ): SymbolicAnnotationItem[] {
+    if (!Array.isArray(candidates) || candidates.length <= 0) {
+      return [];
+    }
+    const limits = this.resolveAnnotationLimits(state);
+    if (limits.maxCount <= 0 || limits.maxChars <= 0) {
+      return [];
+    }
+    const sorted = [...candidates].sort((a, b) =>
+      (a.modeRank - b.modeRank)
+      || (b.priority - a.priority)
+      || (b.z - a.z)
+      || a.uid.localeCompare(b.uid),
+    );
+    const out: SymbolicAnnotationItem[] = [];
+    let usedChars = 0;
+    for (const candidate of sorted) {
+      if (!this.candidateHasVisibleTile(candidate, grid)) {
+        continue;
+      }
+      if (out.length >= limits.maxCount) {
+        break;
+      }
+      const textLength = candidate.text.length;
+      if (textLength <= 0) {
+        continue;
+      }
+      if (usedChars + textLength > limits.maxChars) {
+        continue;
+      }
+      out.push({
+        uid: candidate.uid,
+        type: candidate.type,
+        x: candidate.x,
+        y: candidate.y,
+        symbol: candidate.symbol,
+        text: candidate.text,
+        priority: candidate.priority,
+        mode: candidate.mode,
+      });
+      usedChars += textLength;
+    }
+    return out;
+  }
+
+  private candidateHasVisibleTile(
+    candidate: SymbolicAnnotationCandidate,
+    grid: string[][],
+  ): boolean {
+    for (let y = candidate.minY; y <= candidate.maxY; y += 1) {
+      if (y < 0 || y >= grid.length) {
+        continue;
+      }
+      for (let x = candidate.minX; x <= candidate.maxX; x += 1) {
+        if (x < 0 || x >= grid[y].length) {
+          continue;
+        }
+        if (grid[y][x] === candidate.symbol) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private resolveAnnotationLimits(
+    state: InterpreterState,
+  ): { maxCount: number; maxChars: number } {
+    const globals =
+      state && state.globals && typeof state.globals === "object"
+        ? (state.globals as Record<string, unknown>)
+        : null;
+    const maxCount = this.resolveAnnotationLimitValue(
+      globals?.symbolic_annotations_max_count,
+      this.options.symbolic?.annotationMaxCount,
+      8,
+    );
+    const maxChars = this.resolveAnnotationLimitValue(
+      globals?.symbolic_annotations_max_chars,
+      this.options.symbolic?.annotationMaxChars,
+      300,
+    );
+    return { maxCount, maxChars };
+  }
+
+  private resolveAnnotationLimitValue(
+    globalValue: unknown,
+    optionValue: number | undefined,
+    fallback: number,
+  ): number {
+    if (typeof globalValue === "number" && Number.isFinite(globalValue)) {
+      return Math.max(0, Math.floor(globalValue));
+    }
+    if (typeof optionValue === "number" && Number.isFinite(optionValue)) {
+      return Math.max(0, Math.floor(optionValue));
+    }
+    return Math.max(0, Math.floor(fallback));
   }
 
   private actorVisibleInView(actor: ActorState, viewId: string | null): boolean {

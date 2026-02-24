@@ -163,6 +163,8 @@ export interface CanvasHostOptions {
     maxHeight?: number;
     cropWidth?: number;
     cropHeight?: number;
+    annotationMaxCount?: number;
+    annotationMaxChars?: number;
   };
 }
 
@@ -265,12 +267,24 @@ export interface SymbolicStackCell {
   actors: SymbolicStackActorItem[];
 }
 
+export interface SymbolicAnnotationItem {
+  uid: string;
+  type: string;
+  x: number;
+  y: number;
+  symbol: string;
+  text: string;
+  priority: number;
+  mode: string;
+}
+
 export interface SymbolicFrame {
   width: number;
   height: number;
   rows: string[];
   legend: SymbolicLegendItem[];
   stacks: SymbolicStackCell[];
+  annotations: SymbolicAnnotationItem[];
   views?: Record<
     string,
     {
@@ -279,6 +293,7 @@ export interface SymbolicFrame {
       rows: string[];
       legend: SymbolicLegendItem[];
       stacks: SymbolicStackCell[];
+      annotations: SymbolicAnnotationItem[];
     }
   >;
 }
