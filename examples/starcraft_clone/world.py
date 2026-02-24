@@ -3,10 +3,12 @@ from nanocalibur.dsl_markers import Camera, CodeBlock, Color, Role, Tile, TileMa
 from .shared import (
     MAP_HEIGHT_TILES,
     MAP_WIDTH_TILES,
+    MINIMAP_GRID_SIZE,
     MINIMAP_VIEW_H,
     MINIMAP_VIEW_W,
     MINIMAP_VIEW_X,
     MINIMAP_VIEW_Y,
+    MINIMAP_WORLD_PX,
     TILE_SIZE,
     VIEWPORT_TILES_H,
     VIEWPORT_TILES_W,
@@ -32,10 +34,10 @@ scene.add_camera(camera_human_1)
 camera_human_1_minimap = Camera(
     "camera_human_1_minimap",
     Role["human_1"],
-    width=MAP_WIDTH_TILES,
-    height=MAP_HEIGHT_TILES,
-    x=WORLD_WIDTH_PX / 2,
-    y=WORLD_HEIGHT_PX / 2,
+    width=MINIMAP_GRID_SIZE,
+    height=MINIMAP_GRID_SIZE,
+    x=MINIMAP_WORLD_PX / 2,
+    y=MINIMAP_WORLD_PX / 2,
 )
 scene.add_camera(camera_human_1_minimap)
 
@@ -52,13 +54,27 @@ scene.add_camera(camera_human_2)
 camera_human_2_minimap = Camera(
     "camera_human_2_minimap",
     Role["human_2"],
-    width=MAP_WIDTH_TILES,
-    height=MAP_HEIGHT_TILES,
-    x=WORLD_WIDTH_PX / 2,
-    y=WORLD_HEIGHT_PX / 2,
+    width=MINIMAP_GRID_SIZE,
+    height=MINIMAP_GRID_SIZE,
+    x=MINIMAP_WORLD_PX / 2,
+    y=MINIMAP_WORLD_PX / 2,
 )
 scene.add_camera(camera_human_2_minimap)
 
+scene.add_view(
+    View(
+        "hud_h1",
+        Role["human_1"],
+        camera=Camera["camera_human_1"],
+        x=0.0,
+        y=0.0,
+        width=MINIMAP_VIEW_X - 0.01,
+        height=1.0,
+        z=-5,
+        interactive=False,
+        symbolic=False,
+    )
+)
 scene.add_view(
     View(
         "main_h1",
@@ -85,6 +101,20 @@ scene.add_view(
         z=5,
         interactive=True,
         symbolic=True,
+    )
+)
+scene.add_view(
+    View(
+        "hud_h2",
+        Role["human_2"],
+        camera=Camera["camera_human_2"],
+        x=0.0,
+        y=0.0,
+        width=MINIMAP_VIEW_X - 0.01,
+        height=1.0,
+        z=-5,
+        interactive=False,
+        symbolic=False,
     )
 )
 scene.add_view(

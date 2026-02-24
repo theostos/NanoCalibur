@@ -20,7 +20,13 @@ import type {
 } from './nanocalibur_generated/canvas/types';
 
 type SymbolicLegendEntry = { symbol: string; description: string };
-type SymbolicFrame = { rows: string[]; legend: SymbolicLegendEntry[] };
+type SymbolicViewFrame = {
+  rows: string[];
+  legend: SymbolicLegendEntry[];
+};
+type SymbolicFrame = SymbolicViewFrame & {
+  views?: Record<string, SymbolicViewFrame>;
+};
 
 interface SessionJoinPayload {
   session_id: string;
@@ -901,6 +907,7 @@ class SessionSnapshotRenderer {
 const DEFAULT_CANVAS_OPTIONS: CanvasHostOptions = {
   width: 960,
   height: 640,
+  renderScale: 0.8,
   backgroundColor: '#121826',
   tileColor: '#303a52',
   pixelated: true,
@@ -945,12 +952,58 @@ function formatLegend(legend: SymbolicLegendEntry[]): string {
   return legend.map((item) => `${item.symbol}: ${item.description}`).join('\n');
 }
 
-function formatSymbolicFrame(frame: SymbolicFrame): string {
+function formatSingleSymbolicFrame(
+  frame: SymbolicViewFrame,
+  options: { includeLegend?: boolean } = {},
+): string {
+  const includeLegend = options.includeLegend !== false;
+  if (!includeLegend) {
+    return frame.rows.join('\n');
+  }
   const legend = formatLegend(frame.legend || []);
   if (!legend) {
     return frame.rows.join('\n');
   }
   return `${frame.rows.join('\n')}\n\nLegend\n${legend}`;
+}
+
+function sortSymbolicViewIds(viewIds: string[]): string[] {
+  return [...viewIds].sort((a, b) => {
+    const aPriority = a.includes('main') ? 0 : 1;
+    const bPriority = b.includes('main') ? 0 : 1;
+    if (aPriority !== bPriority) {
+      return aPriority - bPriority;
+    }
+    return a.localeCompare(b);
+  });
+}
+
+function formatSymbolicFrame(frame: SymbolicFrame): string {
+  const viewFrames =
+    frame.views && typeof frame.views === 'object'
+      ? (frame.views as Record<string, SymbolicViewFrame>)
+      : null;
+  const viewIds = viewFrames ? Object.keys(viewFrames) : [];
+  if (viewIds.length <= 0) {
+    return formatSingleSymbolicFrame(frame);
+  }
+
+  const primaryRows = frame.rows.join('\n');
+  const safeViewFrames = viewFrames || {};
+  const sections: string[] = [];
+  for (const viewId of sortSymbolicViewIds(viewIds)) {
+    const subFrame = safeViewFrames[viewId];
+    if (!subFrame || !Array.isArray(subFrame.rows) || !Array.isArray(subFrame.legend)) {
+      continue;
+    }
+    const isPrimary = subFrame.rows.join('\n') === primaryRows;
+    const title = isPrimary ? `View ${viewId} (primary)` : `View ${viewId}`;
+    sections.push(`${title}\n${formatSingleSymbolicFrame(subFrame)}`);
+  }
+  if (sections.length <= 0) {
+    return formatSingleSymbolicFrame(frame);
+  }
+  return sections.join('\n\n');
 }
 
 function formatSessionSnapshot(snapshot: SessionSnapshot): string {

@@ -17,13 +17,17 @@ from nanocalibur.dsl_markers import (
 
 from .data import (
     FOG_MAIN_CELL_POOL_SIZE,
+    FOG_MAIN_GRID_H,
+    FOG_MAIN_GRID_W,
     FOG_MINIMAP_CELL_POOL_SIZE,
     FOG_MINIMAP_GRID_H,
     FOG_MINIMAP_GRID_W,
     HEALTH_BAR_POOL_SIZE,
+    MINIMAP_BLIP_POOL_SIZE,
     FogCell,
     HealthBarBackground,
     HealthBarFill,
+    MinimapBlip,
     PLAYER_1_ROLE_ID,
     PLAYER_2_ROLE_ID,
     DragSelectionRect,
@@ -33,13 +37,15 @@ from .data import (
 )
 from .roles import RTSRole
 from .shared import (
+    CAMERA_PAN_SPEED,
     HALF_VIEW_H_PX,
     HALF_VIEW_W_PX,
     MAP_HEIGHT_TILES,
     MAP_WIDTH_TILES,
+    MINIMAP_GRID_SIZE,
+    MINIMAP_WORLD_PX,
     TILE_SIZE,
-    VIEWPORT_TILES_H,
-    VIEWPORT_TILES_W,
+    WORKER_MOVE_SPEED,
     WORLD_HEIGHT_PX,
     WORLD_WIDTH_PX,
 )
@@ -48,7 +54,6 @@ from .shared import (
 CodeBlock.begin("selection_and_move_rules")
 """RTS controls: selection/pathing + timed gather/production/building/research."""
 
-CAMERA_PAN_SPEED = 4
 DRAG_SELECT_THRESHOLD_PX = 8
 PHYSICS_STEP_HZ = 60
 DIAGONAL_SPEED_FACTOR = 0.70710678
@@ -195,6 +200,68 @@ def tile_center_y(tile_y: int) -> float:
 @callable
 def tile_node(tile_x: int, tile_y: int) -> int:
     return (tile_y * MAP_WIDTH_TILES) + tile_x
+
+
+@callable
+def minimap_cell_x_from_world_x(world_x: float) -> int:
+    safe_x = world_x
+    if safe_x < 0:
+        safe_x = 0
+    if safe_x > WORLD_WIDTH_PX - 1:
+        safe_x = WORLD_WIDTH_PX - 1
+    scaled = safe_x * MINIMAP_GRID_SIZE
+    cell_x = 0
+    edge = WORLD_WIDTH_PX
+    while scaled >= edge and cell_x < MINIMAP_GRID_SIZE - 1:
+        cell_x = cell_x + 1
+        edge = edge + WORLD_WIDTH_PX
+    return cell_x
+
+
+@callable
+def minimap_cell_y_from_world_y(world_y: float) -> int:
+    safe_y = world_y
+    if safe_y < 0:
+        safe_y = 0
+    if safe_y > WORLD_HEIGHT_PX - 1:
+        safe_y = WORLD_HEIGHT_PX - 1
+    scaled = safe_y * MINIMAP_GRID_SIZE
+    cell_y = 0
+    edge = WORLD_HEIGHT_PX
+    while scaled >= edge and cell_y < MINIMAP_GRID_SIZE - 1:
+        cell_y = cell_y + 1
+        edge = edge + WORLD_HEIGHT_PX
+    return cell_y
+
+
+@callable
+def minimap_cell_center_px(cell_index: int) -> float:
+    return (cell_index * TILE_SIZE) + (TILE_SIZE / 2)
+
+
+@callable
+def minimap_world_x_to_main_world_x(minimap_world_x: float) -> float:
+    safe_x = minimap_world_x
+    if safe_x < 0:
+        safe_x = 0
+    if safe_x > MINIMAP_WORLD_PX:
+        safe_x = MINIMAP_WORLD_PX
+    return (safe_x * WORLD_WIDTH_PX) / MINIMAP_WORLD_PX
+
+
+@callable
+def minimap_world_y_to_main_world_y(minimap_world_y: float) -> float:
+    safe_y = minimap_world_y
+    if safe_y < 0:
+        safe_y = 0
+    if safe_y > MINIMAP_WORLD_PX:
+        safe_y = MINIMAP_WORLD_PX
+    return (safe_y * WORLD_HEIGHT_PX) / MINIMAP_WORLD_PX
+
+
+@callable
+def is_minimap_view_id(view_id: str) -> bool:
+    return view_id == "minimap_h1" or view_id == "minimap_h2"
 
 
 @callable
@@ -984,6 +1051,64 @@ def role_world_point_is_visible(
 
 
 @callable
+def clear_minimap_blips_for_role(
+    owner_role_id: str,
+    minimap_blips: List[MinimapBlip],
+):
+    for blip in minimap_blips:
+        if blip.owner_role_id != owner_role_id:
+            continue
+        blip.active = False
+
+
+@callable
+def refresh_minimap_blips_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    minimap_blips: List[MinimapBlip],
+):
+    clear_minimap_blips_for_role(owner_role_id, minimap_blips)
+
+    slot_index = 0
+    for obj in objects:
+        if slot_index >= MINIMAP_BLIP_POOL_SIZE:
+            break
+        if obj.active == False:
+            continue
+        if obj.hp <= 0:
+            continue
+        if (
+            obj.owner_role_id != owner_role_id
+            and role_world_point_is_visible(self_role, obj.x, obj.y) == False
+        ):
+            continue
+
+        blip_sprite = "minimap_blip_self"
+        if obj.owner_role_id != owner_role_id:
+            blip_sprite = "minimap_blip_enemy"
+
+        blip_x = minimap_cell_center_px(minimap_cell_x_from_world_x(obj.x))
+        blip_y = minimap_cell_center_px(minimap_cell_y_from_world_y(obj.y))
+
+        for blip in minimap_blips:
+            if blip.owner_role_id != owner_role_id:
+                continue
+            if blip.slot_index != slot_index:
+                continue
+            blip.active = True
+            blip.sprite = blip_sprite
+            blip.x = blip_x
+            blip.y = blip_y
+            blip.w = TILE_SIZE
+            blip.h = TILE_SIZE
+            blip.z = 110
+            break
+
+        slot_index = slot_index + 1
+
+
+@callable
 def refresh_fog_cells_for_role(
     self_role: RTSRole,
     owner_role_id: str,
@@ -992,6 +1117,7 @@ def refresh_fog_cells_for_role(
     objects: List[RTSObject],
     resources: List[ResourceNode],
     fog_cells: List[FogCell],
+    minimap_blips: List[MinimapBlip],
 ):
     if self_role.fog_refresh_cooldown > 0:
         self_role.fog_refresh_cooldown = self_role.fog_refresh_cooldown - 1
@@ -1009,14 +1135,11 @@ def refresh_fog_cells_for_role(
         if fog_cell.owner_role_id != owner_role_id:
             continue
 
-        tile_stride = fog_cell.tile_stride
-        if tile_stride < 1:
-            tile_stride = 1
-        is_minimap_cell = tile_stride > 1
+        is_minimap_cell = is_minimap_view_id(fog_cell.view_id)
 
         slot_capacity = FOG_MAIN_CELL_POOL_SIZE
-        slot_grid_w = VIEWPORT_TILES_W
-        slot_grid_h = VIEWPORT_TILES_H
+        slot_grid_w = FOG_MAIN_GRID_W
+        slot_grid_h = FOG_MAIN_GRID_H
         if is_minimap_cell:
             slot_capacity = FOG_MINIMAP_CELL_POOL_SIZE
             slot_grid_w = FOG_MINIMAP_GRID_W
@@ -1040,25 +1163,18 @@ def refresh_fog_cells_for_role(
         tile_x = 0
         tile_y = 0
         if is_minimap_cell:
-            half_stride = 0
-            remaining_stride = tile_stride
-            while remaining_stride >= 2:
-                remaining_stride = remaining_stride - 2
-                half_stride = half_stride + 1
-            tile_x = (slot_x * tile_stride) + half_stride
-            tile_y = (slot_y * tile_stride) + half_stride
-            if tile_x < 0:
-                tile_x = 0
-            if tile_x >= MAP_WIDTH_TILES:
-                tile_x = MAP_WIDTH_TILES - 1
-            if tile_y < 0:
-                tile_y = 0
-            if tile_y >= MAP_HEIGHT_TILES:
-                tile_y = MAP_HEIGHT_TILES - 1
-            probe_x = tile_center_x(tile_x)
-            probe_y = tile_center_y(tile_y)
-            fog_cell.w = TILE_SIZE * tile_stride
-            fog_cell.h = TILE_SIZE * tile_stride
+            sample_world_x = ((slot_x * WORLD_WIDTH_PX) / FOG_MINIMAP_GRID_W) + (
+                WORLD_WIDTH_PX / (FOG_MINIMAP_GRID_W * 2)
+            )
+            sample_world_y = ((slot_y * WORLD_HEIGHT_PX) / FOG_MINIMAP_GRID_H) + (
+                WORLD_HEIGHT_PX / (FOG_MINIMAP_GRID_H * 2)
+            )
+            tile_x = world_to_tile_x(sample_world_x)
+            tile_y = world_to_tile_y(sample_world_y)
+            probe_x = minimap_cell_center_px(slot_x)
+            probe_y = minimap_cell_center_px(slot_y)
+            fog_cell.w = TILE_SIZE
+            fog_cell.h = TILE_SIZE
         else:
             # Main fog must stay anchored to world tiles (not screen slots),
             # otherwise it appears "stuck then jumps" while the camera pans.
@@ -1083,7 +1199,13 @@ def refresh_fog_cells_for_role(
 
         fog_cell.active = True
         if self_role.fog_explored_tiles[tile_idx] != 1:
-            fog_cell.sprite = "fog_unexplored"
+            if is_minimap_cell:
+                fog_cell.sprite = "minimap_fog_unexplored"
+            else:
+                fog_cell.sprite = "fog_unexplored"
+            continue
+        if is_minimap_cell:
+            fog_cell.sprite = "minimap_fog_explored"
             continue
 
         memory_kind = self_role.fog_memory_tiles[tile_idx]
@@ -1091,6 +1213,13 @@ def refresh_fog_cells_for_role(
             fog_cell.sprite = "fog_explored"
         else:
             fog_cell.sprite = fog_memory_kind_to_sprite(memory_kind)
+
+    refresh_minimap_blips_for_role(
+        self_role,
+        owner_role_id,
+        objects,
+        minimap_blips,
+    )
 
 
 @callable
@@ -1249,7 +1378,7 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             usable=True,
             construction_site=False,
             selection_name=object_kind_name("worker"),
-            move_speed=220,
+            move_speed=WORKER_MOVE_SPEED,
             vision_range=object_kind_vision_range("worker"),
             path_tiles_x=[],
             path_tiles_y=[],
@@ -1276,6 +1405,7 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             task_build_y=0,
             task_resource_kind="",
             task_resource_amount=0,
+            view_ids=["main_h1", "main_h2"],
             sprite=sprite_name,
         )
     )
@@ -1339,6 +1469,7 @@ def spawn_construction_site(
             task_build_y=spawn_y,
             task_resource_kind="",
             task_resource_amount=0,
+            view_ids=["main_h1", "main_h2"],
             sprite=object_kind_sprite(build_kind, team_id),
         )
     )
@@ -4298,8 +4429,8 @@ def recenter_camera_from_minimap_human_1(
     camera: Camera["camera_human_1"],
     mouse: MouseInfo,
 ):
-    camera.x = clamp_camera_x(mouse.world_x)
-    camera.y = clamp_camera_y(mouse.world_y)
+    camera.x = clamp_camera_x(minimap_world_x_to_main_world_x(mouse.world_x))
+    camera.y = clamp_camera_y(minimap_world_y_to_main_world_y(mouse.world_y))
 
 
 @unsafe_condition(MouseCondition.on_click("left", id="human_2", view=View["main_h2"]))
@@ -4426,8 +4557,8 @@ def recenter_camera_from_minimap_human_2(
     camera: Camera["camera_human_2"],
     mouse: MouseInfo,
 ):
-    camera.x = clamp_camera_x(mouse.world_x)
-    camera.y = clamp_camera_y(mouse.world_y)
+    camera.x = clamp_camera_x(minimap_world_x_to_main_world_x(mouse.world_x))
+    camera.y = clamp_camera_y(minimap_world_y_to_main_world_y(mouse.world_y))
 
 
 @safe_condition(OnLogicalCondition(should_refresh_marker_slots, DragSelectionRect))
@@ -4438,6 +4569,7 @@ def refresh_fog_cells_human_1_late(
     objects: List[RTSObject],
     resources: List[ResourceNode],
     fog_cells: List[FogCell],
+    minimap_blips: List[MinimapBlip],
 ):
     if drag_rect.owner_role_id != PLAYER_1_ROLE_ID:
         return
@@ -4449,6 +4581,7 @@ def refresh_fog_cells_human_1_late(
         objects,
         resources,
         fog_cells,
+        minimap_blips,
     )
 
 
@@ -4460,6 +4593,7 @@ def refresh_fog_cells_human_2_late(
     objects: List[RTSObject],
     resources: List[ResourceNode],
     fog_cells: List[FogCell],
+    minimap_blips: List[MinimapBlip],
 ):
     if drag_rect.owner_role_id != PLAYER_2_ROLE_ID:
         return
@@ -4471,6 +4605,7 @@ def refresh_fog_cells_human_2_late(
         objects,
         resources,
         fog_cells,
+        minimap_blips,
     )
 
 

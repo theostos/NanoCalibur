@@ -277,6 +277,56 @@ game.add_sprite(
 )
 game.add_sprite(
     ColorSprite(
+        name="minimap_background",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(28, 40, 58, a=0.96, symbol=".", description="minimap background"),
+        symbol=".",
+        description="minimap background",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="minimap_fog_explored",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(12, 16, 24, a=0.95, symbol=":", description="minimap explored fog"),
+        symbol=":",
+        description="minimap explored fog",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="minimap_fog_unexplored",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(3, 4, 7, a=0.98, symbol="?", description="minimap unexplored fog"),
+        symbol="?",
+        description="minimap unexplored fog",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="minimap_blip_self",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(84, 150, 255, a=0.94, symbol="S", description="self unit/building"),
+        symbol="S",
+        description="self unit/building",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="minimap_blip_enemy",
+        frame_width=TILE_SIZE,
+        frame_height=TILE_SIZE,
+        color=Color(232, 98, 90, a=0.94, symbol="E", description="adversary unit/building"),
+        symbol="E",
+        description="adversary unit/building",
+    )
+)
+game.add_sprite(
+    ColorSprite(
         name="fog_memory_hq",
         frame_width=TILE_SIZE,
         frame_height=TILE_SIZE,

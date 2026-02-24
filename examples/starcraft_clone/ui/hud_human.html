@@ -15,9 +15,11 @@
     justify-content: space-between;
     align-items: flex-start;
     gap: 20px;
+    flex-wrap: wrap;
+    overflow: hidden;
   "
 >
-  <div style="min-width: 250px">
+  <div style="flex: 1 1 240px; min-width: 180px">
     <div>Role: {{role.id}}</div>
     <div>Minerals: {{role.minerals}}</div>
     <div>Gas: {{role.gas}}</div>
@@ -27,7 +29,7 @@
     <div>Status: {{role.ui_status}}</div>
   </div>
 
-  <div style="min-width: 260px">
+  <div style="flex: 1 1 240px; min-width: 180px">
     <div>Selection: {{role.selected_name}} ({{role.selected_kind}})</div>
     <div>HP: {{role.selected_hp}} / {{role.selected_max_hp}}</div>
     <div>Task: {{role.selected_task_label}}</div>
@@ -38,7 +40,7 @@
     <div>Selected UIDs: {{role.selected_uids}}</div>
   </div>
 
-  <div style="display: flex; flex-direction: column; gap: 4px; min-width: 360px">
+  <div style="display: flex; flex-direction: column; gap: 4px; flex: 1 1 320px; min-width: 240px; max-width: 100%">
     <div style="margin-bottom: 2px">Commands (selection-sensitive):</div>
     <div style="display: flex; gap: 6px; flex-wrap: wrap">
       <button data-button="train_worker" hidden="{{role.hide_train_worker}}" disabled="{{role.disable_train_worker}}">Train Worker</button>

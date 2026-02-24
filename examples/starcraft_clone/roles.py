@@ -205,13 +205,13 @@ game.add_role(
 )
 
 scene.set_interface(
-    Interface("ui/hud_human.html", RTSRole["human_1"], View["main_h1"])
+    Interface("ui/hud_human.html", RTSRole["human_1"], View["hud_h1"])
 )
 scene.set_interface(
     Interface("ui/minimap_overlay.html", RTSRole["human_1"], View["minimap_h1"])
 )
 scene.set_interface(
-    Interface("ui/hud_human.html", RTSRole["human_2"], View["main_h2"])
+    Interface("ui/hud_human.html", RTSRole["human_2"], View["hud_h2"])
 )
 scene.set_interface(
     Interface("ui/minimap_overlay.html", RTSRole["human_2"], View["minimap_h2"])

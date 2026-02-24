@@ -3,9 +3,12 @@ from nanocalibur.dsl_markers import Actor, CodeBlock
 from .shared import (
     MAP_HEIGHT_TILES,
     MAP_WIDTH_TILES,
+    MINIMAP_GRID_SIZE,
+    MINIMAP_WORLD_PX,
     TILE_SIZE,
     VIEWPORT_TILES_H,
     VIEWPORT_TILES_W,
+    WORKER_MOVE_SPEED,
     WORLD_HEIGHT_PX,
     WORLD_WIDTH_PX,
     scene,
@@ -36,12 +39,15 @@ P2_MINERAL_NODE_2_UID = "p2_mineral_node_2"
 P2_GAS_NODE_1_UID = "p2_gas_node_1"
 SELECTION_MARKER_POOL_SIZE = 12
 HEALTH_BAR_POOL_SIZE = 256
-FOG_MAIN_CELL_POOL_SIZE = VIEWPORT_TILES_W * VIEWPORT_TILES_H
-FOG_MINIMAP_TILE_STRIDE = 4
-FOG_MINIMAP_GRID_W = (MAP_WIDTH_TILES + FOG_MINIMAP_TILE_STRIDE - 1) // FOG_MINIMAP_TILE_STRIDE
-FOG_MINIMAP_GRID_H = (MAP_HEIGHT_TILES + FOG_MINIMAP_TILE_STRIDE - 1) // FOG_MINIMAP_TILE_STRIDE
+# Main fog needs one-tile overscan to cover sub-tile camera offsets at view edges.
+FOG_MAIN_GRID_W = VIEWPORT_TILES_W + 1
+FOG_MAIN_GRID_H = VIEWPORT_TILES_H + 1
+FOG_MAIN_CELL_POOL_SIZE = FOG_MAIN_GRID_W * FOG_MAIN_GRID_H
+FOG_MINIMAP_GRID_W = MINIMAP_GRID_SIZE
+FOG_MINIMAP_GRID_H = MINIMAP_GRID_SIZE
 FOG_MINIMAP_CELL_POOL_SIZE = FOG_MINIMAP_GRID_W * FOG_MINIMAP_GRID_H
 FOG_CELL_POOL_SIZE = FOG_MAIN_CELL_POOL_SIZE + FOG_MINIMAP_CELL_POOL_SIZE
+MINIMAP_BLIP_POOL_SIZE = 256
 
 
 class RTSObject(Actor):
@@ -84,17 +90,22 @@ class RTSObject(Actor):
     task_build_y: float
     task_resource_kind: str
     task_resource_amount: int
+    view_ids: list[str]
 
 
 class SelectionMarker(Actor):
     owner_role_id: str
     slot_index: int
+    view_id: str
+    symbolic_visible: bool
     physics_enabled: bool
     physics_collidable: bool
 
 
 class DragSelectionRect(Actor):
     owner_role_id: str
+    view_id: str
+    symbolic_visible: bool
     physics_enabled: bool
     physics_collidable: bool
 
@@ -104,16 +115,21 @@ class ResourceNode(Actor):
     amount: int
     max_amount: int
     selection_name: str
+    view_ids: list[str]
 
 
 class HealthBarBackground(Actor):
     slot_index: int
+    view_id: str
+    symbolic_visible: bool
     physics_enabled: bool
     physics_collidable: bool
 
 
 class HealthBarFill(Actor):
     slot_index: int
+    view_id: str
+    symbolic_visible: bool
     physics_enabled: bool
     physics_collidable: bool
 
@@ -123,6 +139,27 @@ class FogCell(Actor):
     slot_index: int
     view_id: str
     tile_stride: int
+    symbolic_stack: bool
+    position_smoothing: bool
+    camera_locked: bool
+    physics_enabled: bool
+    physics_collidable: bool
+
+
+class MinimapBackdrop(Actor):
+    owner_role_id: str
+    view_id: str
+    symbolic_stack: bool
+    position_smoothing: bool
+    camera_locked: bool
+    physics_enabled: bool
+    physics_collidable: bool
+
+
+class MinimapBlip(Actor):
+    owner_role_id: str
+    slot_index: int
+    view_id: str
     symbolic_stack: bool
     position_smoothing: bool
     camera_locked: bool
@@ -151,7 +188,7 @@ scene.add_actor(
         usable=True,
         construction_site=False,
         selection_name="Worker",
-        move_speed=220,
+        move_speed=WORKER_MOVE_SPEED,
         vision_range=192,
         path_tiles_x=[],
         path_tiles_y=[],
@@ -178,6 +215,7 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        view_ids=["main_h1", "main_h2"],
         sprite="worker_p1",
     )
 )
@@ -229,6 +267,7 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        view_ids=["main_h1", "main_h2"],
         sprite="hq_p1",
     )
 )
@@ -254,7 +293,7 @@ scene.add_actor(
         usable=True,
         construction_site=False,
         selection_name="Worker",
-        move_speed=220,
+        move_speed=WORKER_MOVE_SPEED,
         vision_range=192,
         path_tiles_x=[],
         path_tiles_y=[],
@@ -281,6 +320,7 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        view_ids=["main_h1", "main_h2"],
         sprite="worker_p2",
     )
 )
@@ -332,6 +372,7 @@ scene.add_actor(
         task_build_y=0,
         task_resource_kind="",
         task_resource_amount=0,
+        view_ids=["main_h1", "main_h2"],
         sprite="hq_p2",
     )
 )
@@ -349,6 +390,7 @@ scene.add_actor(
         amount=1500,
         max_amount=1500,
         selection_name="Mineral Field",
+        view_ids=["main_h1", "main_h2"],
         sprite="mineral_node",
     )
 )
@@ -365,6 +407,7 @@ scene.add_actor(
         amount=1500,
         max_amount=1500,
         selection_name="Mineral Field",
+        view_ids=["main_h1", "main_h2"],
         sprite="mineral_node",
     )
 )
@@ -381,6 +424,7 @@ scene.add_actor(
         amount=1000,
         max_amount=1000,
         selection_name="Vespene Geyser",
+        view_ids=["main_h1", "main_h2"],
         sprite="gas_node",
     )
 )
@@ -397,6 +441,7 @@ scene.add_actor(
         amount=1000,
         max_amount=1000,
         selection_name="Vespene Geyser",
+        view_ids=["main_h1", "main_h2"],
         sprite="gas_node",
     )
 )
@@ -413,6 +458,7 @@ scene.add_actor(
         amount=1500,
         max_amount=1500,
         selection_name="Mineral Field",
+        view_ids=["main_h1", "main_h2"],
         sprite="mineral_node",
     )
 )
@@ -429,6 +475,7 @@ scene.add_actor(
         amount=1500,
         max_amount=1500,
         selection_name="Mineral Field",
+        view_ids=["main_h1", "main_h2"],
         sprite="mineral_node",
     )
 )
@@ -445,6 +492,7 @@ scene.add_actor(
         amount=1000,
         max_amount=1000,
         selection_name="Vespene Geyser",
+        view_ids=["main_h1", "main_h2"],
         sprite="gas_node",
     )
 )
@@ -461,6 +509,7 @@ scene.add_actor(
         amount=1500,
         max_amount=1500,
         selection_name="Mineral Field",
+        view_ids=["main_h1", "main_h2"],
         sprite="mineral_node",
     )
 )
@@ -477,6 +526,7 @@ scene.add_actor(
         amount=1500,
         max_amount=1500,
         selection_name="Mineral Field",
+        view_ids=["main_h1", "main_h2"],
         sprite="mineral_node",
     )
 )
@@ -493,6 +543,7 @@ scene.add_actor(
         amount=1000,
         max_amount=1000,
         selection_name="Vespene Geyser",
+        view_ids=["main_h1", "main_h2"],
         sprite="gas_node",
     )
 )
@@ -511,6 +562,8 @@ for marker_idx in range(SELECTION_MARKER_POOL_SIZE):
             physics_collidable=False,
             owner_role_id=PLAYER_1_ROLE_ID,
             slot_index=marker_idx,
+            view_id="main_h1",
+            symbolic_visible=False,
             sprite="selection_marker_p1",
         )
     )
@@ -527,6 +580,8 @@ for marker_idx in range(SELECTION_MARKER_POOL_SIZE):
             physics_collidable=False,
             owner_role_id=PLAYER_2_ROLE_ID,
             slot_index=marker_idx,
+            view_id="main_h2",
+            symbolic_visible=False,
             sprite="selection_marker_p2",
         )
     )
@@ -545,6 +600,8 @@ for bar_idx in range(HEALTH_BAR_POOL_SIZE):
             physics_enabled=False,
             physics_collidable=False,
             slot_index=bar_idx,
+            view_id="main_h1",
+            symbolic_visible=False,
             sprite="health_bar_bg",
         )
     )
@@ -561,9 +618,52 @@ for bar_idx in range(HEALTH_BAR_POOL_SIZE):
             physics_enabled=False,
             physics_collidable=False,
             slot_index=bar_idx,
+            view_id="main_h1",
+            symbolic_visible=False,
             sprite="health_bar_fill_ok",
         )
     )
+
+scene.add_actor(
+    MinimapBackdrop(
+        uid="p1_minimap_backdrop",
+        x=MINIMAP_WORLD_PX / 2,
+        y=MINIMAP_WORLD_PX / 2,
+        w=MINIMAP_WORLD_PX,
+        h=MINIMAP_WORLD_PX,
+        z=100,
+        active=True,
+        block_mask=None,
+        owner_role_id=PLAYER_1_ROLE_ID,
+        view_id="minimap_h1",
+        symbolic_stack=False,
+        position_smoothing=False,
+        camera_locked=True,
+        physics_enabled=False,
+        physics_collidable=False,
+        sprite="minimap_background",
+    )
+)
+scene.add_actor(
+    MinimapBackdrop(
+        uid="p2_minimap_backdrop",
+        x=MINIMAP_WORLD_PX / 2,
+        y=MINIMAP_WORLD_PX / 2,
+        w=MINIMAP_WORLD_PX,
+        h=MINIMAP_WORLD_PX,
+        z=100,
+        active=True,
+        block_mask=None,
+        owner_role_id=PLAYER_2_ROLE_ID,
+        view_id="minimap_h2",
+        symbolic_stack=False,
+        position_smoothing=False,
+        camera_locked=True,
+        physics_enabled=False,
+        physics_collidable=False,
+        sprite="minimap_background",
+    )
+)
 
 for fog_idx in range(FOG_MAIN_CELL_POOL_SIZE):
     scene.add_actor(
@@ -617,8 +717,8 @@ for fog_idx in range(FOG_MINIMAP_CELL_POOL_SIZE):
             uid=f"p1_minimap_fog_cell_{fog_idx}",
             x=0,
             y=0,
-            w=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
-            h=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
+            w=TILE_SIZE,
+            h=TILE_SIZE,
             z=120,
             active=False,
             block_mask=None,
@@ -627,7 +727,7 @@ for fog_idx in range(FOG_MINIMAP_CELL_POOL_SIZE):
             owner_role_id=PLAYER_1_ROLE_ID,
             slot_index=fog_idx,
             view_id="minimap_h1",
-            tile_stride=FOG_MINIMAP_TILE_STRIDE,
+            tile_stride=1,
             symbolic_stack=False,
             position_smoothing=False,
             camera_locked=True,
@@ -639,8 +739,8 @@ for fog_idx in range(FOG_MINIMAP_CELL_POOL_SIZE):
             uid=f"p2_minimap_fog_cell_{fog_idx}",
             x=0,
             y=0,
-            w=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
-            h=TILE_SIZE * FOG_MINIMAP_TILE_STRIDE,
+            w=TILE_SIZE,
+            h=TILE_SIZE,
             z=120,
             active=False,
             block_mask=None,
@@ -649,11 +749,55 @@ for fog_idx in range(FOG_MINIMAP_CELL_POOL_SIZE):
             owner_role_id=PLAYER_2_ROLE_ID,
             slot_index=fog_idx,
             view_id="minimap_h2",
-            tile_stride=FOG_MINIMAP_TILE_STRIDE,
+            tile_stride=1,
             symbolic_stack=False,
             position_smoothing=False,
             camera_locked=True,
             sprite="fog_unexplored",
+        )
+    )
+
+for blip_idx in range(MINIMAP_BLIP_POOL_SIZE):
+    scene.add_actor(
+        MinimapBlip(
+            uid=f"p1_minimap_blip_{blip_idx}",
+            x=0,
+            y=0,
+            w=TILE_SIZE,
+            h=TILE_SIZE,
+            z=110,
+            active=False,
+            block_mask=None,
+            owner_role_id=PLAYER_1_ROLE_ID,
+            slot_index=blip_idx,
+            view_id="minimap_h1",
+            symbolic_stack=False,
+            position_smoothing=False,
+            camera_locked=True,
+            physics_enabled=False,
+            physics_collidable=False,
+            sprite="minimap_blip_self",
+        )
+    )
+    scene.add_actor(
+        MinimapBlip(
+            uid=f"p2_minimap_blip_{blip_idx}",
+            x=0,
+            y=0,
+            w=TILE_SIZE,
+            h=TILE_SIZE,
+            z=110,
+            active=False,
+            block_mask=None,
+            owner_role_id=PLAYER_2_ROLE_ID,
+            slot_index=blip_idx,
+            view_id="minimap_h2",
+            symbolic_stack=False,
+            position_smoothing=False,
+            camera_locked=True,
+            physics_enabled=False,
+            physics_collidable=False,
+            sprite="minimap_blip_self",
         )
     )
 
@@ -669,6 +813,8 @@ scene.add_actor(
         physics_enabled=False,
         physics_collidable=False,
         owner_role_id=PLAYER_1_ROLE_ID,
+        view_id="main_h1",
+        symbolic_visible=False,
         sprite="drag_select_rect_p1",
     )
 )
@@ -684,6 +830,8 @@ scene.add_actor(
         physics_enabled=False,
         physics_collidable=False,
         owner_role_id=PLAYER_2_ROLE_ID,
+        view_id="main_h2",
+        symbolic_visible=False,
         sprite="drag_select_rect_p2",
     )
 )
