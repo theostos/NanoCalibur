@@ -30,6 +30,8 @@ CAMERA_PAN_SPEED = 8
 game = Game()
 scene = Scene(gravity=False)
 game.set_scene(scene)
+game.add_global("symbolic_annotations_max_count", 10)
+game.add_global("symbolic_annotations_max_chars", 360)
 
 game.set_multiplayer(
     Multiplayer(

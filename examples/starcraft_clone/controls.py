@@ -1405,6 +1405,9 @@ def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
             task_build_y=0,
             task_resource_kind="",
             task_resource_amount=0,
+            symbolic_note="",
+            symbolic_note_mode="always",
+            symbolic_note_priority=0,
             view_ids=["main_h1", "main_h2"],
             sprite=sprite_name,
         )
@@ -1469,6 +1472,9 @@ def spawn_construction_site(
             task_build_y=spawn_y,
             task_resource_kind="",
             task_resource_amount=0,
+            symbolic_note="",
+            symbolic_note_mode="always",
+            symbolic_note_priority=0,
             view_ids=["main_h1", "main_h2"],
             sprite=object_kind_sprite(build_kind, team_id),
         )
@@ -3100,6 +3106,153 @@ def sync_world_health_bars(
                 fill.sprite = health_fill_sprite_name(percent)
 
         slot = slot + 1
+
+
+@callable
+def selected_uid_in_slots(
+    target_uid: str,
+    selected_uids: list[str],
+    selected_count: int,
+) -> bool:
+    for slot_idx in range(selected_count):
+        if selected_uids[slot_idx] == target_uid:
+            return True
+    return False
+
+
+@callable
+def symbolic_status_for_object(obj: RTSObject) -> str:
+    if is_under_construction_site(obj):
+        return "Constructing"
+    if obj.task_active:
+        if obj.task_label != "":
+            return obj.task_label
+        if obj.task_kind != "":
+            return obj.task_kind
+        return "Busy"
+    if obj.gather_active:
+        if obj.gather_phase == "to_resource":
+            return "To resource"
+        if obj.gather_phase == "mining":
+            return "Mining"
+        if obj.gather_phase == "to_hq":
+            return "Returning cargo"
+        if obj.gather_phase == "depositing":
+            return "Unloading"
+        return "Gathering"
+    if obj.path_active:
+        return "Moving"
+    return "Idle"
+
+
+@callable
+def digit_to_text(value: int) -> str:
+    if value <= 0:
+        return "0"
+    if value == 1:
+        return "1"
+    if value == 2:
+        return "2"
+    if value == 3:
+        return "3"
+    if value == 4:
+        return "4"
+    if value == 5:
+        return "5"
+    if value == 6:
+        return "6"
+    if value == 7:
+        return "7"
+    if value == 8:
+        return "8"
+    return "9"
+
+
+@callable
+def int_to_text(value: int) -> str:
+    if value <= 0:
+        return "0"
+    if value > 9999:
+        return "9999+"
+
+    remaining = value
+    thousands = 0
+    while remaining >= 1000:
+        remaining = remaining - 1000
+        thousands = thousands + 1
+
+    hundreds = 0
+    while remaining >= 100:
+        remaining = remaining - 100
+        hundreds = hundreds + 1
+
+    tens = 0
+    while remaining >= 10:
+        remaining = remaining - 10
+        tens = tens + 1
+
+    ones = remaining
+    text = ""
+    if thousands > 0:
+        text = text + digit_to_text(thousands)
+    if thousands > 0 or hundreds > 0:
+        text = text + digit_to_text(hundreds)
+    if thousands > 0 or hundreds > 0 or tens > 0:
+        text = text + digit_to_text(tens)
+    text = text + digit_to_text(ones)
+    return text
+
+
+@safe_condition(OnLogicalCondition(should_sync_world_health_bars, DragSelectionRect))
+def sync_world_symbolic_notes(
+    _drag_rect: DragSelectionRect,
+    role_h1: RTSRole["human_1"],
+    role_h2: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    for obj in objects:
+        if obj.active == False or obj.hp <= 0:
+            obj.symbolic_note = ""
+            obj.symbolic_note_mode = "always"
+            obj.symbolic_note_priority = 0
+            continue
+
+        status = symbolic_status_for_object(obj)
+        obj.symbolic_note = (
+            "HP "
+            + int_to_text(obj.hp)
+            + "/"
+            + int_to_text(obj.max_hp)
+            + " | "
+            + status
+        )
+
+        mode = "always"
+        priority = 0
+        hp_pct = health_percent(obj)
+        if hp_pct <= 35:
+            mode = "alert"
+            priority = 80
+        elif status != "Idle":
+            mode = "alert"
+            priority = 45
+
+        selected_h1 = selected_uid_in_slots(
+            obj.uid,
+            role_h1.selected_uids,
+            role_h1.selected_count,
+        )
+        selected_h2 = selected_uid_in_slots(
+            obj.uid,
+            role_h2.selected_uids,
+            role_h2.selected_count,
+        )
+        if selected_h1 or selected_h2:
+            mode = "focus"
+            priority = 100
+
+        obj.symbolic_note_mode = mode
+        obj.symbolic_note_priority = priority
 
 
 @safe_condition(OnLogicalCondition(should_validate_worker_construction_task, RTSObject))
