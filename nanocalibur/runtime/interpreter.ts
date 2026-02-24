@@ -1973,6 +1973,8 @@ export class NanoCaliburInterpreter {
     for (const [fieldName, fieldType] of Object.entries(schema)) {
       if (fieldName === "active") {
         actor[fieldName] = true;
+      } else if (fieldName === "symbolic_visible" || fieldName === "symbolic_stack") {
+        actor[fieldName] = true;
       } else if (fieldName === "uid") {
         // Canonical uid is managed outside schema fields.
         continue;

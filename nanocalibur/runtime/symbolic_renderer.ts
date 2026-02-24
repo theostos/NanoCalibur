@@ -40,7 +40,6 @@ type SymbolicSubFrame = {
 
 interface SymbolicAnnotationCandidate extends SymbolicAnnotationItem {
   z: number;
-  modeRank: number;
   minX: number;
   minY: number;
   maxX: number;
@@ -427,7 +426,9 @@ export class SymbolicRenderer {
           }
           const cellKey = `${tileX},${tileY}`;
           const actorStack = stackByCell.get(cellKey) || [];
+          const actorId = this.resolveActorSymbolicId(actor);
           actorStack.push({
+            id: actorId,
             uid: typeof actor.uid === "string" ? actor.uid : "",
             type: typeof actor.type === "string" ? actor.type : "",
             symbol,
@@ -565,17 +566,7 @@ export class SymbolicRenderer {
         asNumber(actorRecord.symbolicNotePriority, 0),
       ),
     );
-    const rawMode = typeof actorRecord.symbolic_note_mode === "string"
-      ? actorRecord.symbolic_note_mode
-      : typeof actorRecord.symbolicNoteMode === "string"
-        ? actorRecord.symbolicNoteMode
-        : "always";
-    const mode = rawMode ? rawMode.toLowerCase() : "always";
-    const modeRank = mode === "focus"
-      ? 0
-      : mode === "alert"
-        ? 1
-        : 2;
+    const actorId = this.resolveActorSymbolicId(actor);
 
     const bounds = this.resolveActorTileBounds(actor, tileSize);
     const minX = bounds.minTileX - viewport.originX;
@@ -586,6 +577,7 @@ export class SymbolicRenderer {
     const centerY = Math.floor(actorCenterY(actor) / tileSize) - viewport.originY;
 
     return {
+      id: actorId,
       uid: typeof actor.uid === "string" ? actor.uid : "",
       type: typeof actor.type === "string" ? actor.type : "",
       x: centerX,
@@ -593,9 +585,7 @@ export class SymbolicRenderer {
       symbol,
       text,
       priority,
-      mode,
       z: asNumber(actor.z, 0),
-      modeRank,
       minX,
       minY,
       maxX,
@@ -616,10 +606,9 @@ export class SymbolicRenderer {
       return [];
     }
     const sorted = [...candidates].sort((a, b) =>
-      (a.modeRank - b.modeRank)
-      || (b.priority - a.priority)
+      (b.priority - a.priority)
       || (b.z - a.z)
-      || a.uid.localeCompare(b.uid),
+      || a.id.localeCompare(b.id),
     );
     const out: SymbolicAnnotationItem[] = [];
     let usedChars = 0;
@@ -638,6 +627,7 @@ export class SymbolicRenderer {
         continue;
       }
       out.push({
+        id: candidate.id,
         uid: candidate.uid,
         type: candidate.type,
         x: candidate.x,
@@ -645,11 +635,26 @@ export class SymbolicRenderer {
         symbol: candidate.symbol,
         text: candidate.text,
         priority: candidate.priority,
-        mode: candidate.mode,
       });
       usedChars += textLength;
     }
     return out;
+  }
+
+  private resolveActorSymbolicId(actor: ActorState): string {
+    const actorRecord = actor as Record<string, unknown>;
+    const explicitId = typeof actorRecord.symbolic_id === "string"
+      ? actorRecord.symbolic_id
+      : typeof actorRecord.symbolicId === "string"
+        ? actorRecord.symbolicId
+        : "";
+    if (explicitId && explicitId.trim()) {
+      return explicitId.trim();
+    }
+    if (typeof actor.uid === "string" && actor.uid) {
+      return actor.uid;
+    }
+    return "";
   }
 
   private candidateHasVisibleTile(

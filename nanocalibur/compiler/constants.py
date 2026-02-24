@@ -53,6 +53,11 @@ BASE_ACTOR_FIELDS: Dict[str, FieldType] = {
     "block_mask": PrimType(Prim.INT),
     "parent": PrimType(Prim.STR),
     "sprite": PrimType(Prim.STR),
+    "symbolic_id": PrimType(Prim.STR),
+    "symbolic_note": PrimType(Prim.STR),
+    "symbolic_note_priority": PrimType(Prim.INT),
+    "symbolic_visible": PrimType(Prim.BOOL),
+    "symbolic_stack": PrimType(Prim.BOOL),
 }
 
 BASE_ACTOR_NO_DEFAULT_FIELDS = {"uid", "w", "h", "parent", "sprite", "block_mask"}
@@ -63,6 +68,11 @@ BASE_ACTOR_DEFAULT_OVERRIDES = {
     "y": 0.0,
     "vx": 0.0,
     "vy": 0.0,
+    "symbolic_id": "",
+    "symbolic_note": "",
+    "symbolic_note_priority": 0,
+    "symbolic_visible": True,
+    "symbolic_stack": True,
 }
 
 CALLABLE_EXPR_PREFIX = "__nc_callable__:"

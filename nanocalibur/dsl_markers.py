@@ -103,6 +103,11 @@ class Actor:
     z: float
     parent: str | None
     sprite: str | None
+    symbolic_id: str
+    symbolic_note: str
+    symbolic_note_priority: int
+    symbolic_visible: bool
+    symbolic_stack: bool
 
     def __class_getitem__(cls, item):
         """Allow ``Actor[...]`` syntax in type annotations."""

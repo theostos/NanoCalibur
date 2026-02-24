@@ -254,6 +254,7 @@ export interface SymbolicLegendItem {
 }
 
 export interface SymbolicStackActorItem {
+  id: string;
   uid: string;
   type: string;
   symbol: string;
@@ -269,6 +270,7 @@ export interface SymbolicStackCell {
 }
 
 export interface SymbolicAnnotationItem {
+  id: string;
   uid: string;
   type: string;
   x: number;
@@ -276,7 +278,6 @@ export interface SymbolicAnnotationItem {
   symbol: string;
   text: string;
   priority: number;
-  mode: string;
 }
 
 export interface SymbolicFrame {

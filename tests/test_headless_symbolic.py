@@ -428,6 +428,7 @@ def test_headless_symbolic_reports_actor_stacks_per_cell(tmp_path):
     assert stack["x"] == 1
     assert stack["y"] == 1
     assert stack["symbol"] == "b"
+    assert [actor["id"] for actor in stack["actors"]] == ["a1", "a2", "b"]
     assert [actor["uid"] for actor in stack["actors"]] == ["a1", "a2", "b"]
     assert stack["actors"][0]["description"] == "a plane"
     assert stack["actors"][2]["description"] == "a worker"
@@ -915,8 +916,7 @@ def test_headless_symbolic_annotations_respect_runtime_limits(tmp_path):
               active: "bool",
               sprite: "str",
               symbolic_note: "str",
-              symbolic_note_priority: "int",
-              symbolic_note_mode: "str"
+              symbolic_note_priority: "int"
             }}
           }},
           actors: [
@@ -929,8 +929,7 @@ def test_headless_symbolic_annotations_respect_runtime_limits(tmp_path):
                 active: true,
                 sprite: "u",
                 symbolic_note: "HP 12/40 | moving fast",
-                symbolic_note_priority: 10,
-                symbolic_note_mode: "focus"
+                symbolic_note_priority: 10
               }}
             }},
             {{
@@ -942,8 +941,7 @@ def test_headless_symbolic_annotations_respect_runtime_limits(tmp_path):
                 active: true,
                 sprite: "u",
                 symbolic_note: "HP 30/40 | idle",
-                symbolic_note_priority: 5,
-                symbolic_note_mode: "always"
+                symbolic_note_priority: 5
               }}
             }}
           ],
@@ -998,8 +996,275 @@ def test_headless_symbolic_annotations_respect_runtime_limits(tmp_path):
     frame = json.loads(proc.stdout.strip())
     assert "annotations" in frame
     assert len(frame["annotations"]) == 1
+    assert frame["annotations"][0]["id"] == "u2"
     assert frame["annotations"][0]["uid"] == "u2"
     assert frame["annotations"][0]["text"] == "HP 30/40 | idle"
+
+
+def test_headless_symbolic_uses_symbolic_id_for_annotations_and_stacks(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_dir = root / "nanocalibur" / "runtime"
+
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_dir / "headless_host.ts"),
+            str(runtime_dir / "runtime_core.ts"),
+            str(runtime_dir / "symbolic_renderer.ts"),
+            str(runtime_dir / "interpreter.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_path = compiled_dir / "interpreter.js"
+    headless_path = compiled_dir / "headless_host.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+
+        const spec = {{
+          schemas: {{
+            Unit: {{
+              uid: "str",
+              x: "float",
+              y: "float",
+              z: "float",
+              active: "bool",
+              sprite: "str",
+              symbolic_id: "str",
+              symbolic_note: "str",
+              symbolic_note_priority: "int"
+            }}
+          }},
+          actors: [
+            {{
+              type: "Unit",
+              uid: "u1",
+              fields: {{
+                x: 16,
+                y: 16,
+                z: 1,
+                active: true,
+                sprite: "u",
+                symbolic_id: "p1.worker#1",
+                symbolic_note: "HP 30/40 | idle",
+                symbolic_note_priority: 10
+              }}
+            }},
+            {{
+              type: "Unit",
+              uid: "u2",
+              fields: {{
+                x: 16,
+                y: 16,
+                z: 2,
+                active: true,
+                sprite: "u",
+                symbolic_id: "p1.worker#2",
+                symbolic_note: "HP 20/40 | moving",
+                symbolic_note_priority: 5
+              }}
+            }}
+          ],
+          globals: [],
+          predicates: [],
+          tools: [],
+          rules: [],
+          map: {{
+            width: 3,
+            height: 3,
+            tile_size: 16,
+            tile_grid: [
+              [0, 0, 0],
+              [0, 0, 0],
+              [0, 0, 0]
+            ],
+            tile_defs: {{}}
+          }},
+          resources: [{{ name: "u_sheet", path: "u.png" }}],
+          sprites: {{
+            by_name: {{
+              u: {{
+                resource: "u_sheet",
+                frame_width: 16,
+                frame_height: 16,
+                symbol: "u",
+                description: "unit",
+                clips: {{ idle: {{ frames: [0], ticks_per_frame: 8, loop: true }} }}
+              }}
+            }},
+            by_uid: {{}},
+            by_type: {{}}
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, {{}}, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        const frame = host.getSymbolicFrame();
+        console.log(JSON.stringify(frame));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    frame = json.loads(proc.stdout.strip())
+    assert len(frame["annotations"]) == 2
+    assert frame["annotations"][0]["id"] == "p1.worker#1"
+    assert frame["annotations"][1]["id"] == "p1.worker#2"
+    assert len(frame["stacks"]) == 1
+    assert [actor["id"] for actor in frame["stacks"][0]["actors"]] == [
+        "p1.worker#1",
+        "p1.worker#2",
+    ]
+
+
+def test_headless_symbolic_spawned_actor_remains_visible_by_default(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_dir = root / "nanocalibur" / "runtime"
+
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_dir / "headless_host.ts"),
+            str(runtime_dir / "runtime_core.ts"),
+            str(runtime_dir / "symbolic_renderer.ts"),
+            str(runtime_dir / "interpreter.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_path = compiled_dir / "interpreter.js"
+    headless_path = compiled_dir / "headless_host.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+
+        const spec = {{
+          schemas: {{
+            Unit: {{
+              uid: "str",
+              x: "float",
+              y: "float",
+              active: "bool",
+              sprite: "str",
+              symbolic_visible: "bool"
+            }}
+          }},
+          actors: [
+            {{
+              type: "Unit",
+              uid: "u1",
+              fields: {{
+                x: 16,
+                y: 16,
+                active: true,
+                sprite: "u"
+              }}
+            }}
+          ],
+          globals: [],
+          predicates: [],
+          tools: [
+            {{ name: "spawn", tool_docstring: "spawn unit", action: "spawn" }}
+          ],
+          rules: [
+            {{
+              condition: {{ kind: "tool", name: "spawn", tool_docstring: "spawn unit" }},
+              action: "spawn"
+            }}
+          ],
+          map: {{
+            width: 4,
+            height: 3,
+            tile_size: 16,
+            tile_grid: [
+              [0, 0, 0, 0],
+              [0, 0, 0, 0],
+              [0, 0, 0, 0]
+            ],
+            tile_defs: {{}}
+          }},
+          resources: [{{ name: "u_sheet", path: "u.png" }}],
+          sprites: {{
+            by_name: {{
+              u: {{
+                resource: "u_sheet",
+                frame_width: 16,
+                frame_height: 16,
+                symbol: "u",
+                description: "unit",
+                clips: {{ idle: {{ frames: [0], ticks_per_frame: 8, loop: true }} }}
+              }}
+            }},
+            by_uid: {{}},
+            by_type: {{}}
+          }}
+        }};
+
+        const actions = {{
+          spawn: (ctx) => {{
+            ctx.scene.spawnActor("Unit", "", {{
+              x: 32,
+              y: 16,
+              sprite: "u"
+            }});
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, actions, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        host.callTool("spawn", {{}});
+        const frame = host.getSymbolicFrame();
+        console.log(JSON.stringify(frame));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    frame = json.loads(proc.stdout.strip())
+    row = frame["rows"][1]
+    assert row[1] == "u"
+    assert row[2] == "u"
 
 
 def test_headless_symbolic_frame_includes_runtime_prefix_text(tmp_path):
