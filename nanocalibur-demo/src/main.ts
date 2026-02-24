@@ -34,6 +34,7 @@ type SymbolicViewFrame = {
   rows: string[];
   legend: SymbolicLegendEntry[];
   annotations?: SymbolicAnnotationEntry[];
+  prefix?: string;
 };
 type SymbolicFrame = SymbolicViewFrame & {
   views?: Record<string, SymbolicViewFrame>;
@@ -969,19 +970,21 @@ function formatAnnotations(annotations: SymbolicAnnotationEntry[]): string {
     if (!item || typeof item.text !== 'string' || !item.text.trim()) {
       continue;
     }
-    const uid = typeof item.uid === 'string' ? item.uid : '';
-    const mode = typeof item.mode === 'string' && item.mode ? item.mode : 'always';
-    lines.push(`(${item.x},${item.y}) ${uid} [${mode}] ${item.text}`);
+    lines.push(`(${item.x},${item.y}) ${item.text}`);
   }
   return lines.join('\n');
 }
 
 function formatSingleSymbolicFrame(
   frame: SymbolicViewFrame,
-  options: { includeLegend?: boolean } = {},
+  options: { includeLegend?: boolean; prefix?: string } = {},
 ): string {
   const rowsText = frame.rows.join('\n');
   const sections: string[] = [rowsText];
+  const prefix = typeof options.prefix === 'string' ? options.prefix.trim() : '';
+  if (prefix) {
+    sections.unshift(prefix);
+  }
   const annotations = Array.isArray(frame.annotations)
     ? formatAnnotations(frame.annotations)
     : '';
@@ -1016,7 +1019,7 @@ function formatSymbolicFrame(frame: SymbolicFrame): string {
       : null;
   const viewIds = viewFrames ? Object.keys(viewFrames) : [];
   if (viewIds.length <= 0) {
-    return formatSingleSymbolicFrame(frame);
+    return formatSingleSymbolicFrame(frame, { prefix: frame.prefix });
   }
 
   const primaryRows = frame.rows.join('\n');
@@ -1029,7 +1032,9 @@ function formatSymbolicFrame(frame: SymbolicFrame): string {
     }
     const isPrimary = subFrame.rows.join('\n') === primaryRows;
     const title = isPrimary ? `View ${viewId} (primary)` : `View ${viewId}`;
-    sections.push(`${title}\n${formatSingleSymbolicFrame(subFrame)}`);
+    sections.push(
+      `${title}\n${formatSingleSymbolicFrame(subFrame, { prefix: subFrame.prefix })}`,
+    );
   }
   if (sections.length <= 0) {
     return formatSingleSymbolicFrame(frame);
