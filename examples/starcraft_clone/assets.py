@@ -29,6 +29,66 @@ game.add_sprite(
 )
 game.add_sprite(
     ColorSprite(
+        name="marine_p1",
+        frame_width=20,
+        frame_height=20,
+        color=Color(96, 176, 255, symbol="m", description="player 1 marine"),
+        symbol="m",
+        description="player 1 marine",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="marine_p2",
+        frame_width=20,
+        frame_height=20,
+        color=Color(232, 128, 112, symbol="m", description="player 2 marine"),
+        symbol="m",
+        description="player 2 marine",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="flamethrower_p1",
+        frame_width=20,
+        frame_height=20,
+        color=Color(110, 206, 255, symbol="f", description="player 1 flamethrower"),
+        symbol="f",
+        description="player 1 flamethrower",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="flamethrower_p2",
+        frame_width=20,
+        frame_height=20,
+        color=Color(245, 145, 108, symbol="f", description="player 2 flamethrower"),
+        symbol="f",
+        description="player 2 flamethrower",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="drone_p1",
+        frame_width=20,
+        frame_height=20,
+        color=Color(120, 220, 255, symbol="d", description="player 1 drone"),
+        symbol="d",
+        description="player 1 drone",
+    )
+)
+game.add_sprite(
+    ColorSprite(
+        name="drone_p2",
+        frame_width=20,
+        frame_height=20,
+        color=Color(255, 165, 126, symbol="d", description="player 2 drone"),
+        symbol="d",
+        description="player 2 drone",
+    )
+)
+game.add_sprite(
+    ColorSprite(
         name="hq_p1",
         frame_width=64,
         frame_height=64,

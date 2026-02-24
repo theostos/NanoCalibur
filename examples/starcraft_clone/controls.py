@@ -72,11 +72,27 @@ RESOURCE_UNLOAD_DURATION_TICKS = PHYSICS_STEP_HZ
 CONSTRUCTION_PROGRESS_PER_WORKER_TICK = 1
 BUILD_WORKER_INSIDE_DISTANCE_SQ = 4.0
 BUILD_RELEASE_DISTANCE = 22
+ATTACK_REPATH_INTERVAL_TICKS = 12
 
 WORKER_TRAIN_TIME_TICKS = PHYSICS_STEP_HZ * 4
 WORKER_TRAIN_MINERAL_COST = 50
 WORKER_TRAIN_GAS_COST = 0
 WORKER_TRAIN_SUPPLY_COST = 1
+
+MARINE_TRAIN_TIME_TICKS = PHYSICS_STEP_HZ * 3
+MARINE_TRAIN_MINERAL_COST = 50
+MARINE_TRAIN_GAS_COST = 0
+MARINE_TRAIN_SUPPLY_COST = 1
+
+FLAMETHROWER_TRAIN_TIME_TICKS = PHYSICS_STEP_HZ * 4
+FLAMETHROWER_TRAIN_MINERAL_COST = 75
+FLAMETHROWER_TRAIN_GAS_COST = 25
+FLAMETHROWER_TRAIN_SUPPLY_COST = 1
+
+DRONE_TRAIN_TIME_TICKS = PHYSICS_STEP_HZ * 5
+DRONE_TRAIN_MINERAL_COST = 100
+DRONE_TRAIN_GAS_COST = 50
+DRONE_TRAIN_SUPPLY_COST = 2
 
 BUILD_TIME_HQ_TICKS = PHYSICS_STEP_HZ * 10
 BUILD_TIME_SUPPLY_DEPOT_TICKS = PHYSICS_STEP_HZ * 5
@@ -385,6 +401,39 @@ def is_diagonal_corner_blocked(
 
 
 @callable
+def is_unit_path_blocked_tile(
+    unit: RTSObject,
+    tile_x: int,
+    tile_y: int,
+    blocked_by_objects: dict,
+    goal_node: int,
+) -> bool:
+    if is_flying_unit(unit):
+        return tile_x < 0 or tile_y < 0 or tile_x >= MAP_WIDTH_TILES or tile_y >= MAP_HEIGHT_TILES
+    return is_path_blocked_tile(tile_x, tile_y, blocked_by_objects, goal_node)
+
+
+@callable
+def is_unit_diagonal_corner_blocked(
+    unit: RTSObject,
+    current_tile_x: int,
+    current_tile_y: int,
+    neighbor_tile_x: int,
+    neighbor_tile_y: int,
+    blocked_by_objects: dict,
+) -> bool:
+    if is_flying_unit(unit):
+        return False
+    return is_diagonal_corner_blocked(
+        current_tile_x,
+        current_tile_y,
+        neighbor_tile_x,
+        neighbor_tile_y,
+        blocked_by_objects,
+    )
+
+
+@callable
 def clear_move_path(unit: RTSObject):
     unit.path_tiles_x = []
     unit.path_tiles_y = []
@@ -393,6 +442,33 @@ def clear_move_path(unit: RTSObject):
     unit.path_active = False
     unit.vx = 0
     unit.vy = 0
+
+
+@callable
+def is_flying_unit(obj: RTSObject) -> bool:
+    return obj.object_kind == "drone"
+
+
+@callable
+def clear_unit_attack_command(unit: RTSObject):
+    unit.attack_target_uid = ""
+    unit.attack_repath_cooldown = 0
+    unit.attack_cooldown_left = 0
+
+
+@callable
+def start_unit_attack_command(
+    unit: RTSObject,
+    target_uid: str,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+    target_x: float,
+    target_y: float,
+):
+    unit.attack_target_uid = target_uid
+    unit.attack_repath_cooldown = ATTACK_REPATH_INTERVAL_TICKS
+    unit.attack_cooldown_left = 0
+    build_worker_path(unit, objects, resources, target_x, target_y)
 
 
 @callable
@@ -703,6 +779,12 @@ def object_kind_name(object_kind: str) -> str:
         return "HQ"
     if object_kind == "worker":
         return "Worker"
+    if object_kind == "marine":
+        return "Marine"
+    if object_kind == "flamethrower":
+        return "Flamethrower"
+    if object_kind == "drone":
+        return "Drone"
     if object_kind == "supply_depot":
         return "Supply Depot"
     if object_kind == "barracks":
@@ -717,6 +799,12 @@ def object_kind_name(object_kind: str) -> str:
 @callable
 def object_kind_w(object_kind: str) -> int:
     if object_kind == "worker":
+        return 20
+    if object_kind == "marine":
+        return 20
+    if object_kind == "flamethrower":
+        return 20
+    if object_kind == "drone":
         return 20
     if object_kind == "hq":
         return 64
@@ -740,6 +828,12 @@ def object_kind_h(object_kind: str) -> int:
 def object_kind_hp(object_kind: str) -> int:
     if object_kind == "worker":
         return 45
+    if object_kind == "marine":
+        return 50
+    if object_kind == "flamethrower":
+        return 75
+    if object_kind == "drone":
+        return 80
     if object_kind == "hq":
         return 1500
     if object_kind == "supply_depot":
@@ -757,6 +851,12 @@ def object_kind_hp(object_kind: str) -> int:
 def object_kind_vision_range(object_kind: str) -> int:
     if object_kind == "worker":
         return 192
+    if object_kind == "marine":
+        return 224
+    if object_kind == "flamethrower":
+        return 208
+    if object_kind == "drone":
+        return 256
     if object_kind == "hq":
         return 256
     if object_kind == "supply_depot":
@@ -774,6 +874,12 @@ def object_kind_vision_range(object_kind: str) -> int:
 def object_kind_mineral_cost(object_kind: str) -> int:
     if object_kind == "worker":
         return WORKER_TRAIN_MINERAL_COST
+    if object_kind == "marine":
+        return MARINE_TRAIN_MINERAL_COST
+    if object_kind == "flamethrower":
+        return FLAMETHROWER_TRAIN_MINERAL_COST
+    if object_kind == "drone":
+        return DRONE_TRAIN_MINERAL_COST
     if object_kind == "hq":
         return COST_HQ_MINERALS
     if object_kind == "supply_depot":
@@ -791,6 +897,12 @@ def object_kind_mineral_cost(object_kind: str) -> int:
 def object_kind_gas_cost(object_kind: str) -> int:
     if object_kind == "worker":
         return WORKER_TRAIN_GAS_COST
+    if object_kind == "marine":
+        return MARINE_TRAIN_GAS_COST
+    if object_kind == "flamethrower":
+        return FLAMETHROWER_TRAIN_GAS_COST
+    if object_kind == "drone":
+        return DRONE_TRAIN_GAS_COST
     if object_kind == "hq":
         return COST_HQ_GAS
     if object_kind == "supply_depot":
@@ -810,6 +922,18 @@ def object_kind_sprite(object_kind: str, team_id: int) -> str:
         if team_id == 1:
             return "worker_p1"
         return "worker_p2"
+    if object_kind == "marine":
+        if team_id == 1:
+            return "marine_p1"
+        return "marine_p2"
+    if object_kind == "flamethrower":
+        if team_id == 1:
+            return "flamethrower_p1"
+        return "flamethrower_p2"
+    if object_kind == "drone":
+        if team_id == 1:
+            return "drone_p1"
+        return "drone_p2"
     if object_kind == "hq":
         if team_id == 1:
             return "hq_p1"
@@ -833,6 +957,107 @@ def object_kind_sprite(object_kind: str, team_id: int) -> str:
     if team_id == 1:
         return "worker_p1"
     return "worker_p2"
+
+
+@callable
+def object_kind_supply_cost(object_kind: str) -> int:
+    if object_kind == "worker":
+        return WORKER_TRAIN_SUPPLY_COST
+    if object_kind == "marine":
+        return MARINE_TRAIN_SUPPLY_COST
+    if object_kind == "flamethrower":
+        return FLAMETHROWER_TRAIN_SUPPLY_COST
+    if object_kind == "drone":
+        return DRONE_TRAIN_SUPPLY_COST
+    return 0
+
+
+@callable
+def object_kind_move_speed(object_kind: str) -> int:
+    if object_kind == "worker":
+        return WORKER_MOVE_SPEED
+    if object_kind == "marine":
+        return 340
+    if object_kind == "flamethrower":
+        return 270
+    if object_kind == "drone":
+        return 380
+    return 0
+
+
+@callable
+def object_kind_block_mask(object_kind: str) -> int:
+    if object_kind == "drone":
+        return 3
+    if object_kind == "worker":
+        return 1
+    if object_kind == "marine":
+        return 1
+    if object_kind == "flamethrower":
+        return 1
+    if object_kind == "hq":
+        return 1
+    if object_kind == "supply_depot":
+        return 1
+    if object_kind == "barracks":
+        return 1
+    if object_kind == "academy":
+        return 1
+    if object_kind == "starport":
+        return 1
+    return 1
+
+
+@callable
+def object_kind_attack_range(object_kind: str) -> int:
+    if object_kind == "worker":
+        return 14
+    if object_kind == "marine":
+        return 128
+    if object_kind == "flamethrower":
+        return 54
+    if object_kind == "drone":
+        return 144
+    return 0
+
+
+@callable
+def object_kind_attack_damage(object_kind: str) -> int:
+    if object_kind == "worker":
+        return 4
+    if object_kind == "marine":
+        return 6
+    if object_kind == "flamethrower":
+        return 10
+    if object_kind == "drone":
+        return 8
+    return 0
+
+
+@callable
+def object_kind_attack_cooldown_ticks(object_kind: str) -> int:
+    if object_kind == "worker":
+        return 45
+    if object_kind == "marine":
+        return 30
+    if object_kind == "flamethrower":
+        return 40
+    if object_kind == "drone":
+        return 36
+    return 0
+
+
+@callable
+def train_time_ticks_for_unit_kind(unit_kind: str) -> int:
+    if unit_kind == "worker":
+        return WORKER_TRAIN_TIME_TICKS
+    if unit_kind == "marine":
+        return MARINE_TRAIN_TIME_TICKS
+    if unit_kind == "flamethrower":
+        return FLAMETHROWER_TRAIN_TIME_TICKS
+    if unit_kind == "drone":
+        return DRONE_TRAIN_TIME_TICKS
+    return PHYSICS_STEP_HZ * 5
 
 
 @callable
@@ -1295,8 +1520,42 @@ def compute_refund_amount(cost: int) -> int:
 
 
 @callable
-def start_hq_worker_training(hq: RTSObject):
-    start_object_task(hq, "train_worker", "Training Worker", WORKER_TRAIN_TIME_TICKS)
+def training_task_kind_for_unit_kind(unit_kind: str) -> str:
+    if unit_kind == "worker":
+        return "train_worker"
+    if unit_kind == "marine":
+        return "train_marine"
+    if unit_kind == "flamethrower":
+        return "train_flamethrower"
+    if unit_kind == "drone":
+        return "train_drone"
+    return ""
+
+
+@callable
+def unit_kind_from_training_task(task_kind: str) -> str:
+    if task_kind == "train_worker":
+        return "worker"
+    if task_kind == "train_marine":
+        return "marine"
+    if task_kind == "train_flamethrower":
+        return "flamethrower"
+    if task_kind == "train_drone":
+        return "drone"
+    return ""
+
+
+@callable
+def start_producer_training_task(producer: RTSObject, unit_kind: str):
+    task_kind = training_task_kind_for_unit_kind(unit_kind)
+    if task_kind == "":
+        return
+    start_object_task(
+        producer,
+        task_kind,
+        "Training " + object_kind_name(unit_kind),
+        train_time_ticks_for_unit_kind(unit_kind),
+    )
 
 
 @callable
@@ -1354,32 +1613,44 @@ def start_academy_research_task(academy: RTSObject, research_kind: str):
 
 
 @callable
-def spawn_worker_from_hq(scene: Scene, hq: RTSObject):
-    spawn_x = clamp_world_x_for_size(hq.x + (hq.w / 2) + 24, object_kind_w("worker"))
-    spawn_y = clamp_world_y_for_size(hq.y + (hq.h / 2) + 24, object_kind_h("worker"))
-    sprite_name = object_kind_sprite("worker", hq.team_id)
+def spawn_unit_from_producer(scene: Scene, producer: RTSObject, unit_kind: str):
+    spawn_x = clamp_world_x_for_size(
+        producer.x + (producer.w / 2) + 24,
+        object_kind_w(unit_kind),
+    )
+    spawn_y = clamp_world_y_for_size(
+        producer.y + (producer.h / 2) + 24,
+        object_kind_h(unit_kind),
+    )
+    sprite_name = object_kind_sprite(unit_kind, producer.team_id)
     scene.spawn(
         RTSObject(
             x=spawn_x,
             y=spawn_y,
-            w=object_kind_w("worker"),
-            h=object_kind_h("worker"),
+            w=object_kind_w(unit_kind),
+            h=object_kind_h(unit_kind),
             z=3,
-            block_mask=1,
-            owner_role_id=hq.owner_role_id,
-            team_id=hq.team_id,
-            object_kind="worker",
+            block_mask=object_kind_block_mask(unit_kind),
+            owner_role_id=producer.owner_role_id,
+            team_id=producer.team_id,
+            object_kind=unit_kind,
             can_move=True,
-            max_hp=object_kind_hp("worker"),
-            hp=object_kind_hp("worker"),
-            mineral_cost=object_kind_mineral_cost("worker"),
-            gas_cost=object_kind_gas_cost("worker"),
-            supply_cost=1,
+            max_hp=object_kind_hp(unit_kind),
+            hp=object_kind_hp(unit_kind),
+            mineral_cost=object_kind_mineral_cost(unit_kind),
+            gas_cost=object_kind_gas_cost(unit_kind),
+            supply_cost=object_kind_supply_cost(unit_kind),
             usable=True,
             construction_site=False,
-            selection_name=object_kind_name("worker"),
-            move_speed=WORKER_MOVE_SPEED,
-            vision_range=object_kind_vision_range("worker"),
+            selection_name=object_kind_name(unit_kind),
+            move_speed=object_kind_move_speed(unit_kind),
+            vision_range=object_kind_vision_range(unit_kind),
+            attack_range=object_kind_attack_range(unit_kind),
+            attack_damage=object_kind_attack_damage(unit_kind),
+            attack_cooldown_ticks=object_kind_attack_cooldown_ticks(unit_kind),
+            attack_cooldown_left=0,
+            attack_target_uid="",
+            attack_repath_cooldown=0,
             path_tiles_x=[],
             path_tiles_y=[],
             path_cursor=0,
@@ -1447,6 +1718,12 @@ def spawn_construction_site(
             selection_name=object_kind_name(build_kind) + " (Constructing)",
             move_speed=0,
             vision_range=object_kind_vision_range(build_kind),
+            attack_range=0,
+            attack_damage=0,
+            attack_cooldown_ticks=0,
+            attack_cooldown_left=0,
+            attack_target_uid="",
+            attack_repath_cooldown=0,
             path_tiles_x=[],
             path_tiles_y=[],
             path_cursor=0,
@@ -1487,6 +1764,9 @@ def should_process_timed_object_tasks(obj: RTSObject) -> bool:
         and obj.task_active
         and (
             obj.task_kind == "train_worker"
+            or obj.task_kind == "train_marine"
+            or obj.task_kind == "train_flamethrower"
+            or obj.task_kind == "train_drone"
             or obj.task_kind == "research_attack"
             or obj.task_kind == "research_armor"
         )
@@ -1512,10 +1792,11 @@ def process_timed_object_task(
     finished_task = obj.task_kind
     clear_object_task(obj)
 
-    if finished_task == "train_worker":
-        spawn_worker_from_hq(scene, obj)
-        role.supply_used = role.supply_used + WORKER_TRAIN_SUPPLY_COST
-        role.ui_status = "Worker ready."
+    spawned_unit_kind = unit_kind_from_training_task(finished_task)
+    if spawned_unit_kind != "":
+        spawn_unit_from_producer(scene, obj, spawned_unit_kind)
+        role.supply_used = role.supply_used + object_kind_supply_cost(spawned_unit_kind)
+        role.ui_status = object_kind_name(spawned_unit_kind) + " ready."
         return
 
     if finished_task == "research_attack":
@@ -1694,6 +1975,43 @@ def find_clicked_resource_uid(
 
 
 @callable
+def find_clicked_enemy_object_uid(
+    target_world_x: float,
+    target_world_y: float,
+    owner_role_id: str,
+    objects: List[RTSObject],
+) -> str:
+    clicked_uid = ""
+    clicked_z = -999999
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.owner_role_id == "":
+            continue
+        if obj.owner_role_id == owner_role_id:
+            continue
+        if obj.hp <= 0:
+            continue
+
+        half_w = obj.w / 2
+        half_h = obj.h / 2
+        inside = (
+            target_world_x >= obj.x - half_w
+            and target_world_x <= obj.x + half_w
+            and target_world_y >= obj.y - half_h
+            and target_world_y <= obj.y + half_h
+        )
+        if not inside:
+            continue
+        if obj.z < clicked_z:
+            continue
+
+        clicked_uid = obj.uid
+        clicked_z = obj.z
+    return clicked_uid
+
+
+@callable
 def find_clicked_construction_site_uid(
     target_world_x: float,
     target_world_y: float,
@@ -1734,6 +2052,7 @@ def assign_worker_to_construction_site(
     resources: List[ResourceNode],
 ):
     clear_worker_activity(worker)
+    clear_unit_attack_command(worker)
     start_worker_construction_task(worker, site.object_kind, site.uid, site.x, site.y)
     if is_worker_inside_site(worker, site):
         if worker.path_active:
@@ -2061,6 +2380,9 @@ def start_worker_gather_loop(
     resources: List[ResourceNode],
     resource_uid: str,
 ):
+    if worker.object_kind != "worker":
+        return
+    clear_unit_attack_command(worker)
     if worker.task_active and is_worker_gather_task(worker.task_kind) == False:
         return
     if is_worker_gather_task(worker.task_kind):
@@ -2130,13 +2452,14 @@ def build_worker_path(
     goal_world_y: float,
 ):
     clear_move_path(unit)
+    flying = is_flying_unit(unit)
 
     start_tile_x = world_to_tile_x(unit.x)
     start_tile_y = world_to_tile_y(unit.y)
     goal_tile_x = world_to_tile_x(goal_world_x)
     goal_tile_y = world_to_tile_y(goal_world_y)
 
-    if is_static_blocked_tile(goal_tile_x, goal_tile_y):
+    if flying == False and is_static_blocked_tile(goal_tile_x, goal_tile_y):
         return
 
     start_node = tile_node(start_tile_x, start_tile_y)
@@ -2145,43 +2468,46 @@ def build_worker_path(
         return
 
     blocked_by_objects = {}
-    for obj in objects:
-        if obj.active == False:
-            continue
-        if obj.uid == unit.uid:
-            continue
-        if obj.block_mask is None:
-            continue
-        if obj.can_move and obj.team_id == unit.team_id:
-            continue
+    if flying == False:
+        for obj in objects:
+            if obj.active == False:
+                continue
+            if obj.uid == unit.uid:
+                continue
+            if obj.block_mask is None:
+                continue
+            if unit.block_mask is not None and obj.block_mask != unit.block_mask:
+                continue
+            if obj.can_move and obj.team_id == unit.team_id:
+                continue
 
-        block_shrink_px = 0
-        if obj.can_move == False:
-            block_shrink_px = PATH_BLOCK_SHRINK_STATIC_PX
+            block_shrink_px = 0
+            if obj.can_move == False:
+                block_shrink_px = PATH_BLOCK_SHRINK_STATIC_PX
 
-        mark_path_block_for_box(
-            blocked_by_objects,
-            obj.x,
-            obj.y,
-            obj.w,
-            obj.h,
-            block_shrink_px,
-        )
+            mark_path_block_for_box(
+                blocked_by_objects,
+                obj.x,
+                obj.y,
+                obj.w,
+                obj.h,
+                block_shrink_px,
+            )
 
-    for resource in resources:
-        if resource.active == False:
-            continue
+        for resource in resources:
+            if resource.active == False:
+                continue
 
-        mark_path_block_for_box(
-            blocked_by_objects,
-            resource.x,
-            resource.y,
-            resource.w,
-            resource.h,
-            PATH_BLOCK_SHRINK_RESOURCE_PX,
-        )
+            mark_path_block_for_box(
+                blocked_by_objects,
+                resource.x,
+                resource.y,
+                resource.w,
+                resource.h,
+                PATH_BLOCK_SHRINK_RESOURCE_PX,
+            )
 
-    if blocked_by_objects.get(goal_node, 0) == 1:
+    if flying == False and blocked_by_objects.get(goal_node, 0) == 1:
         found_open_goal = False
         best_goal_tile_x = goal_tile_x
         best_goal_tile_y = goal_tile_y
@@ -2287,7 +2613,8 @@ def build_worker_path(
             if neighbor_tile_x >= 0 and neighbor_tile_x < MAP_WIDTH_TILES:
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
-                    if not is_path_blocked_tile(
+                    if not is_unit_path_blocked_tile(
+                        unit,
                         neighbor_tile_x,
                         neighbor_tile_y,
                         blocked_by_objects,
@@ -2303,7 +2630,8 @@ def build_worker_path(
             if neighbor_tile_x >= 0 and neighbor_tile_x < MAP_WIDTH_TILES:
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
-                    if not is_path_blocked_tile(
+                    if not is_unit_path_blocked_tile(
+                        unit,
                         neighbor_tile_x,
                         neighbor_tile_y,
                         blocked_by_objects,
@@ -2319,7 +2647,8 @@ def build_worker_path(
             if neighbor_tile_y >= 0 and neighbor_tile_y < MAP_HEIGHT_TILES:
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
-                    if not is_path_blocked_tile(
+                    if not is_unit_path_blocked_tile(
+                        unit,
                         neighbor_tile_x,
                         neighbor_tile_y,
                         blocked_by_objects,
@@ -2335,7 +2664,8 @@ def build_worker_path(
             if neighbor_tile_y >= 0 and neighbor_tile_y < MAP_HEIGHT_TILES:
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
-                    if not is_path_blocked_tile(
+                    if not is_unit_path_blocked_tile(
+                        unit,
                         neighbor_tile_x,
                         neighbor_tile_y,
                         blocked_by_objects,
@@ -2357,14 +2687,16 @@ def build_worker_path(
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
                     if (
-                        not is_diagonal_corner_blocked(
+                        not is_unit_diagonal_corner_blocked(
+                            unit,
                             current_tile_x,
                             current_tile_y,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
                         )
-                        and not is_path_blocked_tile(
+                        and not is_unit_path_blocked_tile(
+                            unit,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
@@ -2387,14 +2719,16 @@ def build_worker_path(
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
                     if (
-                        not is_diagonal_corner_blocked(
+                        not is_unit_diagonal_corner_blocked(
+                            unit,
                             current_tile_x,
                             current_tile_y,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
                         )
-                        and not is_path_blocked_tile(
+                        and not is_unit_path_blocked_tile(
+                            unit,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
@@ -2417,14 +2751,16 @@ def build_worker_path(
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
                     if (
-                        not is_diagonal_corner_blocked(
+                        not is_unit_diagonal_corner_blocked(
+                            unit,
                             current_tile_x,
                             current_tile_y,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
                         )
-                        and not is_path_blocked_tile(
+                        and not is_unit_path_blocked_tile(
+                            unit,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
@@ -2447,14 +2783,16 @@ def build_worker_path(
                 neighbor_node = tile_node(neighbor_tile_x, neighbor_tile_y)
                 if visited.get(neighbor_node, 0) == 0:
                     if (
-                        not is_diagonal_corner_blocked(
+                        not is_unit_diagonal_corner_blocked(
+                            unit,
                             current_tile_x,
                             current_tile_y,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
                         )
-                        and not is_path_blocked_tile(
+                        and not is_unit_path_blocked_tile(
+                            unit,
                             neighbor_tile_x,
                             neighbor_tile_y,
                             blocked_by_objects,
@@ -2557,8 +2895,189 @@ def follow_unit_path(obj: RTSObject):
             obj.vy = -obj.move_speed
 
 
+def should_process_attack_orders(obj: RTSObject) -> bool:
+    return (
+        obj.active
+        and obj.can_move
+        and obj.attack_target_uid != ""
+        and obj.attack_damage > 0
+        and obj.attack_range > 0
+    )
+
+
+@callable
+def role_armor_upgrade_for_owner(
+    owner_role_id: str,
+    role_h1: RTSRole,
+    role_h2: RTSRole,
+) -> int:
+    if owner_role_id == PLAYER_1_ROLE_ID:
+        return role_h1.armor_upgrade_level
+    if owner_role_id == PLAYER_2_ROLE_ID:
+        return role_h2.armor_upgrade_level
+    return 0
+
+
+@callable
+def adjust_supply_for_destroyed_unit(
+    target: RTSObject,
+    role_h1: RTSRole,
+    role_h2: RTSRole,
+):
+    supply_cost = target.supply_cost
+    if supply_cost <= 0:
+        return
+    if target.owner_role_id == PLAYER_1_ROLE_ID:
+        role_h1.supply_used = role_h1.supply_used - supply_cost
+        if role_h1.supply_used < 0:
+            role_h1.supply_used = 0
+        return
+    if target.owner_role_id == PLAYER_2_ROLE_ID:
+        role_h2.supply_used = role_h2.supply_used - supply_cost
+        if role_h2.supply_used < 0:
+            role_h2.supply_used = 0
+
+
+@callable
+def process_unit_attack_order(
+    unit: RTSObject,
+    self_role: RTSRole,
+    role_h1: RTSRole,
+    role_h2: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    if unit.owner_role_id != owner_role_id:
+        return
+    if unit.attack_target_uid == "":
+        return
+
+    if unit.attack_cooldown_left > 0:
+        unit.attack_cooldown_left = unit.attack_cooldown_left - 1
+
+    target_uid = unit.attack_target_uid
+    target_found = False
+    target_x = 0
+    target_y = 0
+    target_w = 0
+    target_h = 0
+    target_owner_role_id = ""
+    target_hp = 0
+    for obj in objects:
+        if obj.active == False:
+            continue
+        if obj.uid != target_uid:
+            continue
+        if obj.owner_role_id == owner_role_id:
+            continue
+        target_found = True
+        target_x = obj.x
+        target_y = obj.y
+        target_w = obj.w
+        target_h = obj.h
+        target_owner_role_id = obj.owner_role_id
+        target_hp = obj.hp
+        break
+    if target_found == False or target_hp <= 0:
+        clear_unit_attack_command(unit)
+        if unit.path_active:
+            clear_move_path(unit)
+        return
+
+    if role_world_point_is_visible(self_role, target_x, target_y) == False:
+        clear_unit_attack_command(unit)
+        if unit.path_active:
+            clear_move_path(unit)
+        return
+
+    if unit.attack_repath_cooldown > 0:
+        unit.attack_repath_cooldown = unit.attack_repath_cooldown - 1
+
+    range_sq = unit.attack_range * unit.attack_range
+    dist_sq = squared_distance_to_box(unit.x, unit.y, target_x, target_y, target_w, target_h)
+    if dist_sq > range_sq:
+        if unit.attack_repath_cooldown <= 0:
+            build_worker_path(unit, objects, resources, target_x, target_y)
+            unit.attack_repath_cooldown = ATTACK_REPATH_INTERVAL_TICKS
+        return
+
+    if unit.path_active:
+        clear_move_path(unit)
+    unit.vx = 0
+    unit.vy = 0
+    unit.attack_repath_cooldown = 0
+
+    if unit.attack_cooldown_left > 0:
+        return
+
+    damage = unit.attack_damage + self_role.attack_upgrade_level
+    if damage < 1:
+        damage = 1
+    armor = role_armor_upgrade_for_owner(target_owner_role_id, role_h1, role_h2)
+    damage = damage - armor
+    if damage < 1:
+        damage = 1
+
+    for target in objects:
+        if target.active == False:
+            continue
+        if target.uid != target_uid:
+            continue
+        target.hp = target.hp - damage
+        if target.hp <= 0:
+            target.hp = 0
+            if is_under_construction_site(target):
+                clear_unit_attack_command(unit)
+                return
+            adjust_supply_for_destroyed_unit(target, role_h1, role_h2)
+            target.destroy()
+            clear_unit_attack_command(unit)
+        break
+
+    unit.attack_cooldown_left = unit.attack_cooldown_ticks
+
+
+@safe_condition(OnLogicalCondition(should_process_attack_orders, RTSObject))
+def process_attack_orders_human_1(
+    unit: RTSObject,
+    role_h1: RTSRole["human_1"],
+    role_h2: RTSRole["human_2"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    process_unit_attack_order(
+        unit,
+        role_h1,
+        role_h1,
+        role_h2,
+        PLAYER_1_ROLE_ID,
+        objects,
+        resources,
+    )
+
+
+@safe_condition(OnLogicalCondition(should_process_attack_orders, RTSObject))
+def process_attack_orders_human_2(
+    unit: RTSObject,
+    role_h1: RTSRole["human_1"],
+    role_h2: RTSRole["human_2"],
+    objects: List[RTSObject],
+    resources: List[ResourceNode],
+):
+    process_unit_attack_order(
+        unit,
+        role_h2,
+        role_h1,
+        role_h2,
+        PLAYER_2_ROLE_ID,
+        objects,
+        resources,
+    )
+
+
 def should_process_gather(worker: RTSObject) -> bool:
-    return worker.active and worker.can_move and worker.gather_active
+    return worker.active and worker.can_move and worker.gather_active and worker.object_kind == "worker"
 
 
 @callable
@@ -3140,6 +3659,10 @@ def symbolic_status_for_object(obj: RTSObject) -> str:
         if obj.gather_phase == "depositing":
             return "Unloading"
         return "Gathering"
+    if obj.attack_target_uid != "":
+        if obj.path_active:
+            return "Chasing target"
+        return "Attacking"
     if obj.path_active:
         return "Moving"
     return "Idle"
@@ -3433,6 +3956,9 @@ def clear_pending_build_for_role(self_role: RTSRole):
 @callable
 def clear_role_action_flags(self_role: RTSRole):
     self_role.can_train_worker = False
+    self_role.can_train_marine = False
+    self_role.can_train_flamethrower = False
+    self_role.can_train_drone = False
     self_role.can_build_hq = False
     self_role.can_build_supply_depot = False
     self_role.can_build_barracks = False
@@ -3442,6 +3968,9 @@ def clear_role_action_flags(self_role: RTSRole):
     self_role.can_upgrade_armor = False
     self_role.can_cancel_construction = False
     self_role.hide_train_worker = True
+    self_role.hide_train_marine = True
+    self_role.hide_train_flamethrower = True
+    self_role.hide_train_drone = True
     self_role.hide_build_hq = True
     self_role.hide_build_supply_depot = True
     self_role.hide_build_barracks = True
@@ -3451,6 +3980,9 @@ def clear_role_action_flags(self_role: RTSRole):
     self_role.hide_upgrade_armor = True
     self_role.hide_cancel_construction = True
     self_role.disable_train_worker = True
+    self_role.disable_train_marine = True
+    self_role.disable_train_flamethrower = True
+    self_role.disable_train_drone = True
     self_role.disable_build_hq = True
     self_role.disable_build_supply_depot = True
     self_role.disable_build_barracks = True
@@ -3575,6 +4107,39 @@ def refresh_role_interface_state(
             self_role.hide_train_worker = False
             self_role.disable_train_worker = can_train_worker == False
 
+        if obj.object_kind == "barracks" and obj.usable != False:
+            can_train_marine = (
+                obj.task_active == False
+                and can_afford(self_role, MARINE_TRAIN_MINERAL_COST, MARINE_TRAIN_GAS_COST)
+                and (self_role.supply_used + MARINE_TRAIN_SUPPLY_COST) <= self_role.supply_cap
+            )
+            can_train_flamethrower = (
+                obj.task_active == False
+                and can_afford(
+                    self_role,
+                    FLAMETHROWER_TRAIN_MINERAL_COST,
+                    FLAMETHROWER_TRAIN_GAS_COST,
+                )
+                and (self_role.supply_used + FLAMETHROWER_TRAIN_SUPPLY_COST)
+                <= self_role.supply_cap
+            )
+            self_role.can_train_marine = can_train_marine
+            self_role.can_train_flamethrower = can_train_flamethrower
+            self_role.hide_train_marine = False
+            self_role.hide_train_flamethrower = False
+            self_role.disable_train_marine = can_train_marine == False
+            self_role.disable_train_flamethrower = can_train_flamethrower == False
+
+        if obj.object_kind == "starport" and obj.usable != False:
+            can_train_drone = (
+                obj.task_active == False
+                and can_afford(self_role, DRONE_TRAIN_MINERAL_COST, DRONE_TRAIN_GAS_COST)
+                and (self_role.supply_used + DRONE_TRAIN_SUPPLY_COST) <= self_role.supply_cap
+            )
+            self_role.can_train_drone = can_train_drone
+            self_role.hide_train_drone = False
+            self_role.disable_train_drone = can_train_drone == False
+
         if obj.object_kind == "worker":
             selected_worker_uid = obj.uid
             can_build_now = obj.task_active == False or is_worker_gather_task(obj.task_kind)
@@ -3664,13 +4229,15 @@ def refresh_role_interface_state(
 
 
 @callable
-def issue_train_worker_for_role(
+def issue_train_unit_for_role(
     self_role: RTSRole,
     owner_role_id: str,
     objects: List[RTSObject],
+    producer_kind: str,
+    unit_kind: str,
 ):
     if self_role.selected_count != 1:
-        self_role.ui_status = "Select one HQ."
+        self_role.ui_status = "Select one " + object_kind_name(producer_kind) + "."
         return
 
     selected_uid = self_role.selected_uid
@@ -3681,29 +4248,74 @@ def issue_train_worker_for_role(
             continue
         if obj.owner_role_id != owner_role_id:
             continue
-        if obj.object_kind != "hq":
-            self_role.ui_status = "Select HQ to train Worker."
+        if obj.object_kind != producer_kind:
+            self_role.ui_status = (
+                "Select "
+                + object_kind_name(producer_kind)
+                + " to train "
+                + object_kind_name(unit_kind)
+                + "."
+            )
             return
         if obj.usable == False:
-            self_role.ui_status = "HQ is still under construction."
+            self_role.ui_status = object_kind_name(producer_kind) + " is still under construction."
             return
         if obj.task_active:
-            self_role.ui_status = "HQ is busy."
+            self_role.ui_status = object_kind_name(producer_kind) + " is busy."
             return
-        if (self_role.supply_used + WORKER_TRAIN_SUPPLY_COST) > self_role.supply_cap:
+        supply_cost = object_kind_supply_cost(unit_kind)
+        if (self_role.supply_used + supply_cost) > self_role.supply_cap:
             self_role.ui_status = "Need more Supply."
             return
-        if can_afford(self_role, WORKER_TRAIN_MINERAL_COST, WORKER_TRAIN_GAS_COST) == False:
-            self_role.ui_status = "Not enough resources for Worker."
+        mineral_cost = object_kind_mineral_cost(unit_kind)
+        gas_cost = object_kind_gas_cost(unit_kind)
+        if can_afford(self_role, mineral_cost, gas_cost) == False:
+            self_role.ui_status = "Not enough resources for " + object_kind_name(unit_kind) + "."
             return
 
-        self_role.minerals = self_role.minerals - WORKER_TRAIN_MINERAL_COST
-        self_role.gas = self_role.gas - WORKER_TRAIN_GAS_COST
-        start_hq_worker_training(obj)
-        self_role.ui_status = "Training Worker..."
+        self_role.minerals = self_role.minerals - mineral_cost
+        self_role.gas = self_role.gas - gas_cost
+        start_producer_training_task(obj, unit_kind)
+        self_role.ui_status = "Training " + object_kind_name(unit_kind) + "..."
         return
 
-    self_role.ui_status = "Select one HQ."
+    self_role.ui_status = "Select one " + object_kind_name(producer_kind) + "."
+
+
+@callable
+def issue_train_worker_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    issue_train_unit_for_role(self_role, owner_role_id, objects, "hq", "worker")
+
+
+@callable
+def issue_train_marine_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    issue_train_unit_for_role(self_role, owner_role_id, objects, "barracks", "marine")
+
+
+@callable
+def issue_train_flamethrower_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    issue_train_unit_for_role(self_role, owner_role_id, objects, "barracks", "flamethrower")
+
+
+@callable
+def issue_train_drone_for_role(
+    self_role: RTSRole,
+    owner_role_id: str,
+    objects: List[RTSObject],
+):
+    issue_train_unit_for_role(self_role, owner_role_id, objects, "starport", "drone")
 
 
 @callable
@@ -3931,6 +4543,7 @@ def place_pending_build_for_role(
         if obj.object_kind != "worker":
             continue
         clear_worker_activity(obj)
+        clear_unit_attack_command(obj)
         start_worker_construction_task(obj, build_kind, "", place_x, place_y)
         build_worker_path(obj, objects, resources, place_x, place_y)
         started = True
@@ -4202,7 +4815,14 @@ def command_selected_units_for_role(
 
     clicked_resource_uid = ""
     clicked_site_uid = ""
+    clicked_enemy_uid = ""
     if role_world_point_is_visible(self_role, target_world_x, target_world_y):
+        clicked_enemy_uid = find_clicked_enemy_object_uid(
+            target_world_x,
+            target_world_y,
+            owner_role_id,
+            objects,
+        )
         clicked_resource_uid = find_clicked_resource_uid(
             target_world_x,
             target_world_y,
@@ -4237,30 +4857,42 @@ def command_selected_units_for_role(
             and is_worker_construction_task(obj.task_kind) == False
         ):
             continue
-        if clicked_site_uid != "":
-            if obj.object_kind != "worker":
-                continue
-            for site in objects:
-                if site.active == False:
-                    continue
-                if site.uid != clicked_site_uid:
-                    continue
-                if is_under_construction_site(site) == False:
-                    continue
-                assign_worker_to_construction_site(obj, site, objects, resources)
-            continue
-        if clicked_resource_uid != "":
-            if is_worker_construction_task(obj.task_kind):
-                clear_worker_construction_task(obj)
-            start_worker_gather_loop(
+        if clicked_enemy_uid != "":
+            clear_worker_activity(obj)
+            start_unit_attack_command(
                 obj,
+                clicked_enemy_uid,
                 objects,
                 resources,
-                clicked_resource_uid,
+                target_world_x,
+                target_world_y,
             )
-        else:
-            clear_worker_activity(obj)
-            build_worker_path(obj, objects, resources, target_world_x, target_world_y)
+            continue
+        if clicked_site_uid != "":
+            if obj.object_kind == "worker":
+                for site in objects:
+                    if site.active == False:
+                        continue
+                    if site.uid != clicked_site_uid:
+                        continue
+                    if is_under_construction_site(site) == False:
+                        continue
+                    assign_worker_to_construction_site(obj, site, objects, resources)
+                continue
+        if clicked_resource_uid != "":
+            if obj.object_kind == "worker":
+                if is_worker_construction_task(obj.task_kind):
+                    clear_worker_construction_task(obj)
+                start_worker_gather_loop(
+                    obj,
+                    objects,
+                    resources,
+                    clicked_resource_uid,
+                )
+                continue
+        clear_worker_activity(obj)
+        clear_unit_attack_command(obj)
+        build_worker_path(obj, objects, resources, target_world_x, target_world_y)
 
 
 @callable
@@ -4298,6 +4930,30 @@ def ui_train_worker_human_1(
     objects: List[RTSObject],
 ):
     issue_train_worker_for_role(self_role, PLAYER_1_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("train_marine", id="human_1"))
+def ui_train_marine_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_train_marine_for_role(self_role, PLAYER_1_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("train_flamethrower", id="human_1"))
+def ui_train_flamethrower_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_train_flamethrower_for_role(self_role, PLAYER_1_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("train_drone", id="human_1"))
+def ui_train_drone_human_1(
+    self_role: RTSRole["human_1"],
+    objects: List[RTSObject],
+):
+    issue_train_drone_for_role(self_role, PLAYER_1_ROLE_ID, objects)
 
 
 @unsafe_condition(ButtonCondition.begin("build_hq", id="human_1"))
@@ -4370,6 +5026,30 @@ def ui_train_worker_human_2(
     objects: List[RTSObject],
 ):
     issue_train_worker_for_role(self_role, PLAYER_2_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("train_marine", id="human_2"))
+def ui_train_marine_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_train_marine_for_role(self_role, PLAYER_2_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("train_flamethrower", id="human_2"))
+def ui_train_flamethrower_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_train_flamethrower_for_role(self_role, PLAYER_2_ROLE_ID, objects)
+
+
+@unsafe_condition(ButtonCondition.begin("train_drone", id="human_2"))
+def ui_train_drone_human_2(
+    self_role: RTSRole["human_2"],
+    objects: List[RTSObject],
+):
+    issue_train_drone_for_role(self_role, PLAYER_2_ROLE_ID, objects)
 
 
 @unsafe_condition(ButtonCondition.begin("build_hq", id="human_2"))

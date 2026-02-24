@@ -32,6 +32,9 @@ class RTSRole(SymbolicPrefixRole):
     selected_task_bar: str
     selected_task_seconds_left: float
     can_train_worker: bool
+    can_train_marine: bool
+    can_train_flamethrower: bool
+    can_train_drone: bool
     can_build_hq: bool
     can_build_supply_depot: bool
     can_build_barracks: bool
@@ -52,6 +55,9 @@ class RTSRole(SymbolicPrefixRole):
     pending_build_name: str
     build_placement_active: bool
     hide_train_worker: bool
+    hide_train_marine: bool
+    hide_train_flamethrower: bool
+    hide_train_drone: bool
     hide_build_hq: bool
     hide_build_supply_depot: bool
     hide_build_barracks: bool
@@ -61,6 +67,9 @@ class RTSRole(SymbolicPrefixRole):
     hide_upgrade_armor: bool
     hide_cancel_construction: bool
     disable_train_worker: bool
+    disable_train_marine: bool
+    disable_train_flamethrower: bool
+    disable_train_drone: bool
     disable_build_hq: bool
     disable_build_supply_depot: bool
     disable_build_barracks: bool
@@ -82,7 +91,7 @@ game.add_role(
         required=True,
         kind=RoleKind.HUMAN,
         minerals=1500,
-        gas=0,
+        gas=1500,
         supply_used=1,
         supply_cap=10,
         selected_uid="",
@@ -98,6 +107,9 @@ game.add_role(
         selected_task_bar="[....................]",
         selected_task_seconds_left=0.0,
         can_train_worker=False,
+        can_train_marine=False,
+        can_train_flamethrower=False,
+        can_train_drone=False,
         can_build_hq=False,
         can_build_supply_depot=False,
         can_build_barracks=False,
@@ -118,6 +130,9 @@ game.add_role(
         pending_build_name="",
         build_placement_active=False,
         hide_train_worker=True,
+        hide_train_marine=True,
+        hide_train_flamethrower=True,
+        hide_train_drone=True,
         hide_build_hq=True,
         hide_build_supply_depot=True,
         hide_build_barracks=True,
@@ -127,6 +142,9 @@ game.add_role(
         hide_upgrade_armor=True,
         hide_cancel_construction=True,
         disable_train_worker=True,
+        disable_train_marine=True,
+        disable_train_flamethrower=True,
+        disable_train_drone=True,
         disable_build_hq=True,
         disable_build_supply_depot=True,
         disable_build_barracks=True,
@@ -162,7 +180,7 @@ game.add_role(
         required=False,
         kind=RoleKind.HUMAN,
         minerals=1500,
-        gas=0,
+        gas=1500,
         supply_used=1,
         supply_cap=10,
         selected_uid="",
@@ -178,6 +196,9 @@ game.add_role(
         selected_task_bar="[....................]",
         selected_task_seconds_left=0.0,
         can_train_worker=False,
+        can_train_marine=False,
+        can_train_flamethrower=False,
+        can_train_drone=False,
         can_build_hq=False,
         can_build_supply_depot=False,
         can_build_barracks=False,
@@ -198,6 +219,9 @@ game.add_role(
         pending_build_name="",
         build_placement_active=False,
         hide_train_worker=True,
+        hide_train_marine=True,
+        hide_train_flamethrower=True,
+        hide_train_drone=True,
         hide_build_hq=True,
         hide_build_supply_depot=True,
         hide_build_barracks=True,
@@ -207,6 +231,9 @@ game.add_role(
         hide_upgrade_armor=True,
         hide_cancel_construction=True,
         disable_train_worker=True,
+        disable_train_marine=True,
+        disable_train_flamethrower=True,
+        disable_train_drone=True,
         disable_build_hq=True,
         disable_build_supply_depot=True,
         disable_build_barracks=True,

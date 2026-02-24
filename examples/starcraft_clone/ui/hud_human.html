@@ -44,6 +44,9 @@
     <div style="margin-bottom: 2px">Commands (selection-sensitive):</div>
     <div style="display: flex; gap: 6px; flex-wrap: wrap">
       <button data-button="train_worker" hidden="{{role.hide_train_worker}}" disabled="{{role.disable_train_worker}}">Train Worker</button>
+      <button data-button="train_marine" hidden="{{role.hide_train_marine}}" disabled="{{role.disable_train_marine}}">Train Marine</button>
+      <button data-button="train_flamethrower" hidden="{{role.hide_train_flamethrower}}" disabled="{{role.disable_train_flamethrower}}">Train Flamethrower</button>
+      <button data-button="train_drone" hidden="{{role.hide_train_drone}}" disabled="{{role.disable_train_drone}}">Train Drone</button>
       <button data-button="build_hq" hidden="{{role.hide_build_hq}}" disabled="{{role.disable_build_hq}}">Build HQ</button>
       <button data-button="build_supply_depot" hidden="{{role.hide_build_supply_depot}}" disabled="{{role.disable_build_supply_depot}}">Build Supply Depot</button>
       <button data-button="build_barracks" hidden="{{role.hide_build_barracks}}" disabled="{{role.disable_build_barracks}}">Build Barracks</button>
@@ -56,6 +59,9 @@
     <div>Build Placement: {{role.pending_build_name}}</div>
     <div>Placement Active: {{role.build_placement_active}}</div>
     <div>Train Worker Ready: {{role.can_train_worker}}</div>
+    <div>Train Marine Ready: {{role.can_train_marine}}</div>
+    <div>Train Flamethrower Ready: {{role.can_train_flamethrower}}</div>
+    <div>Train Drone Ready: {{role.can_train_drone}}</div>
     <div>Build HQ Ready: {{role.can_build_hq}}</div>
     <div>Build Supply Depot Ready: {{role.can_build_supply_depot}}</div>
     <div>Build Barracks Ready: {{role.can_build_barracks}}</div>

@@ -65,6 +65,12 @@ class RTSObject(Actor):
     selection_name: str
     move_speed: int
     vision_range: int
+    attack_range: int
+    attack_damage: int
+    attack_cooldown_ticks: int
+    attack_cooldown_left: int
+    attack_target_uid: str
+    attack_repath_cooldown: int
     path_tiles_x: list[int]
     path_tiles_y: list[int]
     path_cursor: int
@@ -193,6 +199,12 @@ scene.add_actor(
         selection_name="Worker",
         move_speed=WORKER_MOVE_SPEED,
         vision_range=192,
+        attack_range=14,
+        attack_damage=4,
+        attack_cooldown_ticks=45,
+        attack_cooldown_left=0,
+        attack_target_uid="",
+        attack_repath_cooldown=0,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
@@ -248,6 +260,12 @@ scene.add_actor(
         selection_name="HQ",
         move_speed=0,
         vision_range=256,
+        attack_range=0,
+        attack_damage=0,
+        attack_cooldown_ticks=0,
+        attack_cooldown_left=0,
+        attack_target_uid="",
+        attack_repath_cooldown=0,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
@@ -304,6 +322,12 @@ scene.add_actor(
         selection_name="Worker",
         move_speed=WORKER_MOVE_SPEED,
         vision_range=192,
+        attack_range=14,
+        attack_damage=4,
+        attack_cooldown_ticks=45,
+        attack_cooldown_left=0,
+        attack_target_uid="",
+        attack_repath_cooldown=0,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
@@ -359,6 +383,12 @@ scene.add_actor(
         selection_name="HQ",
         move_speed=0,
         vision_range=256,
+        attack_range=0,
+        attack_damage=0,
+        attack_cooldown_ticks=0,
+        attack_cooldown_left=0,
+        attack_target_uid="",
+        attack_repath_cooldown=0,
         path_tiles_x=[],
         path_tiles_y=[],
         path_cursor=0,
