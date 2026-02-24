@@ -39,6 +39,13 @@ interface ResolvedRenderView {
   symbolic: boolean;
 }
 
+interface WorldBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 export interface ScreenProjection {
   viewId: string;
   localX: number;
@@ -49,7 +56,11 @@ export interface ScreenProjection {
 
 export class CanvasRenderer {
   private readonly canvas: HTMLCanvasElement;
-  private readonly ctx: CanvasRenderingContext2D;
+  private ctx: CanvasRenderingContext2D;
+  private readonly outputCtx: CanvasRenderingContext2D;
+  private readonly offscreenCanvas: HTMLCanvasElement | null;
+  private readonly offscreenCtx: CanvasRenderingContext2D | null;
+  private readonly renderScale: number;
   private readonly options: CanvasHostOptions;
   private readonly assets: AssetStore;
   private readonly animation: AnimationSystem;
@@ -71,6 +82,7 @@ export class CanvasRenderer {
       throw new Error("Canvas 2D context is not available.");
     }
     this.ctx = ctx;
+    this.outputCtx = ctx;
 
     this.canvas.width = Math.floor(asNumber(options.width, DEFAULT_WIDTH));
     this.canvas.height = Math.floor(asNumber(options.height, DEFAULT_HEIGHT));
@@ -78,15 +90,78 @@ export class CanvasRenderer {
       this.canvas.tabIndex = 0;
     }
 
+    let normalizedRenderScale = asNumber(options.renderScale, 1);
+    if (!Number.isFinite(normalizedRenderScale)) {
+      normalizedRenderScale = 1;
+    }
+    if (normalizedRenderScale < 0.25) {
+      normalizedRenderScale = 0.25;
+    }
+    if (normalizedRenderScale > 1) {
+      normalizedRenderScale = 1;
+    }
+    this.renderScale = normalizedRenderScale;
+
+    let offscreenCanvas: HTMLCanvasElement | null = null;
+    let offscreenCtx: CanvasRenderingContext2D | null = null;
+    if (this.renderScale < 0.999) {
+      offscreenCanvas = document.createElement("canvas");
+      offscreenCanvas.width = Math.max(1, Math.floor(this.canvas.width * this.renderScale));
+      offscreenCanvas.height = Math.max(1, Math.floor(this.canvas.height * this.renderScale));
+      const maybeCtx = offscreenCanvas.getContext("2d");
+      if (maybeCtx) {
+        offscreenCtx = maybeCtx;
+      } else {
+        offscreenCanvas = null;
+      }
+    }
+    this.offscreenCanvas = offscreenCanvas;
+    this.offscreenCtx = offscreenCtx;
+
     const pixelated = options.pixelated !== false;
     if (pixelated) {
       this.ctx.imageSmoothingEnabled = false;
+      this.outputCtx.imageSmoothingEnabled = false;
+      if (this.offscreenCtx) {
+        this.offscreenCtx.imageSmoothingEnabled = false;
+      }
       this.canvas.style.imageRendering = "pixelated";
     }
   }
 
   render(state: InterpreterState, mapSpec: MapSpec | null): void {
     this.frameCounter += 1;
+    if (this.offscreenCanvas && this.offscreenCtx) {
+      const targetScaleX = this.offscreenCanvas.width / this.canvas.width;
+      const targetScaleY = this.offscreenCanvas.height / this.canvas.height;
+      this.ctx = this.offscreenCtx;
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      this.ctx.clearRect(0, 0, this.offscreenCanvas.width, this.offscreenCanvas.height);
+      this.ctx.save();
+      this.ctx.scale(targetScaleX, targetScaleY);
+      this.renderScene(state, mapSpec);
+      this.ctx.restore();
+
+      this.outputCtx.setTransform(1, 0, 0, 1, 0, 0);
+      this.outputCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      if (this.options.pixelated !== false) {
+        this.outputCtx.imageSmoothingEnabled = false;
+      }
+      this.outputCtx.drawImage(
+        this.offscreenCanvas,
+        0,
+        0,
+        this.canvas.width,
+        this.canvas.height,
+      );
+      this.ctx = this.outputCtx;
+      return;
+    }
+    this.ctx = this.outputCtx;
+    this.renderScene(state, mapSpec);
+  }
+
+  private renderScene(state: InterpreterState, mapSpec: MapSpec | null): void {
     const actors = state.actors as ActorState[];
     const sortedActors = [...actors].sort(
       (a, b) => asNumber(a.z, 0) - asNumber(b.z, 0),
@@ -97,6 +172,11 @@ export class CanvasRenderer {
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     for (const view of views) {
+      // Overlay-only views are used for interface placement and should not trigger world draws.
+      if (!view.interactive && !view.symbolic) {
+        continue;
+      }
+      const viewBounds = this.resolveViewWorldBounds(view);
       this.ctx.save();
       this.ctx.beginPath();
       this.ctx.rect(view.rect.x, view.rect.y, view.rect.width, view.rect.height);
@@ -105,17 +185,20 @@ export class CanvasRenderer {
       this.ctx.fillStyle = this.options.backgroundColor || "#10151f";
       this.ctx.fillRect(view.rect.x, view.rect.y, view.rect.width, view.rect.height);
 
-      this.drawTiles(mapSpec, view);
+      this.drawTiles(mapSpec, view, viewBounds);
 
       for (const actor of sortedActors) {
         if (!this.actorVisibleInView(actor, view.id)) {
+          continue;
+        }
+        if (!this.actorIntersectsViewBounds(actor, viewBounds)) {
           continue;
         }
         this.drawActor(actor, view);
       }
 
       if (this.options.showDebugColliders) {
-        this.drawDebugColliders(actors, view);
+        this.drawDebugColliders(actors, view, viewBounds);
       }
       this.ctx.restore();
     }
@@ -360,7 +443,11 @@ export class CanvasRenderer {
     return Math.max(1, fallbackPixels);
   }
 
-  private drawTiles(mapSpec: MapSpec | null, view: ResolvedRenderView): void {
+  private drawTiles(
+    mapSpec: MapSpec | null,
+    view: ResolvedRenderView,
+    viewBounds: WorldBounds,
+  ): void {
     if (!mapSpec) {
       return;
     }
@@ -372,12 +459,40 @@ export class CanvasRenderer {
       return;
     }
 
-    for (let tileY = 0; tileY < mapSpec.tile_grid.length; tileY += 1) {
+    const gridHeight = mapSpec.tile_grid.length;
+    if (gridHeight <= 0) {
+      return;
+    }
+    const minTileY = clamp(
+      Math.floor(viewBounds.top / tileSize),
+      0,
+      Math.max(0, gridHeight - 1),
+    );
+    const maxTileY = clamp(
+      Math.ceil(viewBounds.bottom / tileSize) - 1,
+      minTileY,
+      Math.max(minTileY, gridHeight - 1),
+    );
+
+    for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
       const row = mapSpec.tile_grid[tileY];
       if (!Array.isArray(row)) {
         continue;
       }
-      for (let tileX = 0; tileX < row.length; tileX += 1) {
+      if (row.length <= 0) {
+        continue;
+      }
+      const minTileX = clamp(
+        Math.floor(viewBounds.left / tileSize),
+        0,
+        Math.max(0, row.length - 1),
+      );
+      const maxTileX = clamp(
+        Math.ceil(viewBounds.right / tileSize) - 1,
+        minTileX,
+        Math.max(minTileX, row.length - 1),
+      );
+      for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
         const tileId = row[tileX];
         if (typeof tileId !== "number" || !Number.isFinite(tileId)) {
           continue;
@@ -648,13 +763,20 @@ export class CanvasRenderer {
     return true;
   }
 
-  private drawDebugColliders(actors: ActorState[], view: ResolvedRenderView): void {
+  private drawDebugColliders(
+    actors: ActorState[],
+    view: ResolvedRenderView,
+    viewBounds: WorldBounds,
+  ): void {
     this.ctx.save();
     this.ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
     this.ctx.lineWidth = 1;
 
     for (const actor of actors) {
       if (actor.active === false) {
+        continue;
+      }
+      if (!this.actorIntersectsViewBounds(actor, viewBounds)) {
         continue;
       }
       const w = actorWidth(actor);
@@ -671,6 +793,32 @@ export class CanvasRenderer {
     }
 
     this.ctx.restore();
+  }
+
+  private resolveViewWorldBounds(view: ResolvedRenderView): WorldBounds {
+    const halfW = view.camera.worldWidth / 2;
+    const halfH = view.camera.worldHeight / 2;
+    return {
+      left: view.camera.x - halfW,
+      top: view.camera.y - halfH,
+      right: view.camera.x + halfW,
+      bottom: view.camera.y + halfH,
+    };
+  }
+
+  private actorIntersectsViewBounds(actor: ActorState, bounds: WorldBounds): boolean {
+    const w = actorWidth(actor);
+    const h = actorHeight(actor);
+    const leftWorld = actorCenterX(actor) - (w / 2);
+    const topWorld = actorCenterY(actor) - (h / 2);
+    const rightWorld = leftWorld + w;
+    const bottomWorld = topWorld + h;
+    return !(
+      rightWorld < bounds.left
+      || leftWorld > bounds.right
+      || bottomWorld < bounds.top
+      || topWorld > bounds.bottom
+    );
   }
 
   private actorVisibleInView(actor: ActorState, viewId: string): boolean {

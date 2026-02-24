@@ -152,7 +152,12 @@ export class SymbolicRenderer {
     }
 
     const sortedActors = [...actors]
-      .filter((actor) => actor.active !== false && this.actorVisibleInView(actor, viewId))
+      .filter(
+        (actor) =>
+          actor.active !== false
+          && this.actorVisibleInSymbolic(actor)
+          && this.actorVisibleInView(actor, viewId),
+      )
       .sort((a, b) => asNumber(a.z, 0) - asNumber(b.z, 0));
     const stackByCell = new Map<string, SymbolicStackActorItem[]>();
 
@@ -319,6 +324,20 @@ export class SymbolicRenderer {
     return true;
   }
 
+  private actorVisibleInSymbolic(actor: ActorState): boolean {
+    const actorRecord = actor as Record<string, unknown>;
+    if (actorRecord.symbolic === false) {
+      return false;
+    }
+    if (actorRecord.symbolic_visible === false) {
+      return false;
+    }
+    if (actorRecord.symbolicVisible === false) {
+      return false;
+    }
+    return true;
+  }
+
   private actorIncludedInStacks(actor: ActorState): boolean {
     const actorRecord = actor as Record<string, unknown>;
     if (actorRecord.symbolic_stack === false) {
@@ -418,6 +437,9 @@ export class SymbolicRenderer {
     let hasActor = false;
     for (const actor of actors) {
       if (actor.active === false) {
+        continue;
+      }
+      if (!this.actorVisibleInSymbolic(actor)) {
         continue;
       }
       hasActor = true;

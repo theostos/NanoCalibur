@@ -731,3 +731,137 @@ def test_headless_symbolic_ai_without_camera_gets_empty_frame(tmp_path):
     assert frame["width"] == 0
     assert frame["height"] == 0
     assert frame["rows"] == []
+
+
+def test_headless_symbolic_can_hide_hud_actors_with_symbolic_flag(tmp_path):
+    root = Path(__file__).resolve().parent.parent
+    runtime_dir = root / "nanocalibur" / "runtime"
+
+    compiled_dir = tmp_path / "compiled"
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run(
+        [
+            "npx",
+            "-p",
+            "typescript",
+            "tsc",
+            str(runtime_dir / "headless_host.ts"),
+            str(runtime_dir / "runtime_core.ts"),
+            str(runtime_dir / "symbolic_renderer.ts"),
+            str(runtime_dir / "interpreter.ts"),
+            "--target",
+            "ES2020",
+            "--module",
+            "commonjs",
+            "--outDir",
+            str(compiled_dir),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    runtime_path = compiled_dir / "interpreter.js"
+    headless_path = compiled_dir / "headless_host.js"
+
+    script = textwrap.dedent(
+        f"""
+        const {{ NanoCaliburInterpreter }} = require({json.dumps(str(runtime_path))});
+        const {{ HeadlessHost }} = require({json.dumps(str(headless_path))});
+
+        const spec = {{
+          schemas: {{
+            Unit: {{
+              uid: "str",
+              x: "float",
+              y: "float",
+              active: "bool",
+              sprite: "str"
+            }},
+            Overlay: {{
+              uid: "str",
+              x: "float",
+              y: "float",
+              active: "bool",
+              sprite: "str",
+              symbolic_visible: "bool",
+              symbolic: "bool"
+            }}
+          }},
+          actors: [
+            {{ type: "Unit", uid: "hero", fields: {{ x: 16, y: 16, active: true, sprite: "hero" }} }},
+            {{ type: "Overlay", uid: "health", fields: {{ x: 16, y: 16, active: true, sprite: "health", symbolic_visible: false }} }},
+            {{ type: "Overlay", uid: "drag", fields: {{ x: 16, y: 16, active: true, sprite: "drag", symbolic: false }} }}
+          ],
+          globals: [],
+          predicates: [],
+          tools: [],
+          rules: [],
+          map: {{
+            width: 4,
+            height: 3,
+            tile_size: 16,
+            tile_grid: [
+              [0, 0, 0, 0],
+              [0, 0, 0, 0],
+              [0, 0, 0, 0]
+            ],
+            tile_defs: {{}}
+          }},
+          resources: [
+            {{ name: "hero_sheet", path: "hero.png" }},
+            {{ name: "health_sheet", path: "health.png" }},
+            {{ name: "drag_sheet", path: "drag.png" }}
+          ],
+          sprites: {{
+            by_name: {{
+              hero: {{
+                resource: "hero_sheet",
+                frame_width: 16,
+                frame_height: 16,
+                symbol: "@",
+                description: "unit",
+                clips: {{ idle: {{ frames: [0], ticks_per_frame: 8, loop: true }} }}
+              }},
+              health: {{
+                resource: "health_sheet",
+                frame_width: 16,
+                frame_height: 16,
+                symbol: "-",
+                description: "health bar",
+                clips: {{ idle: {{ frames: [0], ticks_per_frame: 8, loop: true }} }}
+              }},
+              drag: {{
+                resource: "drag_sheet",
+                frame_width: 16,
+                frame_height: 16,
+                symbol: "D",
+                description: "drag rectangle",
+                clips: {{ idle: {{ frames: [0], ticks_per_frame: 8, loop: true }} }}
+              }}
+            }},
+            by_uid: {{}},
+            by_type: {{}}
+          }}
+        }};
+
+        const interpreter = new NanoCaliburInterpreter(spec, {{}}, {{}});
+        const host = new HeadlessHost(interpreter, {{}});
+        const frame = host.getSymbolicFrame();
+        console.log(JSON.stringify(frame));
+        """
+    )
+
+    proc = subprocess.run(
+        ["node", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    frame = json.loads(proc.stdout.strip())
+    assert frame["rows"][1][1] == "@"
+    legend_by_symbol = {item["symbol"]: item["description"] for item in frame["legend"]}
+    assert "@" in legend_by_symbol
+    assert "-" not in legend_by_symbol
+    assert "D" not in legend_by_symbol

@@ -134,6 +134,7 @@ export interface PhysicsBodyConfig {
 export interface CanvasHostOptions {
   width?: number;
   height?: number;
+  renderScale?: number;
   backgroundColor?: string;
   tileColor?: string;
   pixelated?: boolean;
