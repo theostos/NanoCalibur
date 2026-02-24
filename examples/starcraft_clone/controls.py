@@ -3203,6 +3203,44 @@ def int_to_text(value: int) -> str:
     return text
 
 
+@callable
+def symbolic_owner_tag(owner_role_id: str) -> str:
+    if owner_role_id == PLAYER_1_ROLE_ID:
+        return "p1"
+    if owner_role_id == PLAYER_2_ROLE_ID:
+        return "p2"
+    if owner_role_id == "":
+        return "world"
+    return owner_role_id
+
+
+@callable
+def symbolic_instance_index_for_object(target: RTSObject, objects: List[RTSObject]) -> int:
+    count = 0
+    for obj in objects:
+        if obj.owner_role_id != target.owner_role_id:
+            continue
+        if obj.object_kind != target.object_kind:
+            continue
+        count = count + 1
+        if obj.uid == target.uid:
+            return count
+    if count <= 0:
+        return 1
+    return count
+
+
+@callable
+def symbolic_label_for_object(target: RTSObject, objects: List[RTSObject]) -> str:
+    return (
+        symbolic_owner_tag(target.owner_role_id)
+        + "."
+        + target.object_kind
+        + "#"
+        + int_to_text(symbolic_instance_index_for_object(target, objects))
+    )
+
+
 @safe_condition(OnLogicalCondition(should_sync_world_health_bars, DragSelectionRect))
 def sync_world_symbolic_notes(
     _drag_rect: DragSelectionRect,
@@ -3218,8 +3256,10 @@ def sync_world_symbolic_notes(
             continue
 
         status = symbolic_status_for_object(obj)
+        label = symbolic_label_for_object(obj, objects)
         obj.symbolic_note = (
-            "HP "
+            label
+            + " | HP "
             + int_to_text(obj.hp)
             + "/"
             + int_to_text(obj.max_hp)
@@ -3447,6 +3487,8 @@ def refresh_role_interface_state(
     valid_selected_uids = []
     valid_selected_count = 0
     first_selected_name = "None"
+    selected_hp_total = 0
+    selected_max_hp_total = 0
     for selected_uid in self_role.selected_uids:
         found_selected = False
         selected_name = "None"
@@ -3459,6 +3501,8 @@ def refresh_role_interface_state(
                 continue
             found_selected = True
             selected_name = obj.selection_name
+            selected_hp_total = selected_hp_total + obj.hp
+            selected_max_hp_total = selected_max_hp_total + obj.max_hp
         if found_selected:
             valid_selected_uids.append(selected_uid)
             valid_selected_count = valid_selected_count + 1
@@ -3478,8 +3522,8 @@ def refresh_role_interface_state(
         self_role.selected_name = "Units"
 
     self_role.selected_kind = "none"
-    self_role.selected_hp = 0
-    self_role.selected_max_hp = 0
+    self_role.selected_hp = selected_hp_total
+    self_role.selected_max_hp = selected_max_hp_total
     self_role.selected_task_active = False
     self_role.selected_task_label = "Idle"
     self_role.selected_task_percent = 0

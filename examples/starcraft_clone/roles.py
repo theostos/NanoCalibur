@@ -9,7 +9,12 @@ CodeBlock.begin("multiplayer_roles")
 FOG_TILE_COUNT = MAP_WIDTH_TILES * MAP_HEIGHT_TILES
 
 
-class RTSRole(HumanRole):
+class SymbolicPrefixRole(HumanRole):
+    symbolic_prefix_text: str
+    symbolic_prefix_by_view: dict[str, str]
+
+
+class RTSRole(SymbolicPrefixRole):
     minerals: int
     gas: int
     supply_used: int
@@ -135,6 +140,20 @@ game.add_role(
         fog_memory_tiles=[""] * FOG_TILE_COUNT,
         fog_refresh_cooldown=0,
         ui_status="Ready",
+        symbolic_prefix_text=(
+            "RTS objective: build an economy, unlock tech, and defeat p2.\n"
+            "You are p1."
+        ),
+        symbolic_prefix_by_view={
+            "main_h1": (
+                "RTS objective: build an economy, unlock tech, and defeat p2.\n"
+                "You are p1. This is your main view."
+            ),
+            "minimap_h1": (
+                "You are p1. This is your minimap view.\n"
+                "Friendly objects: p1.*, enemy objects: p2.*."
+            ),
+        },
     )
 )
 game.add_role(
@@ -201,6 +220,20 @@ game.add_role(
         fog_memory_tiles=[""] * FOG_TILE_COUNT,
         fog_refresh_cooldown=0,
         ui_status="Ready",
+        symbolic_prefix_text=(
+            "RTS objective: build an economy, unlock tech, and defeat p1.\n"
+            "You are p2."
+        ),
+        symbolic_prefix_by_view={
+            "main_h2": (
+                "RTS objective: build an economy, unlock tech, and defeat p1.\n"
+                "You are p2. This is your main view."
+            ),
+            "minimap_h2": (
+                "You are p2. This is your minimap view.\n"
+                "Friendly objects: p2.*, enemy objects: p1.*."
+            ),
+        },
     )
 )
 

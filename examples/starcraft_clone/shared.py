@@ -32,6 +32,14 @@ scene = Scene(gravity=False)
 game.set_scene(scene)
 game.add_global("symbolic_annotations_max_count", 10)
 game.add_global("symbolic_annotations_max_chars", 360)
+game.add_global(
+    "symbolic_prefix_text",
+    (
+        "RTS objective: build an economy, unlock tech, and defeat the enemy base.\n"
+        "Use symbolic labels like p1.worker#k, p2.marine#k."
+    ),
+)
+game.add_global("symbolic_prefix_max_chars", 900)
 
 game.set_multiplayer(
     Multiplayer(

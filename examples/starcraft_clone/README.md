@@ -28,6 +28,15 @@ Current features:
   - A worker must be near/inside the site to progress it.
   - Construction can be resumed by assigning another worker to the same unfinished site.
 - Timed tasks expose progress in HUD (bar + integer percentage + ETA) for the currently selected producer.
+- Symbolic output includes bounded per-actor annotations with stable non-relative labels (for example `p1.worker#2 | HP current/max | status`).
+- Human-only overlay actors (selection rectangles, health bars) are hidden from symbolic rendering via actor fields (`symbolic_visible=False`).
+- Symbolic annotation flood control is configurable at runtime via globals:
+  - `symbolic_annotations_max_count`
+  - `symbolic_annotations_max_chars`
+- Symbolic prefix text (goal/instructions) is configurable at runtime via globals:
+  - `symbolic_prefix_text`
+  - `symbolic_prefix_max_chars`
+- StarCraft role schema also defines role/view-scoped symbolic prefixes so each viewer gets role-correct instructions (`human_1` sees `you are p1`, `human_2` sees `you are p2`).
 
 Build:
 
