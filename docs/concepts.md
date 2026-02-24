@@ -62,10 +62,27 @@ Local role values are not trusted server state.
 - Roles are explicit multiplayer slots.
 - Cameras are explicit objects, bound to roles.
 - Views are explicit render regions that select a camera and a normalized screen rectangle.
+- Actors can be view-scoped with actor fields (`view_id` / `view_ids`) when a view should render only a subset of world actors.
 - Interfaces can be bound to role + view pairs (for example minimap HUD).
 - Mouse/button conditions can be scoped to a view with `view=View["..."]`.
 - Human roles without cameras trigger compile warnings.
 - AI roles without cameras receive empty symbolic grids.
+
+## Symbolic Frames
+
+- Symbolic output contains `rows`, `legend`, `stacks`, `annotations`, and optional `prefix`.
+- `symbolic_visible=False` (or `symbolic=False`) hides actor from symbolic render without affecting normal canvas draw.
+- `symbolic_stack=False` excludes actor from stack metadata.
+- Actor notes (`symbolic_note`, `symbolic_note_mode`, `symbolic_note_priority`) provide compact extra context for LLM consumers.
+- Annotation flood budgets are runtime globals:
+  - `symbolic_annotations_max_count`
+  - `symbolic_annotations_max_chars`
+- Prefix text can be set at runtime:
+  - `symbolic_prefix_text`
+  - `symbolic_prefix_max_chars`
+  - `symbolic_prefix_text_by_role`
+  - `symbolic_prefix_text_by_view`
+  - `symbolic_prefix_text_by_role_view`
 
 ## Patterns
 

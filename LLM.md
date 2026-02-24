@@ -382,6 +382,52 @@ scene.set_map(
 )
 ```
 
+### 12.3 Symbolic visibility and annotations
+
+Symbolic rendering now supports actor-level visibility controls and bounded annotation text.
+
+Actor-side fields used by the runtime:
+
+- `view_id: str` or `view_ids: list[str]`
+  - restricts where the actor is rendered (main/minimap or any custom view ids).
+- `symbolic_visible: bool` (or `symbolic: bool`)
+  - `False` hides actor from symbolic output while keeping normal canvas rendering.
+- `symbolic_stack: bool`
+  - `False` excludes actor from `frame.stacks`.
+- `symbolic_note: str`
+  - short per-actor note shown in symbolic output.
+- `symbolic_note_mode: str`
+  - advisory priority tier (`focus`, `alert`, `always`).
+- `symbolic_note_priority: int`
+  - numeric ordering within the same mode.
+
+Symbolic frame payload includes:
+
+- `rows`
+- `legend`
+- `stacks`
+- `annotations` (root and per-view subframes)
+- `prefix` (optional top-of-frame instruction text)
+
+Annotation anti-flood limits can be tuned at runtime via authoritative globals:
+
+- `symbolic_annotations_max_count`
+- `symbolic_annotations_max_chars`
+
+Symbolic prefix text can be tuned at runtime via authoritative globals:
+
+- `symbolic_prefix_text`
+- `symbolic_prefix_max_chars`
+
+Symbolic prefix can also be scoped:
+
+- by role globals: `symbolic_prefix_text_by_role` (dict role_id -> text)
+- by view globals: `symbolic_prefix_text_by_view` (dict view_id -> text)
+- by role+view globals: `symbolic_prefix_text_by_role_view` (nested dict or flat key map)
+- by role fields: `role.symbolic_prefix_text`, `role.symbolic_prefix_by_view`
+
+If globals are missing, renderer falls back to runtime defaults/options.
+
 ## 13) Cameras and Views (Role-Scoped by Design)
 
 Camera is explicit and bound to a role.
@@ -406,6 +452,7 @@ Notes:
 - Human role without camera triggers compile warning.
 - AI role requesting frame without camera receives empty grid.
 - Views map screen regions to cameras (for example main viewport + minimap).
+- Actors with no `view_id`/`view_ids` render in all views; set these fields when you need strict view partitioning.
 
 ```python
 scene.add_view(View("main", Role["human_1"], camera=Camera["camera_h1"]))

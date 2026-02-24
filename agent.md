@@ -41,6 +41,15 @@ Keep NanoCalibur small, deterministic, and LLM-friendly:
 - Conditions must use `@safe_condition` / `@unsafe_condition`.
 - Input/tool conditions are role-scoped and require declared role ids.
 - Camera model is explicit and role-bound (`Camera(..., Role["id"]) + scene.add_camera`).
+- Actor render scoping is view-aware via runtime actor fields (`view_id` or `view_ids`).
+- Symbolic visibility is actor-controlled (`symbolic_visible`/`symbolic`), and stack inclusion is optional (`symbolic_stack`).
+- Symbolic frame annotations are part of the runtime contract (`annotations` at root and per-view frame).
+- Symbolic annotation budgets are runtime-tunable via globals:
+  - `symbolic_annotations_max_count`
+  - `symbolic_annotations_max_chars`
+- Symbolic frame optional prefix text is runtime-tunable via globals:
+  - `symbolic_prefix_text`
+  - `symbolic_prefix_max_chars`
 - `Local[...]` role fields are client-owned, never server-authoritative.
 - `HumanRole` is built-in and immutable; includes local `keybinds`.
 
@@ -105,6 +114,7 @@ mkdocs build --strict
 - Safe vs unsafe condition routing.
 - Local role variables (`Local[...]`) leaking into server logic.
 - Camera scoping and per-role rendering.
+- Symbolic frame schema changes (`rows/legend/stacks/annotations/prefix`) and session frame compaction behavior.
 - Physics regressions around parented actors and blocking masks.
 
 Any change in these areas should include dedicated regression tests.

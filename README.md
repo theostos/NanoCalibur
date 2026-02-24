@@ -334,6 +334,37 @@ def minimap_click(main_cam: Camera["main_cam"], mouse: MouseInfo):
     main_cam.y = mouse.world_y
 ```
 
+### Symbolic Visibility and Annotations
+
+You can control symbolic output at actor level without hardcoding game behavior in runtime TS:
+
+- `view_id` / `view_ids`: limit where an actor is rendered.
+- `symbolic_visible=False` (or `symbolic=False`): hide actor from symbolic output.
+- `symbolic_stack=False`: keep actor out of symbolic stack metadata.
+- `symbolic_note`, `symbolic_note_mode`, `symbolic_note_priority`: provide compact per-actor annotation text.
+
+Example (actor fields):
+
+```python
+class Unit(Actor):
+    symbolic_note: str
+    symbolic_note_mode: str
+    symbolic_note_priority: int
+    view_ids: list[str]
+```
+
+Runtime anti-flood limits are global and can be changed during gameplay:
+
+```python
+game.add_global("symbolic_annotations_max_count", 10)
+game.add_global("symbolic_annotations_max_chars", 360)
+game.add_global("symbolic_prefix_text", "Objective: survive. You are p1.")
+game.add_global("symbolic_prefix_max_chars", 900)
+game.add_global("symbolic_prefix_text_by_role", {"human_1": "You are p1.", "human_2": "You are p2."})
+```
+
+Symbolic frames expose annotation entries in `frame.annotations` (and per-view frames), plus optional `frame.prefix`.
+
 ### Code Blocks (Vibe Coding Workflow)
 
 `build_game.py` enables strict top-level filtering by default:

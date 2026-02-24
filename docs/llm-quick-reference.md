@@ -38,6 +38,21 @@ scene.add_rule(KeyboardCondition.on_press("move_right", Role["human_1"]), move_r
 
 - Interface placeholders work in text and attributes (including boolean `hidden`/`disabled`).
 - Actor blocking is `block_mask`-based, with optional same-team moving pass-through when actors expose `can_move=True` and shared `team_id`.
+- Actor render scoping supports `view_id` / `view_ids`.
+- Symbolic visibility supports `symbolic_visible=False` (or `symbolic=False`) and optional `symbolic_stack=False`.
+- Symbolic annotations are actor-driven with:
+  - `symbolic_note`
+  - `symbolic_note_mode` (`focus`/`alert`/`always`)
+  - `symbolic_note_priority`
+- Symbolic annotation limits are runtime globals:
+  - `symbolic_annotations_max_count`
+  - `symbolic_annotations_max_chars`
+- Symbolic prefix text can be set at runtime:
+  - `symbolic_prefix_text`
+  - `symbolic_prefix_max_chars`
+  - `symbolic_prefix_text_by_role`
+  - `symbolic_prefix_text_by_view`
+  - `symbolic_prefix_text_by_role_view`
 
 ## Build Command
 

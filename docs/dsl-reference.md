@@ -136,3 +136,45 @@ Runtime camera controls available from actions/callables:
 - `camera.follow(uid)`
 - `camera.detach()`
 - `camera.translate(dx, dy)`
+
+### Actor View Scoping
+
+Actors can be scoped to one or more view ids by regular actor fields:
+
+- `view_id: str` for a single target view
+- `view_ids: list[str]` for multiple target views
+
+If neither field is set, actor renders in all matching views.
+
+## Symbolic Rendering Controls
+
+Actor fields understood by symbolic rendering:
+
+- `symbolic_visible: bool` (or `symbolic: bool`) to include/exclude actor
+- `symbolic_stack: bool` to include/exclude actor from symbolic stack metadata
+- `symbolic_note: str` for compact per-actor annotation text
+- `symbolic_note_mode: str` (`focus`, `alert`, `always`) for ranking tier
+- `symbolic_note_priority: int` for ordering inside same tier
+
+Frame outputs include:
+
+- `rows`
+- `legend`
+- `stacks`
+- `annotations` (root frame and per-view subframes)
+- `prefix` (optional top-of-frame text)
+
+Runtime annotation flood limits (authoritative globals):
+
+- `symbolic_annotations_max_count`
+- `symbolic_annotations_max_chars`
+- `symbolic_prefix_text`
+- `symbolic_prefix_max_chars`
+- `symbolic_prefix_text_by_role` (`dict[str, str]`)
+- `symbolic_prefix_text_by_view` (`dict[str, str]`)
+- `symbolic_prefix_text_by_role_view` (nested map or flat keyed map)
+
+Role schemas may also expose per-viewer prefix fields:
+
+- `symbolic_prefix_text: str`
+- `symbolic_prefix_by_view: dict[str, str]`
